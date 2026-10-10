@@ -1055,6 +1055,32 @@ class EntityData:
             )
         self._encoder_bias_tensor = values
 
+    def update_encoder_bias_tensor(
+        self,
+        rows: torch.Tensor,
+        columns: torch.Tensor,
+        values: torch.Tensor,
+    ) -> None:
+        """Update selected authoritative encoder-bias cells on one device."""
+        bias = self.encoder_bias_tensor
+        if rows.device != bias.device:
+            raise ValueError(f"encoder-bias rows must live on {bias.device}; got {rows.device}")
+        if columns.device != bias.device:
+            raise ValueError(
+                f"encoder-bias columns must live on {bias.device}; got {columns.device}"
+            )
+        if values.device != bias.device:
+            raise ValueError(f"encoder-bias values must live on {bias.device}; got {values.device}")
+        if values.dtype != bias.dtype or not values.is_contiguous():
+            raise TypeError("encoder-bias values must be contiguous and match the bias dtype")
+        expected = (rows.numel(), columns.numel())
+        if tuple(values.shape) != expected:
+            raise ValueError(
+                f"encoder-bias values have shape {tuple(values.shape)}; expected {expected}"
+            )
+        selected = bias.index_select(0, rows).index_copy(1, columns, values.to(dtype=bias.dtype))
+        bias.index_copy_(0, rows, selected)
+
     def _tensor_control_device(self) -> torch.device | None:
         control = self._control_buffer
         if not isinstance(control, torch.Tensor):
