@@ -357,6 +357,44 @@ def _apply_randomization_operation_tensor(
     return samples
 
 
+def _sample_axis_tensor(
+    rng: TorchManagerRng,
+    parameters: torch.Tensor,
+    count: int,
+    *,
+    distribution: str,
+    shared_random: bool,
+) -> torch.Tensor:
+    if not shared_random:
+        return _sample_distribution_tensor(
+            rng,
+            parameters[:, 0],
+            parameters[:, 1],
+            (count, parameters.shape[0]),
+            distribution,
+        )
+    samples = torch.empty(
+        (count, parameters.shape[0]), dtype=parameters.dtype, device=parameters.device
+    )
+    groups: dict[tuple[float, float], list[int]] = {}
+    host_parameters = parameters.detach().cpu().numpy()
+    for index, pair in enumerate(host_parameters):
+        groups.setdefault((float(pair[0]), float(pair[1])), []).append(index)
+    for first, second in groups:
+        indices = torch.tensor(groups[(first, second)], device=parameters.device)
+        low = torch.full((1,), first, dtype=parameters.dtype, device=parameters.device)
+        high = torch.full((1,), second, dtype=parameters.dtype, device=parameters.device)
+        shared = _sample_distribution_tensor(
+            rng,
+            low,
+            high,
+            (count, 1),
+            distribution,
+        ).to(dtype=samples.dtype)
+        samples[:, indices] = shared
+    return samples
+
+
 class _ModelFieldRandomizer(ManagerTermBase):
     """Cold-path-bound NumPy adapter for pinned mjlab model-field DR terms."""
 
@@ -674,54 +712,20 @@ class _ModelFieldRandomizer(ManagerTermBase):
                 )
         self._write_tensor(values.contiguous(), rows)
 
-    def _sample_axis(self, env: ManagerBasedRlEnv, axis: int, count: int) -> np.ndarray:
-        parameters = self._ranges[:, axis]
+    def _sample_device(self, env: ManagerBasedRlEnv) -> torch.device:
+        return _require_torch_rng(env, self.name).device
+
+    def _sample_axis(self, env: ManagerBasedRlEnv, axis: int, count: int) -> torch.Tensor:
+        parameters = torch.from_numpy(self._ranges[:, axis].copy()).to(
+            dtype=torch.float64, device=self._sample_device(env)
+        )
         rng = _require_torch_rng(env, self.name)
-        if self._shared_random:
-            samples = np.empty((count, len(parameters)), dtype=np.float64)
-            groups: dict[tuple[float, float], list[int]] = {}
-            for index, pair in enumerate(parameters):
-                groups.setdefault((float(pair[0]), float(pair[1])), []).append(index)
-            for (first, second), indices in groups.items():
-                if self._distribution == "gaussian":
-                    shared = rng.normal(first, second, (count, 1), dtype=torch.float64)
-                elif self._distribution == "log_uniform":
-                    shared = rng.uniform(
-                        math.log(first), math.log(second), (count, 1), dtype=torch.float64
-                    ).exp()
-                else:
-                    shared = rng.uniform(first, second, (count, 1), dtype=torch.float64)
-                samples[:, indices] = shared.cpu().numpy()
-            return samples
-        if self._distribution == "gaussian":
-            return (
-                rng.normal(
-                    parameters[:, 0],
-                    parameters[:, 1],
-                    (count, len(parameters)),
-                    dtype=torch.float64,
-                )
-                .cpu()
-                .numpy()
-            )
-        if self._distribution == "log_uniform":
-            return (
-                rng.uniform(
-                    np.log(parameters[:, 0]),
-                    np.log(parameters[:, 1]),
-                    (count, len(parameters)),
-                    dtype=torch.float64,
-                )
-                .exp()
-                .cpu()
-                .numpy()
-            )
-        return (
-            rng.uniform(
-                parameters[:, 0], parameters[:, 1], (count, len(parameters)), dtype=torch.float64
-            )
-            .cpu()
-            .numpy()
+        return _sample_axis_tensor(
+            rng,
+            parameters,
+            count,
+            distribution=self._distribution,
+            shared_random=self._shared_random,
         )
 
     def __call__(
@@ -743,31 +747,33 @@ class _ModelFieldRandomizer(ManagerTermBase):
             return
         ids = resolve_env_ids(env, env_ids)
         canonical_ndim = 1 if self._field_width == 1 else 2
-        default_values = _selected_reset_defaults(
+        sampled_axis = self._sample_axis(env, self._axes[0], len(ids)) if self._axes else None
+        default_values = _selected_reset_defaults_tensor(
             self._defaults,
             ids,
             canonical_ndim=canonical_ndim,
+            device=sampled_axis.device if sampled_axis is not None else self._sample_device(env),
         )
-        values = np.array(default_values, copy=True)
-        for axis in self._axes:
-            samples = self._sample_axis(env, axis, len(ids))
+        values = default_values.clone()
+        for index, axis in enumerate(self._axes):
+            samples = sampled_axis if index == 0 else self._sample_axis(env, axis, len(ids))
             if self._field_width == 1:
-                values[...] = _apply_randomization_operation(
+                values = _apply_randomization_operation_tensor(
                     default_values,
                     samples,
                     self._operation,
                 )
             else:
-                values[..., axis] = _apply_randomization_operation(
+                values[..., axis] = _apply_randomization_operation_tensor(
                     default_values[..., axis],
                     samples,
                     self._operation,
                 )
-        if np.any(values < 0.0) or not np.isfinite(values).all():
+        if bool((values < 0.0).any()) or not bool(torch.isfinite(values).all()):
             raise ValueError(
                 f"EventManager term '{self._term_name}' produced negative, NaN, or Inf values"
             )
-        self._write(values, ids)
+        self._write(values.cpu(), ids)
 
 
 class GeomFriction(_ModelFieldRandomizer):
