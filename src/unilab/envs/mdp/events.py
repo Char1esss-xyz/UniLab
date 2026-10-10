@@ -1067,7 +1067,7 @@ class RandomizeRigidBodyMass(ManagerTermBase):
         self._device_params: torch.Tensor | None = None
         self._device_default_mass: torch.Tensor | None = None
         self._startup = cfg.mode == "startup"
-        self._startup_values: np.ndarray | None = None
+        self._startup_values: torch.Tensor | None = None
 
     def _apply_startup(self, env: ManagerBasedRlEnv, env_ids: torch.Tensor | None) -> None:
         """Sample every world once and replay the immutable startup table.
@@ -1402,31 +1402,27 @@ class RandomizeRigidBodyCom(ManagerTermBase):
                 name="com_range",
                 keys=_XYZ_KEYS,
             )
-            offsets = (
-                _require_torch_rng(env, "randomize_rigid_body_com")
-                .uniform(
-                    torch.as_tensor(ranges[:, 0], dtype=torch.float64),
-                    torch.as_tensor(ranges[:, 1], dtype=torch.float64),
-                    (env.num_envs, 3),
-                    dtype=torch.float64,
-                )
-                .cpu()
-                .numpy()
+            offsets = _require_torch_rng(env, "randomize_rigid_body_com").uniform(
+                torch.as_tensor(ranges[:, 0], dtype=torch.float64),
+                torch.as_tensor(ranges[:, 1], dtype=torch.float64),
+                (env.num_envs, 3),
+                dtype=torch.float64,
             )
-            default_ipos = _selected_reset_defaults(
+            default_ipos = _selected_reset_defaults_tensor(
                 self._default_ipos,
                 ids,
                 canonical_ndim=2,
+                device=offsets.device,
             )
-            values = np.asarray(default_ipos + offsets[:, None, :], dtype=np.float64)
-            if not np.isfinite(values).all():
+            values = default_ipos + offsets[:, None, :]
+            if not bool(torch.isfinite(values).all()):
                 raise ValueError(
                     "EventManager term 'randomize_rigid_body_com' produced NaN or Inf "
                     "startup values"
                 )
             self._startup_values = values
         self._entity.record_startup_body_ipos_to_sim(
-            self._startup_values,
+            self._startup_values.cpu(),
             body_ids=self._body_ids,
             env_ids=ids,
             term_name="randomize_rigid_body_com",
@@ -1496,23 +1492,19 @@ class RandomizeRigidBodyCom(ManagerTermBase):
             keys=_XYZ_KEYS,
         )
         ids = resolve_env_ids(env, env_ids)
-        offsets = (
-            _require_torch_rng(env, "randomize_rigid_body_com")
-            .uniform(
-                torch.as_tensor(ranges[:, 0], dtype=torch.float64),
-                torch.as_tensor(ranges[:, 1], dtype=torch.float64),
-                (ids.size, 3),
-                dtype=torch.float64,
-            )
-            .cpu()
-            .numpy()
+        offsets = _require_torch_rng(env, "randomize_rigid_body_com").uniform(
+            torch.as_tensor(ranges[:, 0], dtype=torch.float64),
+            torch.as_tensor(ranges[:, 1], dtype=torch.float64),
+            (ids.size, 3),
+            dtype=torch.float64,
         )
-        default_ipos = _selected_reset_defaults(
+        default_ipos = _selected_reset_defaults_tensor(
             self._default_ipos,
             ids,
             canonical_ndim=2,
+            device=offsets.device,
         )
-        values = default_ipos + offsets[:, None, :]
+        values = (default_ipos + offsets[:, None, :]).cpu()
         self._entity.write_body_ipos_to_sim(
             values,
             body_ids=self._body_ids,
