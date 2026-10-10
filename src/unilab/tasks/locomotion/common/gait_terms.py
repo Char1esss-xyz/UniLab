@@ -454,15 +454,34 @@ class angular_momentum_penalty(SensorTermBase):
                 f"{self._sensor.dimensions} on backend '{self._sensor.backend_type}'"
             )
 
+    @property
+    def tensor_sensor_names(self) -> tuple[str, ...]:
+        return (self._sensor_name,)
+
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
         del params
-        angmom = _state(
-            self.name,
-            f"sensor '{self._sensor_name}'",
-            self._read(self._sensor, self.name),
-            (env.num_envs, 3),
-        )
-        return _torch_state(angmom).square().sum(dim=1)
+        return self._read_tensor_values(env).square().sum(dim=1)
+
+    def _read_tensor_values(self, env: ManagerBasedRlEnv) -> torch.Tensor:
+        read_plan = getattr(env.scene, "_tensor_read_plan", None)
+        if read_plan is None:
+            values = _state(
+                self.name,
+                f"sensor '{self._sensor_name}'",
+                self._read(self._sensor, self.name),
+                (env.num_envs, 3),
+            )
+            return _torch_state(values)
+        entity = env.scene["robot"]
+        value = read_plan.sensor_tensor_views(entity, self.tensor_sensor_names).values[
+            self._sensor_name
+        ]
+        if tuple(value.shape) != (env.num_envs, 3):
+            raise ValueError(
+                f"{self.name} sensor '{self._sensor_name}' must have shape "
+                f"(num_envs, 3); got {tuple(value.shape)}"
+            )
+        return value.to(dtype=torch.float32)
 
 
 # Privileged per-foot observations (mjlab velocity critic terms).  These mirror
@@ -552,14 +571,31 @@ class foot_contact_forces(_FootContactTerm):
 
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
-        values = _state(
-            self.name,
-            "foot contact forces",
-            self._read(self._view, self.name),
-            (env.num_envs, self._flat_width),
-        )
-        forces = _torch_state(values)
+        forces = self._force_values(env)
         return forces.sign() * forces.abs().log1p()
+
+    def _force_values(self, env: ManagerBasedRlEnv) -> torch.Tensor:
+        read_plan = getattr(env.scene, "_tensor_read_plan", None)
+        names = self.tensor_sensor_names
+        if read_plan is None or not set(names).issubset(
+            set(read_plan.sensor_names.get("robot", ()))
+        ):
+            values = _state(
+                self.name,
+                "foot contact forces",
+                self._read(self._view, self.name),
+                (env.num_envs, self._flat_width),
+            )
+            return _torch_state(values)
+        entity = env.scene["robot"]
+        values = read_plan.sensor_tensor_views(entity, names).values
+        forces = torch.cat([values[name] for name in names], dim=1)
+        if tuple(forces.shape) != (env.num_envs, self._flat_width):
+            raise ValueError(
+                f"{self.name} foot contact forces must have shape "
+                f"{(env.num_envs, self._flat_width)}; got {tuple(forces.shape)}"
+            )
+        return forces.to(dtype=torch.float32)
 
 
 __all__ = [
