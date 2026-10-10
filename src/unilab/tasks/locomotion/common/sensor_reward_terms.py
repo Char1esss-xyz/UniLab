@@ -24,6 +24,12 @@ if TYPE_CHECKING:
     from unilab.managers._types import ManagerBasedRlEnv
 
 
+def _torch_values(values: np.ndarray | torch.Tensor) -> torch.Tensor:
+    if isinstance(values, torch.Tensor):
+        return values.to(dtype=torch.float32)
+    return torch.from_numpy(np.ascontiguousarray(values)).to(dtype=torch.float32)
+
+
 class _Vec3SensorTerm(SensorTermBase):
     """Bind one named vec3 sensor on the cold path and read it per step."""
 
@@ -100,12 +106,14 @@ class track_lin_vel(_CommandTrackingTerm):
         del params
         linvel = self._read_sensor_tensor(env)
         command = _command(env, self.name, self._command_name)
-        if isinstance(linvel, torch.Tensor):
-            command_torch = torch.as_tensor(command, device=linvel.device, dtype=linvel.dtype)
-            error = torch.sum(torch.square(command_torch[:, :2] - linvel[:, :2]), dim=1)
-            return torch.exp(-error / self._sigma).to(dtype=torch.float32)
-        error = np.sum(np.square(command[:, :2] - linvel[:, :2]), axis=1)
-        return np.asarray(np.exp(-error / self._sigma), dtype=np.float32)
+        linvel_tensor = _torch_values(linvel)
+        command_tensor = (
+            _torch_values(command).to(device=linvel_tensor.device)
+            if isinstance(command, np.ndarray)
+            else command.to(device=linvel_tensor.device, dtype=linvel_tensor.dtype)
+        )
+        error = (command_tensor[:, :2] - linvel_tensor[:, :2]).square().sum(dim=1)
+        return torch.exp(-error / self._sigma)
 
 
 class track_ang_vel(_CommandTrackingTerm):
@@ -115,12 +123,14 @@ class track_ang_vel(_CommandTrackingTerm):
         del params
         gyro = self._read_sensor_tensor(env)
         command = _command(env, self.name, self._command_name)
-        if isinstance(gyro, torch.Tensor):
-            command_torch = torch.as_tensor(command, device=gyro.device, dtype=gyro.dtype)
-            error = torch.square(command_torch[:, 2] - gyro[:, 2])
-            return torch.exp(-error / self._sigma).to(dtype=torch.float32)
-        error = np.square(command[:, 2] - gyro[:, 2])
-        return np.asarray(np.exp(-error / self._sigma), dtype=np.float32)
+        gyro_tensor = _torch_values(gyro)
+        command_tensor = (
+            _torch_values(command).to(device=gyro_tensor.device)
+            if isinstance(command, np.ndarray)
+            else command.to(device=gyro_tensor.device, dtype=gyro_tensor.dtype)
+        )
+        error = (command_tensor[:, 2] - gyro_tensor[:, 2]).square()
+        return torch.exp(-error / self._sigma)
 
 
 class lin_vel_z(_Vec3SensorTerm):
@@ -129,9 +139,7 @@ class lin_vel_z(_Vec3SensorTerm):
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
         del params
         values = self._read_sensor_tensor(env)[:, 2]
-        if isinstance(values, torch.Tensor):
-            return torch.square(values).to(dtype=torch.float32)
-        return _tensor_square_sum(values)
+        return _torch_values(values).square()
 
 
 class ang_vel_xy(_Vec3SensorTerm):
@@ -139,7 +147,7 @@ class ang_vel_xy(_Vec3SensorTerm):
 
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
         del params
-        return _tensor_square_sum(self._read_sensor_tensor(env)[:, :2], axis=1)
+        return _torch_values(self._read_sensor_tensor(env)[:, :2]).square().sum(dim=1)
 
 
 class orientation(_Vec3SensorTerm):
@@ -148,17 +156,7 @@ class orientation(_Vec3SensorTerm):
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
         del params
         upvector = self._read_sensor_tensor(env)
-        return _tensor_square_sum(upvector[:, :2], axis=1)
-
-
-def _tensor_square_sum(
-    values: np.ndarray | torch.Tensor, *, axis: int | None = None
-) -> np.ndarray | torch.Tensor:
-    if isinstance(values, torch.Tensor):
-        return torch.sum(torch.square(values), dim=axis).to(dtype=torch.float32)
-    if axis is None:
-        return np.asarray(np.square(values), dtype=np.float32)
-    return np.asarray(np.sum(np.square(values), axis=axis), dtype=np.float32)
+        return _torch_values(upvector[:, :2]).square().sum(dim=1)
 
 
 __all__ = [
