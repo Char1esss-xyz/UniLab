@@ -898,58 +898,58 @@ class penalty_close_feet_xy(_SensorTerm):
 # ---------------------------------------------------------------------------
 
 
-def weighted_pose(
-    env: ManagerBasedRlEnv,
-    pose_weights: Any,
-    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> np.ndarray | torch.Tensor:
+class weighted_pose(ManagerTermBase):
     """Weighted L2 penalty for joint position deviation from the default pose."""
-    asset = _asset(env, asset_cfg)
-    read_plan = getattr(env.scene, "_tensor_read_plan", None)
-    if read_plan is None:
-        position = asset.data.joint_pos[:, asset_cfg.joint_ids]
-        default = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
-    else:
-        state = read_plan.joint_tensor_view(asset)
-        position = state.joint_pos[:, asset_cfg.joint_ids]
-        default = asset.data.default_joint_pos_torch(env.device)[:, asset_cfg.joint_ids]
-    weights = _weights("weighted_pose", "pose_weights", pose_weights)
-    if weights.shape[0] != position.shape[1]:
-        raise ValueError(
-            f"weighted_pose pose_weights length {weights.shape[0]} does not match "
-            f"joint count {position.shape[1]}"
-        )
-    if isinstance(position, torch.Tensor):
-        weights_torch = torch.as_tensor(
-            weights, device=position.device, dtype=position.dtype
-        ).expand_as(position)
-        diff = position - default
-    else:
-        diff = _state("weighted_pose", "joint position", position, position.shape) - _state(
-            "weighted_pose", "default joint position", default, position.shape
-        )
-        weights_torch = weights
-    return _values(torch_or_np_sum(weights_torch * _square(diff), axis=1))
+
+    def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+        super().__init__(env)
+        asset_cfg = cfg.params.get("asset_cfg", _DEFAULT_ASSET_CFG)
+        if not isinstance(asset_cfg, SceneEntityCfg):
+            raise TypeError(f"{self.name} asset_cfg must be a SceneEntityCfg")
+        self._entity_name = asset_cfg.name
+        self._joint_ids = asset_cfg.joint_ids
+        weights = _weights(self.name, "pose_weights", cfg.params["pose_weights"])
+        self._weights = torch.tensor(weights, dtype=torch.float32, device=env.device)
+
+    @property
+    def tensor_state_entity(self) -> str:
+        return self._entity_name
+
+    def __call__(
+        self,
+        env: ManagerBasedRlEnv,
+        pose_weights: Any,
+        asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    ) -> torch.Tensor:
+        del pose_weights, asset_cfg
+        read_plan = getattr(env.scene, "_tensor_read_plan", None)
+        if read_plan is None:
+            raise NotImplementedError(
+                f"{self.name} requires the Manager packed joint-state read plan"
+            )
+        position = read_plan.joint_tensor_view(self._entity_name).joint_pos[:, self._joint_ids]
+        default = env.scene[self._entity_name].data.default_joint_pos_torch(env.device)[
+            :, self._joint_ids
+        ]
+        if self._weights.numel() != position.shape[1]:
+            raise ValueError(
+                f"{self.name} pose_weights length {self._weights.numel()} does not match "
+                f"joint count {position.shape[1]}"
+            )
+        return (self._weights * (position - default).square()).sum(dim=1)
 
 
-def torch_or_np_sum(value: np.ndarray | torch.Tensor, *, axis: int) -> np.ndarray | torch.Tensor:
-    if isinstance(value, torch.Tensor):
-        return torch.sum(value, dim=axis)
-    return np.sum(value, axis=axis)
-
-
-def upper_body_pose(
-    env: ManagerBasedRlEnv,
-    pose_weights: Any,
-    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> np.ndarray | torch.Tensor:
+class upper_body_pose(weighted_pose):
     """Weighted L2 pose penalty with the twelve leg joints zeroed out."""
-    weights = _weights("upper_body_pose", "pose_weights", pose_weights)
-    if weights.shape[0] < 12:
-        raise ValueError("upper_body_pose pose_weights must cover at least the twelve leg joints")
-    weights = weights.copy()
-    weights[:12] = 0.0
-    return weighted_pose(env, weights, asset_cfg=asset_cfg)
+
+    def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+        weights = _weights(self.name, "pose_weights", cfg.params["pose_weights"])
+        if weights.shape[0] < 12:
+            raise ValueError(f"{self.name} pose_weights must cover at least the twelve leg joints")
+        weights = weights.copy()
+        weights[:12] = 0.0
+        cfg.params["pose_weights"] = weights
+        super().__init__(cfg, env)
 
 
 # ---------------------------------------------------------------------------
