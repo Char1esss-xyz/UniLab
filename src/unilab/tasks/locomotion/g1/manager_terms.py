@@ -605,24 +605,23 @@ class feet_double_stance(_FootContactTerm):
         del params
         command = _command(env, self.name, self._command_name)
         left_contact, right_contact = self._contact_pair(env)
-        if isinstance(command, torch.Tensor):
-            left = (
-                left_contact
-                if isinstance(left_contact, torch.Tensor)
-                else torch.as_tensor(left_contact, device=command.device)
+        command_tensor = (
+            command
+            if isinstance(command, torch.Tensor)
+            else torch.from_numpy(np.ascontiguousarray(command)).to(dtype=torch.float32)
+        )
+        contacts = [left_contact, right_contact]
+        tensors = [
+            contact.to(device=command_tensor.device, dtype=torch.bool)
+            if isinstance(contact, torch.Tensor)
+            else torch.from_numpy(np.ascontiguousarray(contact)).to(
+                device=command_tensor.device, dtype=torch.bool
             )
-            right = (
-                right_contact
-                if isinstance(right_contact, torch.Tensor)
-                else torch.as_tensor(right_contact, device=command.device)
-            )
-            double_stance = (left & right).to(dtype=torch.float32)
-            forward_mask = (torch.clamp(command[:, 0], min=0.0) > 1.0e-6).to(dtype=torch.float32)
-            return double_stance * forward_mask
-        assert isinstance(command, np.ndarray)
-        double_stance = np.asarray(np.logical_and(left_contact, right_contact), dtype=np.float32)
-        forward_mask = np.asarray(np.maximum(command[:, 0], 0.0) > 1.0e-6, dtype=np.float32)
-        return np.asarray(double_stance * forward_mask, dtype=np.float32)
+            for contact in contacts
+        ]
+        double_stance = (tensors[0] & tensors[1]).to(dtype=torch.float32)
+        forward_mask = (command_tensor[:, 0].clamp(min=0.0) > 1.0e-6).to(dtype=torch.float32)
+        return double_stance * forward_mask
 
 
 class feet_air_time(_FootContactTerm):
