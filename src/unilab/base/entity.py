@@ -1055,6 +1055,22 @@ class EntityData:
             )
         self._encoder_bias_tensor = values
 
+    def update_encoder_bias(
+        self,
+        rows: np.ndarray,
+        columns: Sequence[int],
+        values: np.ndarray,
+    ) -> None:
+        """Update selected host-authoritative encoder-bias cells."""
+        bias = self.encoder_bias
+        column_array = np.asarray(columns, dtype=np.intp)
+        expected = (rows.size, column_array.size)
+        if values.shape != expected:
+            raise ValueError(f"encoder-bias values have shape {values.shape}; expected {expected}")
+        if not np.issubdtype(values.dtype, np.floating) or not np.isfinite(values).all():
+            raise ValueError("encoder-bias values must be finite floating data")
+        bias[np.ix_(rows, column_array)] = values
+
     def update_encoder_bias_tensor(
         self,
         rows: torch.Tensor,

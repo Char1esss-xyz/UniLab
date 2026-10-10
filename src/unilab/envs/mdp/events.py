@@ -2012,13 +2012,14 @@ class RandomizeEncoderBias(ManagerTermBase):
             )
             self._entity.data.update_encoder_bias_tensor(rows, columns, sampled)
             return
-        self._entity.data.encoder_bias[np.ix_(ids, self._joint_ids)] = self._host_uniform(
-            (ids.size, len(self._joint_ids)), env
+        self._entity.data.update_encoder_bias(
+            ids, self._joint_ids, self._host_uniform(ids.size, env)
         )
 
-    def _host_uniform(self, size: tuple[int, ...], env: ManagerBasedRlEnv) -> np.ndarray:
+    def _host_uniform(self, count: int, env: ManagerBasedRlEnv) -> np.ndarray:
         rng = _require_torch_rng(env, "randomize_encoder_bias")
         lower, upper = self._range
+        size = (count, len(self._joint_ids))
         return (
             (
                 torch.rand(size, generator=rng.generator, device=rng.device) * float(upper - lower)
