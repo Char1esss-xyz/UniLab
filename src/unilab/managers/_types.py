@@ -144,7 +144,7 @@ class ManagerEntity(Protocol):
     def write_root_state_tensor_to_sim(
         self,
         root_state: torch.Tensor,
-        env_ids: torch.Tensor | np.ndarray | slice | None = None,
+        env_ids: torch.Tensor,
     ) -> None: ...
 
     def write_motion_state_tensor_to_sim(
