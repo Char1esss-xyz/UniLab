@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
@@ -1947,8 +1948,13 @@ class RandomizeEncoderBias(ManagerTermBase):
             raise ValueError(f"EventManager term '{term_name}' bias_range minimum exceeds maximum")
         self._range = (float(bias_range[0]), float(bias_range[1]))
         self._entity = cast("Entity", env.scene[asset_cfg.name])
-        joint_ids = np.arange(self._entity.num_joints, dtype=np.intp)[asset_cfg.joint_ids]
-        if joint_ids.ndim != 1 or joint_ids.size == 0:
+        all_joint_ids = tuple(range(self._entity.num_joints))
+        if isinstance(asset_cfg.joint_ids, slice):
+            selected_ids: Sequence[int] = range(len(all_joint_ids))[asset_cfg.joint_ids]
+        else:
+            selected_ids = asset_cfg.joint_ids
+        joint_ids = tuple(all_joint_ids[index] for index in selected_ids)
+        if not joint_ids:
             raise ValueError(
                 f"EventManager term '{term_name}' asset_cfg must select at least one joint"
             )
@@ -1966,9 +1972,7 @@ class RandomizeEncoderBias(ManagerTermBase):
         control = getattr(self._entity.data, "control_buffer", None)
         if isinstance(control, torch.Tensor):
             rows = torch.as_tensor(ids, dtype=torch.int64, device=control.device)
-            columns = torch.from_numpy(self._joint_ids.astype(np.int64, copy=False)).to(
-                device=control.device
-            )
+            columns = torch.tensor(self._joint_ids, dtype=torch.int64, device=control.device)
             rng_owner = getattr(env, "torch_rng", None)
             if rng_owner is None:
                 raise NotImplementedError(
@@ -1985,7 +1989,7 @@ class RandomizeEncoderBias(ManagerTermBase):
             bias.index_copy_(0, rows, bias.index_select(0, rows).index_copy_(1, columns, sampled))
             return
         self._entity.data.encoder_bias[np.ix_(ids, self._joint_ids)] = self._host_uniform(
-            (ids.size, self._joint_ids.size), env
+            (ids.size, len(self._joint_ids)), env
         )
 
     def _host_uniform(self, size: tuple[int, ...], env: ManagerBasedRlEnv) -> np.ndarray:
