@@ -3558,8 +3558,8 @@ class Entity:
 
     def apply_root_velocity_delta_to_sim(
         self,
-        linear_delta: np.ndarray | None,
-        angular_delta: np.ndarray | None,
+        linear_delta: np.ndarray | torch.Tensor | None,
+        angular_delta: np.ndarray | torch.Tensor | None,
         env_ids: np.ndarray | slice | None = None,
         *,
         term_name: str = "push_by_setting_velocity",
@@ -3599,17 +3599,24 @@ class Entity:
 
     def _validate_root_velocity_delta(
         self,
-        values: np.ndarray | None,
+        values: np.ndarray | torch.Tensor | None,
         ids: np.ndarray,
         *,
         term_name: str,
     ) -> np.ndarray | None:
         if values is None:
             return None
+        if isinstance(values, torch.Tensor):
+            if values.device.type != "cpu":
+                raise TypeError(
+                    f"EventManager term '{term_name}' root velocity delta host plan "
+                    f"requires a CPU Torch tensor; got {values.device}"
+                )
+            values = values.contiguous().numpy()
         if not isinstance(values, np.ndarray):
             raise TypeError(
-                f"EventManager term '{term_name}' root velocity delta must be np.ndarray, "
-                f"got {type(values).__name__}"
+                f"EventManager term '{term_name}' root velocity delta must be np.ndarray "
+                f"or a CPU torch.Tensor, got {type(values).__name__}"
             )
         expected = (ids.size, 3)
         if values.shape != expected:

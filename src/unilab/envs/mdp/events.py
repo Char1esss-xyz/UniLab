@@ -1688,12 +1688,12 @@ class PushBySettingVelocity(ManagerTermBase):
         *,
         size: tuple[int, ...],
         env: ManagerBasedRlEnv,
-    ) -> np.ndarray:
+    ) -> torch.Tensor:
         rng = _require_torch_rng(env, "push_by_setting_velocity")
         unit = torch.rand(size, generator=rng.generator, device=rng.device)
         scale = torch.as_tensor(upper - lower, dtype=unit.dtype, device=unit.device)
         offset = torch.as_tensor(lower, dtype=unit.dtype, device=unit.device)
-        return (unit * scale + offset).cpu().numpy()
+        return unit * scale + offset
 
 
 push_by_setting_velocity = PushBySettingVelocity
