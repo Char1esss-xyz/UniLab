@@ -75,15 +75,10 @@ def _sample_gain_range(
     bounds: tuple[float, float],
     shape: tuple[int, int],
     distribution: Literal["uniform", "log_uniform"],
-) -> np.ndarray:
+) -> torch.Tensor:
     if distribution == "uniform":
-        return rng.uniform(bounds[0], bounds[1], shape, dtype=torch.float64).cpu().numpy()
-    return (
-        rng.uniform(math.log(bounds[0]), math.log(bounds[1]), shape, dtype=torch.float64)
-        .exp()
-        .cpu()
-        .numpy()
-    )
+        return rng.uniform(bounds[0], bounds[1], shape, dtype=torch.float64)
+    return rng.uniform(math.log(bounds[0]), math.log(bounds[1]), shape, dtype=torch.float64).exp()
 
 
 def _sample_se3_range(
@@ -966,16 +961,14 @@ class PdGains(ManagerTermBase):
             _require_torch_rng(env, "pd_gains"), self._kd_range, shape, self._distribution
         )
         if self._operation == "scale":
-            kp = kp * _selected_reset_defaults(
-                self._default_kp,
-                ids,
-                canonical_ndim=1,
+            default_kp = np.array(
+                _selected_reset_defaults(self._default_kp, ids, canonical_ndim=1), copy=True
             )
-            kd = kd * _selected_reset_defaults(
-                self._default_kd,
-                ids,
-                canonical_ndim=1,
+            default_kd = np.array(
+                _selected_reset_defaults(self._default_kd, ids, canonical_ndim=1), copy=True
             )
+            kp = kp * torch.from_numpy(default_kp).to(dtype=kp.dtype, device=kp.device)
+            kd = kd * torch.from_numpy(default_kd).to(dtype=kd.dtype, device=kd.device)
         self._entity.write_actuator_gains_to_sim(
             kp,
             kd,
