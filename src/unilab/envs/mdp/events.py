@@ -1802,22 +1802,21 @@ class ApplyBodyImpulse(ManagerTermBase):
         self._active_torques = np.zeros((self.num_envs, num_bodies, 3), dtype=np.float64)
         # Pre-sample the initial cooldown so the first impulse is preceded by a
         # cooldown rather than firing immediately at t=0.
-        self._interval_time_left = self._sample_cooldown(self.num_envs)
+        self._interval_time_left = self._to_host_state(self._sample_cooldown(self.num_envs))
 
     def _sample_cooldown(self, count: int) -> np.ndarray:
         return self._host_uniform(self._cooldown_s[0], self._cooldown_s[1], count)
 
-    def _host_uniform(self, lower: float, upper: float, count: int) -> np.ndarray:
+    def _host_uniform(self, lower: float, upper: float, count: int) -> torch.Tensor:
         rng = _require_torch_rng(self._env, "apply_body_impulse")
-        return (
-            (
-                torch.rand((count,), generator=rng.generator, device=rng.device)
-                * float(upper - lower)
-                + float(lower)
-            )
-            .cpu()
-            .numpy()
-        )
+        return torch.rand((count,), generator=rng.generator, device=rng.device) * float(
+            upper - lower
+        ) + float(lower)
+
+    def _to_host_state(self, values: torch.Tensor) -> np.ndarray:
+        if values.device.type == "cpu":
+            return values.numpy()
+        return values.cpu().numpy()
 
     def __call__(
         self,
@@ -1842,7 +1841,9 @@ class ApplyBodyImpulse(ManagerTermBase):
             self._active_forces[expired_ids] = 0.0
             self._active_torques[expired_ids] = 0.0
             self._time_remaining[expired_ids] = 0.0
-            self._interval_time_left[expired_ids] = self._sample_cooldown(len(expired_ids))
+            self._interval_time_left[expired_ids] = self._to_host_state(
+                self._sample_cooldown(len(expired_ids))
+            )
 
         # Decrement cooldown timers, then trigger eligible envs.
         self._interval_time_left -= dt
@@ -1851,11 +1852,15 @@ class ApplyBodyImpulse(ManagerTermBase):
             trigger_ids = np.flatnonzero(eligible)
             count = len(trigger_ids)
             num_bodies = self._backend_body_ids.size
-            forces = self._host_uniform(
-                self._force_range[0], self._force_range[1], count * num_bodies * 3
+            forces = self._to_host_state(
+                self._host_uniform(
+                    self._force_range[0], self._force_range[1], count * num_bodies * 3
+                )
             ).reshape(count, num_bodies, 3)
-            torques = self._host_uniform(
-                self._torque_range[0], self._torque_range[1], count * num_bodies * 3
+            torques = self._to_host_state(
+                self._host_uniform(
+                    self._torque_range[0], self._torque_range[1], count * num_bodies * 3
+                )
             ).reshape(count, num_bodies, 3)
             if self._body_point_offset is not None:
                 quats = self._entity.data.body_link_quat_w[trigger_ids][:, self._local_body_ids]
@@ -1866,11 +1871,13 @@ class ApplyBodyImpulse(ManagerTermBase):
                 torques = torques + np.cross(offset_w, forces)
             self._active_forces[trigger_ids] = forces
             self._active_torques[trigger_ids] = torques
-            self._time_remaining[trigger_ids] = self._host_uniform(
-                self._duration_s[0], self._duration_s[1], count
+            self._time_remaining[trigger_ids] = self._to_host_state(
+                self._host_uniform(self._duration_s[0], self._duration_s[1], count)
             )
             self._active[trigger_ids] = True
-            self._interval_time_left[trigger_ids] = self._sample_cooldown(count)
+            self._interval_time_left[trigger_ids] = self._to_host_state(
+                self._sample_cooldown(count)
+            )
 
         # Re-stage the full-width wrench while any impulse is active: backends
         # with one-shot external-force channels (MuJoCo) need the sustain
@@ -1900,7 +1907,7 @@ class ApplyBodyImpulse(ManagerTermBase):
         self._active_forces[ids] = 0.0
         self._active_torques[ids] = 0.0
         self._time_remaining[ids] = 0.0
-        self._interval_time_left[ids] = self._sample_cooldown(len(ids))
+        self._interval_time_left[ids] = self._to_host_state(self._sample_cooldown(len(ids)))
         if was_active.size:
             zeros = np.zeros((len(was_active), self._backend_body_ids.size, 3), dtype=np.float64)
             self._entity.apply_body_wrench_to_sim(
