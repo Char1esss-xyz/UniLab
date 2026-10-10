@@ -1283,7 +1283,7 @@ class RandomizeBodyMassInertia(ManagerTermBase):
                 f"EventManager term '{term_name}' mass and inertia default tables use "
                 "incompatible canonical/per-environment layouts"
             )
-        self._scales: np.ndarray | None = None
+        self._scales: torch.Tensor | None = None
 
     def __call__(
         self,
@@ -1301,26 +1301,29 @@ class RandomizeBodyMassInertia(ManagerTermBase):
                 (env.num_envs, self._body_ids.size),
                 dtype=torch.float64,
             )
-            self._scales = torch.exp(2.0 * alpha).cpu().numpy()
-        scales = self._scales[ids]
-        default_mass = _selected_reset_defaults(
+            self._scales = torch.exp(2.0 * alpha)
+        rows = torch.from_numpy(np.ascontiguousarray(ids, dtype=np.int64))
+        scales = self._scales.index_select(0, rows).to(device=self._scales.device)
+        default_mass = _selected_reset_defaults_tensor(
             self._default_mass,
             ids,
             canonical_ndim=1,
+            device=self._scales.device,
         )
-        default_inertia = _selected_reset_defaults(
+        default_inertia = _selected_reset_defaults_tensor(
             self._default_inertia,
             ids,
             canonical_ndim=2,
+            device=self._scales.device,
         )
         self._entity.write_body_mass_to_sim(
-            default_mass * scales,
+            (default_mass * scales).cpu(),
             body_ids=self._body_ids,
             env_ids=ids,
             term_name="randomize_body_mass_inertia",
         )
         self._entity.write_body_inertia_to_sim(
-            default_inertia * scales[:, :, None],
+            (default_inertia * scales[..., None]).cpu(),
             body_ids=self._body_ids,
             env_ids=ids,
             term_name="randomize_body_mass_inertia",
