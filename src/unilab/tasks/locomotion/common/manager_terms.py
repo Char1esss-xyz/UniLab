@@ -291,46 +291,69 @@ def alive(env: ManagerBasedRlEnv) -> torch.Tensor:
     return torch.ones((env.num_envs,), dtype=torch.float32)
 
 
-def joint_deviation_l1(
-    env: ManagerBasedRlEnv,
-    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> torch.Tensor:
+class joint_deviation_l1(ManagerTermBase):
     """Penalize selected joint displacement from the default pose with an L1 kernel."""
-    asset = _asset(env, asset_cfg)
-    position = asset.data.joint_pos[:, asset_cfg.joint_ids]
-    default = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
-    if (
-        not isinstance(position, np.ndarray)
-        or position.ndim != 2
-        or position.shape[0] != env.num_envs
-    ):
-        shape = getattr(position, "shape", None)
-        raise ValueError(
-            f"joint_deviation_l1 joint position must be 2-D with leading dimension {env.num_envs}, got {shape}"
-        )
-    default = _state("joint_deviation_l1", "default joint position", default, position.shape)
-    position = _state("joint_deviation_l1", "joint position", position, position.shape)
-    return (_torch_state(position) - _torch_state(default)).abs().sum(dim=1)
+
+    def __init__(self, cfg: ManagerTermBaseCfg, env: ManagerBasedRlEnv):
+        super().__init__(env)
+        asset_cfg = cfg.params.get("asset_cfg", _DEFAULT_ASSET_CFG)
+        if not isinstance(asset_cfg, SceneEntityCfg):
+            raise TypeError(f"{self.name} asset_cfg must be a SceneEntityCfg")
+        self._entity_name = asset_cfg.name
+        self._joint_ids = asset_cfg.joint_ids
+
+    @property
+    def tensor_state_entity(self) -> str:
+        return self._entity_name
+
+    def __call__(
+        self,
+        env: ManagerBasedRlEnv,
+        command_name: str = "twist",
+        command_threshold: float = 0.1,
+        asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    ) -> torch.Tensor:
+        del asset_cfg
+        read_plan = getattr(env.scene, "_tensor_read_plan", None)
+        if read_plan is None:
+            raise NotImplementedError(
+                f"{self.name} requires the Manager packed joint-state read plan"
+            )
+        position = read_plan.joint_tensor_view(self._entity_name).joint_pos[self._joint_ids]
+        default = env.scene[self._entity_name].data.default_joint_pos_torch(env.device)[
+            :, self._joint_ids
+        ]
+        return (position - default).abs().sum(dim=1)
 
 
-def stand_still_l1(
-    env: ManagerBasedRlEnv,
-    command_name: str,
-    command_threshold: float = 0.1,
-    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> torch.Tensor:
+class stand_still_l1(joint_deviation_l1):
     """Penalize selected joint deviation only below the commanded-motion threshold."""
-    threshold = _real(
-        "stand_still_l1",
-        "command_threshold",
-        command_threshold,
-        minimum=0.0,
-    )
-    command = _command(env, "stand_still_l1", command_name)
-    if not isinstance(command, torch.Tensor):
-        command = _torch_state(command)
-    stopped = torch.linalg.vector_norm(command, dim=1) < threshold
-    return joint_deviation_l1(env, asset_cfg=asset_cfg) * stopped.to(dtype=torch.float32)
+
+    def __init__(self, cfg: ManagerTermBaseCfg, env: ManagerBasedRlEnv):
+        super().__init__(cfg, env)
+        self._command_name = cfg.params["command_name"]
+        if not isinstance(self._command_name, str) or not self._command_name:
+            raise ValueError(f"{self.name} command_name must be a non-empty string")
+        self._command_threshold = _real(
+            self.name,
+            "command_threshold",
+            cfg.params.get("command_threshold", 0.1),
+            minimum=0.0,
+        )
+
+    def __call__(
+        self,
+        env: ManagerBasedRlEnv,
+        command_name: str = "twist",
+        command_threshold: float = 0.1,
+        asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    ) -> torch.Tensor:
+        del command_name, command_threshold, asset_cfg
+        command = _command(env, self.name, self._command_name)
+        if not isinstance(command, torch.Tensor):
+            command = _torch_state(command)
+        stopped = torch.linalg.vector_norm(command, dim=1) < self._command_threshold
+        return super().__call__(env) * stopped.to(dtype=torch.float32)
 
 
 class _GaitTerm(ManagerTermBase):

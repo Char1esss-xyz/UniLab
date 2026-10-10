@@ -62,7 +62,10 @@ class _ParityScene:
         self._tensor_read_plan = SimpleNamespace(
             body_tensor_view=lambda entity, names: SimpleNamespace(
                 pos_w=torch.tensor([[[1.0, 2.0, 0.4]], [[-1.0, 0.5, 0.2]]], dtype=torch.float32)
-            )
+            ),
+            joint_tensor_view=lambda entity: SimpleNamespace(
+                joint_pos=torch.tensor([[0.2, -0.1, 0.5], [-0.4, 0.3, 0.1]], dtype=torch.float32)
+            ),
         )
         self.robot = SimpleNamespace(
             data=SimpleNamespace(
@@ -72,9 +75,9 @@ class _ParityScene:
                 root_link_ang_vel_b=np.array(
                     [[0.1, -0.2, 0.4], [-0.3, 0.2, -0.1]], dtype=np.float32
                 ),
-                root_link_pos_w=np.array([[1.0, 2.0, 0.4], [-1.0, 0.5, 0.2]], dtype=np.float32),
-                joint_pos=np.array([[0.2, -0.1, 0.5], [-0.4, 0.3, 0.1]], dtype=np.float32),
-                default_joint_pos=np.array([[0.1, -0.2, 0.5], [-0.1, 0.1, 0.0]], dtype=np.float32),
+                default_joint_pos_torch=lambda device: torch.tensor(
+                    [[0.1, -0.2, 0.5], [-0.1, 0.1, 0.0]], dtype=torch.float32
+                ),
             )
         )
 
@@ -346,6 +349,9 @@ def test_base_reward_terms_match_go2_flat_equations() -> None:
     env = _parity_env()
     asset = SceneEntityCfg("robot")
     data = cast(Any, env).scene.robot.data
+    root_pos_w = torch.tensor([[[1.0, 2.0, 0.4]], [[-1.0, 0.5, 0.2]]], dtype=torch.float32)[:, 0]
+    joint_pos = torch.tensor([[0.2, -0.1, 0.5], [-0.4, 0.3, 0.1]], dtype=torch.float32)
+    default_joint_pos = torch.tensor([[0.1, -0.2, 0.5], [-0.1, 0.1, 0.0]], dtype=torch.float32)
     command = cast(Any, env).command_manager.command
     std = 0.5
     actual = {
@@ -384,8 +390,8 @@ def test_base_reward_terms_match_go2_flat_equations() -> None:
         "track_yaw": np.exp(-np.square(command[:, 2] - data.root_link_ang_vel_b[:, 2]) / std**2),
         "lin_z": np.square(data.root_link_lin_vel_b[:, 2]),
         "ang_xy": np.sum(np.square(data.root_link_ang_vel_b[:, :2]), axis=1),
-        "height": np.square(data.root_link_pos_w[:, 2] - 0.3),
-        "pose": np.sum(np.abs(data.joint_pos - data.default_joint_pos), axis=1),
+        "height": torch.square(root_pos_w[:, 2] - 0.3),
+        "pose": (joint_pos - default_joint_pos).abs().sum(dim=1),
     }
     for name in expected:
         assert actual[name].shape == (2,)
