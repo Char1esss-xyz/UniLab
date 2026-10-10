@@ -11,7 +11,6 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Sequence, cast
 
-import numpy as np
 import torch
 from prettytable import PrettyTable
 
@@ -43,7 +42,7 @@ class ObservationTermCfg(ManagerTermBaseCfg):
     clip: tuple[float, float] | None = None
     """Range (min, max) to clip the observation values."""
 
-    scale: tuple[float, ...] | float | np.ndarray | None = None
+    scale: tuple[float, ...] | float | torch.Tensor | None = None
     """Scaling factor(s) to multiply the observation by."""
 
     delay_min_lag: int = 0
@@ -141,9 +140,16 @@ def _freeze_param_value(value):
         return tuple(_freeze_param_value(item) for item in value)
     if isinstance(value, set):
         return frozenset(_freeze_param_value(item) for item in value)
-    if isinstance(value, np.ndarray):
-        return ("__ndarray__", value.shape, str(value.dtype), value.tobytes())
+    if isinstance(value, torch.Tensor):
+        return ("__tensor__", tuple(value.shape), str(value.dtype), value.flatten().tolist())
     return value
+
+
+def _shape_product(shape: Sequence[int]) -> int:
+    result = 1
+    for value in shape:
+        result *= int(value)
+    return result
 
 
 class ObservationManager(ManagerBase):
@@ -170,22 +176,33 @@ class ObservationManager(ManagerBase):
 
         for group_name, group_term_dims in self._group_obs_term_dim.items():
             if self._group_obs_concatenate[group_name]:
-                term_dims = np.stack([np.asarray(dims) for dims in group_term_dims], axis=0)
-                if len(term_dims.shape) > 1:
-                    if self._group_obs_concatenate_dim[group_name] >= 0:
-                        dim = self._group_obs_concatenate_dim[group_name] - 1
-                    else:
-                        dim = self._group_obs_concatenate_dim[group_name]
-                    dim_sum = np.sum(term_dims[:, dim], axis=0)
-                    term_dims[0, dim] = dim_sum
-                    term_dims = term_dims[0]
-                else:
-                    term_dims = np.sum(term_dims, axis=0)
-                self._group_obs_dim[group_name] = tuple(term_dims.tolist())
+                term_dims = self._concatenated_group_dim(
+                    group_term_dims,
+                    concatenate_dim=self._group_obs_concatenate_dim[group_name],
+                )
+                self._group_obs_dim[group_name] = term_dims
             else:
                 self._group_obs_dim[group_name] = group_term_dims
 
         self._obs_buffer: dict[str, torch.Tensor | dict[str, torch.Tensor]] | None = None
+
+    @staticmethod
+    def _concatenated_group_dim(
+        term_dims: Sequence[Sequence[int]], *, concatenate_dim: int
+    ) -> tuple[int, ...]:
+        if not term_dims:
+            raise ValueError("cannot concatenate an empty observation group")
+        if len({len(dims) for dims in term_dims}) != 1:
+            raise ValueError(
+                f"cannot concatenate observation terms with inconsistent ranks: {term_dims}"
+            )
+        result = list(term_dims[0])
+        resolved_dim = concatenate_dim if concatenate_dim < 0 else concatenate_dim - 1
+        if resolved_dim < -len(result) or resolved_dim >= len(result):
+            raise IndexError(f"observation concatenate_dim {concatenate_dim} is out of range")
+        for dims in term_dims[1:]:
+            result[resolved_dim] += dims[resolved_dim]
+        return tuple(result)
 
     def __str__(self) -> str:
         msg = f"<ObservationManager> contains {len(self._group_obs_term_names)} groups.\n"
@@ -205,7 +222,7 @@ class ObservationManager(ManagerBase):
             for index, (name, dims, term_cfg) in enumerate(obs_terms):
                 if term_cfg.history_length > 0 and term_cfg.flatten_history_dim:
                     # Flattened history: show (9,) ← 3×(3,)
-                    original_size = int(np.prod(dims)) // term_cfg.history_length
+                    original_size = int(torch.tensor(dims).prod().item()) // term_cfg.history_length
                     original_shape = (original_size,) if len(dims) == 1 else dims[1:]
                     shape_str = f"{dims}  ← {term_cfg.history_length}×{original_shape}"
                 else:
@@ -239,7 +256,7 @@ class ObservationManager(ManagerBase):
                 self._group_obs_term_dim[group_name],
                 strict=False,
             ):
-                data_length = np.prod(shape)
+                data_length = _shape_product(shape)
                 term = data[env_idx, idx : idx + data_length]
                 terms.append((group_name + "-" + name, term.tolist()))
                 idx += data_length
@@ -938,7 +955,7 @@ class ObservationManager(ManagerBase):
                     old_dims.insert(1, term_cfg.history_length)
                     obs_dims = tuple(old_dims)
                     if term_cfg.flatten_history_dim:
-                        obs_dims = (obs_dims[0], int(np.prod(obs_dims[1:])))
+                        obs_dims = (obs_dims[0], _shape_product(obs_dims[1:]))
 
                 self._group_obs_term_dim[group_name].append(obs_dims[1:])
 
