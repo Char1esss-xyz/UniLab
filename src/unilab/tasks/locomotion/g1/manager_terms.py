@@ -629,21 +629,33 @@ class feet_air_time(_FootContactTerm):
 
     def __init__(self, cfg: ManagerTermBaseCfg, env: _G1Env):
         super().__init__(cfg, env)
-        self._air_time = np.zeros((env.num_envs, 2), dtype=np.float32)
+        self._air_time = torch.zeros(
+            (env.num_envs, 2), dtype=torch.float32, device=torch.device(env.device)
+        )
 
-    def reset(self, env_ids: torch.Tensor | np.ndarray | slice | None = None) -> None:
+    def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
         self._air_time[env_ids if env_ids is not None else slice(None)] = 0.0
 
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
         del params
         left_contact, right_contact = self._contact_pair(env)
-        contact = np.column_stack([left_contact, right_contact])
+        if not isinstance(left_contact, torch.Tensor):
+            left_contact = torch.from_numpy(np.ascontiguousarray(left_contact)).to(
+                device=self._air_time.device, dtype=torch.bool
+            )
+        if not isinstance(right_contact, torch.Tensor):
+            right_contact = torch.from_numpy(np.ascontiguousarray(right_contact)).to(
+                device=self._air_time.device, dtype=torch.bool
+            )
+        contact = torch.stack((left_contact, right_contact), dim=1)
         step_dt = _real(self.name, "step_dt", env.step_dt, minimum=0.0, strict_minimum=True)
-        self._air_time = np.where(contact, 0.0, self._air_time + step_dt).astype(
-            np.float32, copy=False
+        self._air_time = torch.where(
+            contact,
+            torch.zeros_like(self._air_time),
+            self._air_time + step_dt,
         )
         in_range = (self._air_time > 0.05) & (self._air_time < 0.5)
-        return np.asarray(np.sum(in_range.astype(np.float32), axis=1), dtype=np.float32)
+        return in_range.to(dtype=torch.float32).sum(dim=1)
 
 
 # ---------------------------------------------------------------------------
