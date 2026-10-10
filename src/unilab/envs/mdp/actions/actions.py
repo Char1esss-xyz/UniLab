@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from numbers import Real
 from typing import TYPE_CHECKING, Any, ClassVar
 
-import numpy as np
 import torch
 
 from unilab.managers.action_manager import ActionTerm, ActionTermCfg
@@ -23,7 +22,7 @@ if TYPE_CHECKING:
 
 
 def _real(value: Any, *, label: str) -> float:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
+    if isinstance(value, bool) or not isinstance(value, Real):
         raise TypeError(f"{label} must be a real number, got {type(value).__name__}")
     result = float(value)
     if not math.isfinite(result):
@@ -84,12 +83,9 @@ class BaseAction(ActionTerm):
     def __init__(self, cfg: BaseActionCfg, env: ManagerBasedRlEnv):
         super().__init__(cfg=cfg, env=env)
         target_ids, target_names = self._entity.find_joints_by_actuator_names(cfg.actuator_names)
-        self._target_ids = np.asarray(target_ids, dtype=np.intp)
-        self._target_ids.setflags(write=False)
+        self._target_ids = tuple(target_ids)
         self._device = getattr(env, "device", torch.device("cpu"))
-        self._target_index = torch.from_numpy(self._target_ids.copy()).to(
-            dtype=torch.int64, device=self._device
-        )
+        self._target_index = torch.tensor(self._target_ids, dtype=torch.int64, device=self._device)
         self._target_names = list(target_names)
         self._action_dim = len(target_ids)
         self._raw_actions = torch.zeros(
@@ -105,24 +101,30 @@ class BaseAction(ActionTerm):
 
     def _resolve_affine(
         self, value: float | dict[str, float], *, default: float, label: str
-    ) -> float | np.ndarray:
+    ) -> float | torch.Tensor:
         if isinstance(value, dict):
-            result = np.full(self._affine_shape, default, dtype=np.float32)
             indices, resolved = _resolve_named_values(
                 value, self._target_names, label=f"{type(self).__name__} {label}"
             )
-            result[:, indices] = [
-                _real(item, label=f"{type(self).__name__} {label}") for item in resolved
-            ]
+            result = torch.full(
+                self._affine_shape,
+                default,
+                dtype=torch.float32,
+                device=self._device,
+            )
+            values = [_real(item, label=f"{type(self).__name__} {label}") for item in resolved]
+            result[:, torch.tensor(indices, device=self._device)] = torch.tensor(
+                values, dtype=torch.float32, device=self._device
+            )
             return result
         return _real(value, label=f"{type(self).__name__} {label}")
 
-    def _resolve_clip(self, value: dict[str, tuple] | None) -> np.ndarray | None:
+    def _resolve_clip(self, value: dict[str, tuple] | None) -> torch.Tensor | None:
         if value is None:
             return None
-        result = np.empty((*self._affine_shape, 2), dtype=np.float32)
-        result[..., 0] = -np.inf
-        result[..., 1] = np.inf
+        result = torch.empty((*self._affine_shape, 2), dtype=torch.float32, device=self._device)
+        result[..., 0] = -torch.inf
+        result[..., 1] = torch.inf
         indices, bounds = _resolve_named_values(
             value, self._target_names, label=f"{type(self).__name__} clip"
         )
@@ -143,15 +145,15 @@ class BaseAction(ActionTerm):
             result[:, index, 1] = upper
         return result
 
-    def _cold_affine(self, value: float | np.ndarray) -> float | torch.Tensor:
-        if isinstance(value, np.ndarray):
-            return torch.from_numpy(value).to(dtype=torch.float32, device=self._device, copy=True)
+    def _cold_affine(self, value: float | torch.Tensor) -> float | torch.Tensor:
+        if isinstance(value, torch.Tensor):
+            return value.to(dtype=torch.float32, device=self._device, copy=True)
         return value
 
-    def _cold_clip(self, value: np.ndarray | None) -> torch.Tensor | None:
+    def _cold_clip(self, value: torch.Tensor | None) -> torch.Tensor | None:
         if value is None:
             return None
-        return torch.from_numpy(value).to(dtype=torch.float32, device=self._device, copy=True)
+        return value.to(dtype=torch.float32, device=self._device, copy=True)
 
     @property
     def scale(self) -> float | torch.Tensor:
@@ -174,7 +176,7 @@ class BaseAction(ActionTerm):
         return self._action_dim
 
     @property
-    def target_ids(self) -> np.ndarray:
+    def target_ids(self) -> tuple[int, ...]:
         return self._target_ids
 
     @property
@@ -263,11 +265,13 @@ class JointPositionAction(BaseAction):
         super().__init__(cfg=cfg, env=env)
         if cfg.use_default_offset:
             self._offset = self._cold_affine(
-                self._entity.data.default_joint_pos[:, self._target_ids].copy()
+                self._entity.data.default_joint_pos_torch(self._device)[:, self._target_index]
             )
         self._tensor_target = torch.empty_like(self._processed_actions)
-        self._full_width_natural_target = self._target_ids.size == self._entity.num_joints and bool(
-            np.array_equal(self._target_ids, np.arange(self._entity.num_joints, dtype=np.intp))
+        self._full_width_natural_target = len(
+            self._target_ids
+        ) == self._entity.num_joints and tuple(self._target_ids) == tuple(
+            range(self._entity.num_joints)
         )
 
     def apply_actions(self) -> None:
@@ -362,7 +366,7 @@ class JointVelocityAction(BaseAction):
             raise TypeError("JointVelocityActionCfg use_default_offset must be bool")
         if cfg.use_default_offset:
             self._offset = self._cold_affine(
-                self._entity.data.default_joint_vel[:, self._target_ids].copy()
+                self._entity.data.default_joint_vel_torch(self._device)[:, self._target_index]
             )
 
     def apply_actions(self) -> None:
