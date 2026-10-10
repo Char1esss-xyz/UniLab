@@ -59,6 +59,11 @@ class _Scene:
 
 class _ParityScene:
     def __init__(self) -> None:
+        self._tensor_read_plan = SimpleNamespace(
+            body_tensor_view=lambda entity, names: SimpleNamespace(
+                pos_w=torch.tensor([[[1.0, 2.0, 0.4]], [[-1.0, 0.5, 0.2]]], dtype=torch.float32)
+            )
+        )
         self.robot = SimpleNamespace(
             data=SimpleNamespace(
                 root_link_lin_vel_b=np.array(
@@ -137,6 +142,10 @@ def _parity_env() -> ManagerBasedRlEnv:
         ManagerBasedRlEnv,
         SimpleNamespace(
             num_envs=2,
+            device=torch.device("cpu"),
+            cfg=SimpleNamespace(
+                scene=SimpleNamespace(entities={"robot": SimpleNamespace(root_body_name="base")})
+            ),
             scene=_ParityScene(),
             command_manager=_Commands(),
             max_episode_length_s=20.0,

@@ -529,9 +529,8 @@ class ManagerBasedRlEnv(TorchEnv):
                         narrow=narrow,
                     )
                 )
-                if manager_name == "termination":
-                    term = manager.get_term_cfg(name).func
-                    specs.extend(self._manager_term_body_read_specs(manager_name, name, term))
+                term = manager.get_term_cfg(name).func
+                specs.extend(self._manager_term_body_read_specs(manager_name, name, term))
         return specs
 
     def _task_tensor_state_read_specs(self) -> list[SceneTensorReadSpec]:
@@ -598,6 +597,9 @@ class ManagerBasedRlEnv(TorchEnv):
             )
         params = getattr(getattr(term, "cfg", None), "params", {})
         entity_name = params.get("entity_name") if isinstance(params, dict) else None
+        if not isinstance(entity_name, str) or not entity_name:
+            asset_cfg = params.get("asset_cfg") if isinstance(params, dict) else None
+            entity_name = getattr(asset_cfg, "name", None)
         if not isinstance(entity_name, str) or not entity_name:
             entity_name = "robot"
         return [SceneTensorReadSpec(entity=entity_name, body_names=tuple(body_names))]

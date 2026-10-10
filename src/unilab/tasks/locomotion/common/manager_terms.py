@@ -242,21 +242,48 @@ def ang_vel_xy_l2(
     return velocity_tensor[:, :2].square().sum(dim=1)
 
 
-def base_height_l2(
-    env: ManagerBasedRlEnv,
-    target_height: float,
-    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> torch.Tensor:
+class base_height_l2(ManagerTermBase):
     """Penalize world-frame root height error for the flat-ground pilot."""
-    target = _real("base_height_l2", "target_height", target_height)
-    position = _state(
-        "base_height_l2",
-        "root position",
-        _asset(env, asset_cfg).data.root_link_pos_w,
-        (env.num_envs, 3),
-    )
-    position_tensor = _torch_state(position)
-    return (position_tensor[:, 2] - target).square()
+
+    def __init__(self, cfg: ManagerTermBaseCfg, env: ManagerBasedRlEnv):
+        super().__init__(env)
+        self._target_height = _real(
+            self.name,
+            "target_height",
+            cfg.params["target_height"],
+        )
+        asset_cfg = cfg.params.get("asset_cfg", _DEFAULT_ASSET_CFG)
+        if not isinstance(asset_cfg, SceneEntityCfg):
+            raise TypeError(f"{self.name} asset_cfg must be a SceneEntityCfg")
+        self._entity_name = asset_cfg.name
+        entity_cfg = env.cfg.scene.entities.get(self._entity_name) if env.cfg.scene else None
+        root = getattr(entity_cfg, "root_body_name", None) if entity_cfg is not None else None
+        if not isinstance(root, str) or not root:
+            raise ValueError(f"{self.name} requires an entity root_body_name")
+        self._root_body_name = root
+
+    @property
+    def tensor_body_names(self) -> tuple[str, ...]:
+        return (self._root_body_name,)
+
+    @property
+    def entity_name(self) -> str:
+        return self._entity_name
+
+    def __call__(
+        self,
+        env: ManagerBasedRlEnv,
+        target_height: float,
+        asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    ) -> torch.Tensor:
+        del target_height, asset_cfg
+        read_plan = getattr(env.scene, "_tensor_read_plan", None)
+        if read_plan is None:
+            raise NotImplementedError(
+                f"{self.name} requires the Manager packed root-body read plan"
+            )
+        body = read_plan.body_tensor_view(self._entity_name, (self._root_body_name,))
+        return (body.pos_w[:, 0, 2] - self._target_height).square()
 
 
 def alive(env: ManagerBasedRlEnv) -> torch.Tensor:

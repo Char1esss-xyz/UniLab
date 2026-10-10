@@ -8,6 +8,7 @@ env:
     entities:
       robot:
         root_body_name: base
+        body_names: [base]
         joint_names:
           - FL_hip_joint
           - FL_thigh_joint
