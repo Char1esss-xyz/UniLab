@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import numpy as np
 import torch
 
-from unilab.dtype_config import get_global_dtype
 from unilab.managers.manager_base import ManagerTermBaseCfg
 
 from .manager_terms import SensorTermBase, _command, _real, _state
@@ -106,7 +105,7 @@ class track_lin_vel(_CommandTrackingTerm):
             error = torch.sum(torch.square(command_torch[:, :2] - linvel[:, :2]), dim=1)
             return torch.exp(-error / self._sigma).to(dtype=torch.float32)
         error = np.sum(np.square(command[:, :2] - linvel[:, :2]), axis=1)
-        return np.asarray(np.exp(-error / self._sigma), dtype=get_global_dtype())
+        return np.asarray(np.exp(-error / self._sigma), dtype=np.float32)
 
 
 class track_ang_vel(_CommandTrackingTerm):
@@ -121,7 +120,7 @@ class track_ang_vel(_CommandTrackingTerm):
             error = torch.square(command_torch[:, 2] - gyro[:, 2])
             return torch.exp(-error / self._sigma).to(dtype=torch.float32)
         error = np.square(command[:, 2] - gyro[:, 2])
-        return np.asarray(np.exp(-error / self._sigma), dtype=get_global_dtype())
+        return np.asarray(np.exp(-error / self._sigma), dtype=np.float32)
 
 
 class lin_vel_z(_Vec3SensorTerm):
@@ -158,8 +157,8 @@ def _tensor_square_sum(
     if isinstance(values, torch.Tensor):
         return torch.sum(torch.square(values), dim=axis).to(dtype=torch.float32)
     if axis is None:
-        return np.asarray(np.square(values), dtype=get_global_dtype())
-    return np.asarray(np.sum(np.square(values), axis=axis), dtype=get_global_dtype())
+        return np.asarray(np.square(values), dtype=np.float32)
+    return np.asarray(np.sum(np.square(values), axis=axis), dtype=np.float32)
 
 
 __all__ = [

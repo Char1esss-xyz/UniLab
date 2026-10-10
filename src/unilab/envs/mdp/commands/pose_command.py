@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 
-from unilab.dtype_config import get_global_dtype
 from unilab.managers.command_manager import CommandTerm, CommandTermCfg
 from unilab.managers.torch_rng import TorchManagerRng
 

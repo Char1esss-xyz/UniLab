@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 import numpy as np
 import torch
 
-from unilab.dtype_config import get_global_dtype
 from unilab.managers.manager_base import ManagerTermBaseCfg
 from unilab.managers.scene_entity_config import SceneEntityCfg
 
@@ -410,7 +409,7 @@ def feet_clearance(
     gate = _command_gate(env, "feet_clearance", name, threshold)
     if gate is not None:
         cost = cost * gate
-    return torch.as_tensor(np.asarray(cost, dtype=get_global_dtype()))
+    return torch.as_tensor(np.asarray(cost, dtype=np.float32))
 
 
 class self_collision_cost(_FootContactTerm):
@@ -454,9 +453,7 @@ class angular_momentum_penalty(SensorTermBase):
             self._read(self._sensor, self.name),
             (env.num_envs, 3),
         )
-        return torch.as_tensor(
-            np.asarray(np.sum(np.square(angmom), axis=1), dtype=get_global_dtype())
-        )
+        return torch.as_tensor(np.asarray(np.sum(np.square(angmom), axis=1), dtype=np.float32))
 
 
 # Privileged per-foot observations (mjlab velocity critic terms).  These mirror
@@ -484,7 +481,7 @@ def foot_height(
             f"got {getattr(positions, 'shape', None)}"
         )
     positions = _state("foot_height", "foot body position", positions, positions.shape)
-    return torch.as_tensor(np.asarray(positions[:, :, 2], dtype=get_global_dtype()))
+    return torch.as_tensor(np.asarray(positions[:, :, 2], dtype=np.float32))
 
 
 class foot_air_time(_FootContactTerm):
@@ -553,7 +550,7 @@ class foot_contact_forces(_FootContactTerm):
             (env.num_envs, self._flat_width),
         )
         return torch.as_tensor(
-            np.asarray(np.sign(values) * np.log1p(np.abs(values)), dtype=get_global_dtype())
+            np.asarray(np.sign(values) * np.log1p(np.abs(values)), dtype=np.float32)
         )
 
 
