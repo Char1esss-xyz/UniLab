@@ -38,6 +38,10 @@ if TYPE_CHECKING:
 _DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
 
 
+def _torch_state(value: np.ndarray, *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+    return torch.from_numpy(np.ascontiguousarray(value)).to(dtype=dtype)
+
+
 def _sensor_groups(term: str, value: Any) -> tuple[tuple[str, ...], ...]:
     if isinstance(value, (str, bytes)) or not isinstance(value, (tuple, list)):
         raise TypeError(f"{term} sensor_groups must be a sequence of sensor-name sequences")
@@ -403,13 +407,18 @@ def feet_clearance(
         )
     positions = _state("feet_clearance", "foot body position", positions, positions.shape)
     velocities = _state("feet_clearance", "foot body velocity", velocities, positions.shape)
-    delta = np.abs(positions[:, :, 2] - target)
-    vel_norm = np.linalg.norm(velocities[:, :, :2], axis=2)
-    cost = np.sum(delta * vel_norm, axis=1)
+    position_tensor = _torch_state(positions)
+    velocity_tensor = _torch_state(velocities)
+    delta = (position_tensor[:, :, 2] - target).abs()
+    vel_norm = torch.linalg.vector_norm(velocity_tensor[:, :, :2], dim=2)
+    cost = (delta * vel_norm).sum(dim=1)
     gate = _command_gate(env, "feet_clearance", name, threshold)
     if gate is not None:
-        cost = cost * gate
-    return torch.as_tensor(np.asarray(cost, dtype=np.float32))
+        gate_tensor = (
+            gate if isinstance(gate, torch.Tensor) else _torch_state(gate, dtype=torch.bool)
+        )
+        cost = cost * gate_tensor
+    return cost.to(dtype=torch.float32)
 
 
 class self_collision_cost(_FootContactTerm):
@@ -453,7 +462,7 @@ class angular_momentum_penalty(SensorTermBase):
             self._read(self._sensor, self.name),
             (env.num_envs, 3),
         )
-        return torch.as_tensor(np.asarray(np.sum(np.square(angmom), axis=1), dtype=np.float32))
+        return _torch_state(angmom).square().sum(dim=1)
 
 
 # Privileged per-foot observations (mjlab velocity critic terms).  These mirror
@@ -481,7 +490,7 @@ def foot_height(
             f"got {getattr(positions, 'shape', None)}"
         )
     positions = _state("foot_height", "foot body position", positions, positions.shape)
-    return torch.as_tensor(np.asarray(positions[:, :, 2], dtype=np.float32))
+    return _torch_state(positions)[:, :, 2]
 
 
 class foot_air_time(_FootContactTerm):
@@ -549,9 +558,8 @@ class foot_contact_forces(_FootContactTerm):
             self._read(self._view, self.name),
             (env.num_envs, self._flat_width),
         )
-        return torch.as_tensor(
-            np.asarray(np.sign(values) * np.log1p(np.abs(values)), dtype=np.float32)
-        )
+        forces = _torch_state(values)
+        return forces.sign() * forces.abs().log1p()
 
 
 __all__ = [
