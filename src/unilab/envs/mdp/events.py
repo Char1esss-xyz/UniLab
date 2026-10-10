@@ -2005,8 +2005,7 @@ class RandomizeEncoderBias(ManagerTermBase):
                 (rows.numel(), columns.numel()),
                 dtype=torch.float32,
             )
-            bias = self._entity.data.encoder_bias_tensor
-            bias.index_copy_(0, rows, bias.index_select(0, rows).index_copy_(1, columns, sampled))
+            self._entity.data.update_encoder_bias_tensor(rows, columns, sampled)
             return
         self._entity.data.encoder_bias[np.ix_(ids, self._joint_ids)] = self._host_uniform(
             (ids.size, len(self._joint_ids)), env
