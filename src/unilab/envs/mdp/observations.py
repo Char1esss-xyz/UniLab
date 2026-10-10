@@ -1,21 +1,20 @@
 # Derived from mujocolab/mjlab v1.6.0 (0fb8a681),
 # src/mjlab/envs/mdp/observations.py.
 # Copyright 2025, The mjlab Developers.
-# Modified by UniLab for NumPy and the base-owned entity facade; Apache-2.0.
-"""Community-style observation terms for the NumPy manager runtime."""
+# Modified by UniLab for the base-owned entity facade; Apache-2.0.
+"""Community-style observation terms for the Manager runtime."""
 
 from __future__ import annotations
 
+import math
 import weakref
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
-import numpy as np
 import torch
 
 from unilab.managers.manager_base import ManagerTermBase, ManagerTermBaseCfg
 from unilab.managers.scene_entity_config import SceneEntityCfg
 from unilab.managers.torch_rng import TorchManagerRng
-from unilab.utils.rotation import np_quat_apply_batched, np_quat_from_angle_axis
 
 if TYPE_CHECKING:
     from unilab.base.entity import Entity
@@ -63,7 +62,7 @@ class _NamedSensorObservation(ManagerTermBase):
                 f"'{self._sensor_name}', received '{sensor_name}'"
             )
 
-    def _read(self) -> np.ndarray:
+    def _read(self) -> Any:
         try:
             return self._view.read()
         except (KeyError, TypeError, ValueError, NotImplementedError) as exc:
@@ -177,12 +176,12 @@ def projected_gravity(
 # observations see the SAME mounting error (legacy microduck recipe,
 # microduck_rl/src/mjlab_microduck/tasks/mdp.py:3618-3660). Weak keys keep the
 # cache from outliving the env.
-_IMU_MISALIGNMENT_QUATS: weakref.WeakKeyDictionary[ManagerBasedRlEnv, dict[float, np.ndarray]] = (
+_IMU_MISALIGNMENT_QUATS: weakref.WeakKeyDictionary[ManagerBasedRlEnv, dict[float, torch.Tensor]] = (
     weakref.WeakKeyDictionary()
 )
 
 
-def _imu_misalignment_quat(env: ManagerBasedRlEnv, max_angle_rad: float) -> np.ndarray:
+def _imu_misalignment_quat(env: ManagerBasedRlEnv, max_angle_rad: float) -> torch.Tensor:
     """Per-env constant IMU mounting-misalignment rotation, sampled once.
 
     Models a fixed small mounting/calibration error of the IMU on each robot:
@@ -209,7 +208,7 @@ def _imu_misalignment_quat(env: ManagerBasedRlEnv, max_angle_rad: float) -> np.n
         axis = axis / torch.linalg.vector_norm(axis, dim=-1, keepdim=True)
         half = 0.5 * angle
         quat_torch = torch.cat((torch.cos(half)[:, None], axis * torch.sin(half)[:, None]), dim=1)
-        quat = quat_torch.detach().cpu().numpy().astype(np.float32, copy=False)
+        quat = quat_torch.detach().to(dtype=torch.float32)
         per_env[max_angle_rad] = quat
     return quat
 
@@ -228,13 +227,13 @@ class _ImuMisalignedObservation(ManagerTermBase):
                 f"requires a real max_angle_deg, got {max_angle_deg!r}"
             )
         max_angle_deg = float(max_angle_deg)
-        if not np.isfinite(max_angle_deg) or max_angle_deg < 0.0:
+        if not math.isfinite(max_angle_deg) or max_angle_deg < 0.0:
             raise ValueError(
                 f"Observation term '{self._term_name}' capability 'IMU misalignment' "
                 f"requires a finite non-negative max_angle_deg, got {max_angle_deg}"
             )
         self._max_angle_deg = max_angle_deg
-        self._quat = _imu_misalignment_quat(env, float(np.deg2rad(max_angle_deg)))
+        self._quat = _imu_misalignment_quat(env, math.radians(max_angle_deg))
 
     def _validate_max_angle(self, max_angle_deg: float) -> None:
         if float(max_angle_deg) != self._max_angle_deg:
@@ -243,13 +242,13 @@ class _ImuMisalignedObservation(ManagerTermBase):
                 f"{self._max_angle_deg}, received {max_angle_deg}"
             )
 
-    def _rotate(self, values: np.ndarray | torch.Tensor) -> torch.Tensor:
-        result = np_quat_apply_batched(self._quat, values)
-        return torch.as_tensor(
-            result,
-            dtype=torch.float32,
-            device=getattr(self._env, "device", torch.device("cpu")),
-        )
+    def _rotate(self, values: Any) -> torch.Tensor:
+        device = getattr(self._env, "device", torch.device("cpu"))
+        vectors = torch.as_tensor(values, dtype=torch.float32, device=device)
+        quat = self._quat.to(device=device)
+        quat_w, quat_xyz = quat[..., 0:1], quat[..., 1:4]
+        cross = 2.0 * torch.linalg.cross(quat_xyz, vectors, dim=-1)
+        return vectors + quat_w * cross + torch.linalg.cross(quat_xyz, cross, dim=-1)
 
 
 class base_ang_vel_imu_misaligned(_ImuMisalignedObservation):
