@@ -1813,27 +1813,26 @@ class ApplyBodyImpulse(ManagerTermBase):
                 f"got {self._step_dt}"
             )
         num_bodies = self._backend_body_ids.size
-        self._time_remaining = np.zeros(self.num_envs, dtype=np.float64)
-        self._active = np.zeros(self.num_envs, dtype=np.bool_)
-        self._active_forces = np.zeros((self.num_envs, num_bodies, 3), dtype=np.float64)
-        self._active_torques = np.zeros((self.num_envs, num_bodies, 3), dtype=np.float64)
+        self._device = _require_torch_rng(self._env, "apply_body_impulse").device
+        self._time_remaining = torch.zeros(self.num_envs, dtype=torch.float64, device=self._device)
+        self._active = torch.zeros(self.num_envs, dtype=torch.bool, device=self._device)
+        self._active_forces = torch.zeros(
+            (self.num_envs, num_bodies, 3), dtype=torch.float64, device=self._device
+        )
+        self._active_torques = torch.zeros(
+            (self.num_envs, num_bodies, 3), dtype=torch.float64, device=self._device
+        )
         # Pre-sample the initial cooldown so the first impulse is preceded by a
         # cooldown rather than firing immediately at t=0.
-        self._interval_time_left = self._to_host_state(self._sample_cooldown(self.num_envs))
+        self._interval_time_left = self._sample_cooldown(self.num_envs)
 
-    def _sample_cooldown(self, count: int) -> np.ndarray:
+    def _sample_cooldown(self, count: int) -> torch.Tensor:
         return self._host_uniform(self._cooldown_s[0], self._cooldown_s[1], count)
 
     def _host_uniform(self, lower: float, upper: float, count: int) -> torch.Tensor:
         rng = _require_torch_rng(self._env, "apply_body_impulse")
-        return torch.rand((count,), generator=rng.generator, device=rng.device) * float(
-            upper - lower
-        ) + float(lower)
-
-    def _to_host_state(self, values: torch.Tensor) -> np.ndarray:
-        if values.device.type == "cpu":
-            return values.numpy()
-        return values.cpu().numpy()
+        samples = torch.rand((count,), generator=rng.generator, device=rng.device)
+        return (samples * float(upper - lower) + float(lower)).to(dtype=torch.float64)
 
     def __call__(
         self,
@@ -1852,52 +1851,44 @@ class ApplyBodyImpulse(ManagerTermBase):
         # Decrement active impulse timers, then expire finished impulses.
         self._time_remaining[self._active] -= dt
         expired = self._active & (self._time_remaining <= 0.0)
-        if np.any(expired):
-            expired_ids = np.flatnonzero(expired)
-            self._active[expired_ids] = False
-            self._active_forces[expired_ids] = 0.0
-            self._active_torques[expired_ids] = 0.0
-            self._time_remaining[expired_ids] = 0.0
-            self._interval_time_left[expired_ids] = self._to_host_state(
-                self._sample_cooldown(len(expired_ids))
-            )
+        self._active &= ~expired
+        self._active_forces[expired] = 0.0
+        self._active_torques[expired] = 0.0
+        self._time_remaining[expired] = 0.0
+        if bool(expired.any()):
+            expired_ids = torch.nonzero(expired, as_tuple=False).flatten()
+            self._interval_time_left[expired_ids] = self._sample_cooldown(expired_ids.numel())
 
         # Decrement cooldown timers, then trigger eligible envs.
         self._interval_time_left -= dt
         eligible = (~self._active) & (self._interval_time_left <= 0.0)
-        if np.any(eligible):
-            trigger_ids = np.flatnonzero(eligible)
-            count = len(trigger_ids)
+        if bool(eligible.any()):
+            trigger_ids = torch.nonzero(eligible, as_tuple=False).flatten()
+            count = trigger_ids.numel()
             num_bodies = self._backend_body_ids.size
-            forces = self._to_host_state(
-                self._host_uniform(
-                    self._force_range[0], self._force_range[1], count * num_bodies * 3
-                )
+            forces = self._host_uniform(
+                self._force_range[0], self._force_range[1], count * num_bodies * 3
             ).reshape(count, num_bodies, 3)
-            torques = self._to_host_state(
-                self._host_uniform(
-                    self._torque_range[0], self._torque_range[1], count * num_bodies * 3
-                )
+            torques = self._host_uniform(
+                self._torque_range[0], self._torque_range[1], count * num_bodies * 3
             ).reshape(count, num_bodies, 3)
             if self._body_point_offset is not None:
-                quats = self._entity.data.body_link_quat_w[trigger_ids][:, self._local_body_ids]
-                quat_rows = torch.from_numpy(np.ascontiguousarray(quats)).reshape(-1, 4)
+                quats = self._entity.data.body_link_quat_w
+                quat_rows = self._selected_body_quats(quats, trigger_ids)
                 offsets = (
                     torch.from_numpy(self._body_point_offset)
                     .to(dtype=quat_rows.dtype)
                     .expand(count * num_bodies, 3)
                 )
                 offset_w = _tensor_quat_apply(quat_rows, offsets).reshape(count, num_bodies, 3)
-                torques = torques + np.cross(offset_w, forces)
+                torques = torques + torch.linalg.cross(offset_w, forces)
             self._active_forces[trigger_ids] = forces
             self._active_torques[trigger_ids] = torques
-            self._time_remaining[trigger_ids] = self._to_host_state(
-                self._host_uniform(self._duration_s[0], self._duration_s[1], count)
+            self._time_remaining[trigger_ids] = self._host_uniform(
+                self._duration_s[0], self._duration_s[1], count
             )
             self._active[trigger_ids] = True
-            self._interval_time_left[trigger_ids] = self._to_host_state(
-                self._sample_cooldown(count)
-            )
+            self._interval_time_left[trigger_ids] = self._sample_cooldown(count)
 
         # Re-stage the full-width wrench while any impulse is active: backends
         # with one-shot external-force channels (MuJoCo) need the sustain
@@ -1905,10 +1896,10 @@ class ApplyBodyImpulse(ManagerTermBase):
         # target update. Newly expired rows stage zeros, which actively clears
         # persistent channels. Idle envs skip the call entirely so the term
         # never clobbers another producer's staged forces.
-        if np.any(self._active) or np.any(expired):
+        if bool(self._active.any() or expired.any()):
             self._entity.apply_body_wrench_to_sim(
-                self._active_forces,
-                self._active_torques if self._uses_torque else None,
+                self._active_forces.detach().cpu().numpy(),
+                self._active_torques.detach().cpu().numpy() if self._uses_torque else None,
                 self._backend_body_ids,
                 env_ids=None,
                 term_name="apply_body_impulse",
@@ -1922,12 +1913,13 @@ class ApplyBodyImpulse(ManagerTermBase):
             if isinstance(env_ids, slice)
             else resolve_env_ids(self._env, env_ids).astype(np.intp, copy=False)
         )
-        was_active = ids[self._active[ids]]
+        active = self._active.detach().cpu().numpy()
+        was_active = ids[active[ids]]
         self._active[ids] = False
         self._active_forces[ids] = 0.0
         self._active_torques[ids] = 0.0
         self._time_remaining[ids] = 0.0
-        self._interval_time_left[ids] = self._to_host_state(self._sample_cooldown(len(ids)))
+        self._interval_time_left[ids] = self._sample_cooldown(len(ids))
         if was_active.size:
             zeros = np.zeros((len(was_active), self._backend_body_ids.size, 3), dtype=np.float64)
             self._entity.apply_body_wrench_to_sim(
@@ -1937,6 +1929,18 @@ class ApplyBodyImpulse(ManagerTermBase):
                 env_ids=was_active,
                 term_name="apply_body_impulse",
             )
+
+    def _selected_body_quats(
+        self,
+        quats: np.ndarray,
+        trigger_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        rows = torch.from_numpy(np.ascontiguousarray(quats)).to(device=self._device)
+        rows = rows.index_select(0, trigger_ids.to(device=self._device))
+        columns = torch.from_numpy(np.ascontiguousarray(self._local_body_ids)).to(
+            device=self._device
+        )
+        return rows.index_select(1, columns).reshape(-1, 4)
 
 
 apply_body_impulse = ApplyBodyImpulse
