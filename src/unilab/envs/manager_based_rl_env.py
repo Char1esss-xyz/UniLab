@@ -935,7 +935,7 @@ class ManagerBasedRlEnv(TorchEnv):
             low=-np.inf,
             high=np.inf,
             shape=(self.action_manager.total_action_dim,),
-            dtype=get_global_dtype(),
+            dtype=np.float32,
         )
 
     @property

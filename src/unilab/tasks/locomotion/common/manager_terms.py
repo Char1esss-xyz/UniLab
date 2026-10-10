@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 import numpy as np
 import torch
 
-from unilab.dtype_config import get_global_dtype
 from unilab.managers.manager_base import ManagerTermBase, ManagerTermBaseCfg
 from unilab.managers.scene_entity_config import SceneEntityCfg
 
@@ -63,7 +62,7 @@ def _offsets(term: str, value: Any) -> np.ndarray:
         raise ValueError(f"{term} phase_offsets must contain 4 values, got {len(items)}")
     result = np.asarray(
         [_real(term, f"phase_offsets[{index}]", item) for index, item in enumerate(items)],
-        dtype=get_global_dtype(),
+        dtype=np.float32,
     )
     result.setflags(write=False)
     return result
@@ -206,7 +205,7 @@ def track_ang_vel_z_exp(
 def _exp_scaled(error: np.ndarray | torch.Tensor, scale: float):
     if isinstance(error, torch.Tensor):
         return torch.exp(-error / (scale * scale))
-    return torch.as_tensor(np.asarray(np.exp(-error / (scale * scale)), dtype=get_global_dtype()))
+    return torch.as_tensor(np.asarray(np.exp(-error / (scale * scale)), dtype=np.float32))
 
 
 def lin_vel_z_l2(
@@ -220,7 +219,7 @@ def lin_vel_z_l2(
         _asset(env, asset_cfg).data.root_link_lin_vel_b,
         (env.num_envs, 3),
     )
-    return torch.as_tensor(np.asarray(np.square(velocity[:, 2]), dtype=get_global_dtype()))
+    return torch.as_tensor(np.asarray(np.square(velocity[:, 2]), dtype=np.float32))
 
 
 def ang_vel_xy_l2(
@@ -234,9 +233,7 @@ def ang_vel_xy_l2(
         _asset(env, asset_cfg).data.root_link_ang_vel_b,
         (env.num_envs, 3),
     )
-    return torch.as_tensor(
-        np.asarray(np.sum(np.square(velocity[:, :2]), axis=1), dtype=get_global_dtype())
-    )
+    return torch.as_tensor(np.asarray(np.sum(np.square(velocity[:, :2]), axis=1), dtype=np.float32))
 
 
 def base_height_l2(
@@ -252,7 +249,7 @@ def base_height_l2(
         _asset(env, asset_cfg).data.root_link_pos_w,
         (env.num_envs, 3),
     )
-    return torch.as_tensor(np.asarray(np.square(position[:, 2] - target), dtype=get_global_dtype()))
+    return torch.as_tensor(np.asarray(np.square(position[:, 2] - target), dtype=np.float32))
 
 
 def alive(env: ManagerBasedRlEnv) -> torch.Tensor:

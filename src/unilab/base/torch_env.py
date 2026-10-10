@@ -61,14 +61,6 @@ class TorchEnvState:
         return dataclasses.replace(self, **updates)
 
 
-def _torch_dtype(dtype: np.dtype[Any]) -> torch.dtype:
-    if dtype == np.dtype(np.float32):
-        return torch.float32
-    if dtype == np.dtype(np.float64):
-        return torch.float64
-    raise TypeError(f"Unsupported environment float dtype {dtype!r}")
-
-
 def _cpu_time() -> float:
     process = os.times()
     return process.user + process.system
@@ -99,7 +91,7 @@ class TorchEnv(ABEnv):
         if requested_device.type == "cuda" and requested_device.index is None:
             requested_device = torch.device("cuda", index=torch.cuda.current_device())
         self._device = requested_device
-        self._dtype = _torch_dtype(get_global_dtype())
+        self._dtype = get_global_dtype()
         self._state: Optional[TorchEnvState] = None
         self._truncated_scratch = torch.zeros((num_envs,), dtype=torch.bool, device=self._device)
         self._final_observation_scratch: dict[str, torch.Tensor] | None = None

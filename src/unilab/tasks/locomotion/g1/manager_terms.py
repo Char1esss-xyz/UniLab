@@ -19,7 +19,6 @@ import torch
 
 from unilab.base.backend_factory import create_backend, env_backend_kwargs
 from unilab.base.curriculum import EpisodeLengthTracker
-from unilab.dtype_config import get_global_dtype
 from unilab.envs.manager_based_rl_env import (
     ManagerBasedRlEnv as _ConcreteManagerBasedRlEnv,
 )
@@ -110,7 +109,7 @@ def _weights(term: str, name: str, value: Any) -> np.ndarray:
         raise TypeError(f"{term} {name} must be a sequence of real numbers")
     result = np.asarray(
         [_real(term, f"{name}[{index}]", item) for index, item in enumerate(value)],
-        dtype=get_global_dtype(),
+        dtype=np.float32,
     )
     if result.ndim != 1 or result.shape[0] == 0:
         raise ValueError(f"{term} {name} must be a non-empty one-dimensional sequence")
@@ -132,13 +131,13 @@ def _exp(value: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
 def _values(value: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
     if isinstance(value, torch.Tensor):
         return value.to(dtype=torch.float32)
-    return np.asarray(value, dtype=get_global_dtype())
+    return np.asarray(value, dtype=np.float32)
 
 
 def _bool_values(value: np.ndarray | torch.Tensor | Any) -> np.ndarray | torch.Tensor:
     if isinstance(value, torch.Tensor):
         return value.to(dtype=torch.float32)
-    return np.asarray(value, dtype=get_global_dtype())
+    return np.asarray(value, dtype=np.float32)
 
 
 def _array_like(value: np.ndarray | torch.Tensor | bool | np.bool_) -> np.ndarray | torch.Tensor:
@@ -257,7 +256,7 @@ def compute_feet_phase_height_targets(
             stance_t**3 + 3 * stance_t**2 * (1 - stance_t),
             1.0 - (swing_t**3 + 3 * swing_t**2 * (1 - swing_t)),
         )
-        return np.asarray(swing_height * bezier, dtype=get_global_dtype())
+        return np.asarray(swing_height * bezier, dtype=np.float32)
 
     if isinstance(gait_phase, torch.Tensor):
         targets = cubic_bezier_height(gait_phase, swing_height)
@@ -487,7 +486,7 @@ class _GaitRewardTerm(_SensorTerm):
             forward_speed = torch.clamp(linvel[:, 0], min=0.0)
             return (forward_speed >= self._min_forward_speed).to(dtype=torch.float32)
         forward_speed = np.maximum(linvel[:, 0], 0.0)
-        return np.asarray(forward_speed >= self._min_forward_speed, dtype=get_global_dtype())
+        return np.asarray(forward_speed >= self._min_forward_speed, dtype=np.float32)
 
     def _gate_from_forward_speed(
         self, forward_speed: np.ndarray | torch.Tensor
@@ -496,7 +495,7 @@ class _GaitRewardTerm(_SensorTerm):
             positive_speed = torch.clamp(forward_speed, min=0.0)
             return (positive_speed >= self._min_forward_speed).to(dtype=torch.float32)
         positive_speed = np.maximum(forward_speed, 0.0)
-        return np.asarray(positive_speed >= self._min_forward_speed, dtype=get_global_dtype())
+        return np.asarray(positive_speed >= self._min_forward_speed, dtype=np.float32)
 
     def _phase_reward_inputs(
         self, env: _G1Env
@@ -621,11 +620,9 @@ class feet_double_stance(_FootContactTerm):
             forward_mask = (torch.clamp(command[:, 0], min=0.0) > 1.0e-6).to(dtype=torch.float32)
             return double_stance * forward_mask
         assert isinstance(command, np.ndarray)
-        double_stance = np.asarray(
-            np.logical_and(left_contact, right_contact), dtype=get_global_dtype()
-        )
-        forward_mask = np.asarray(np.maximum(command[:, 0], 0.0) > 1.0e-6, dtype=get_global_dtype())
-        return np.asarray(double_stance * forward_mask, dtype=get_global_dtype())
+        double_stance = np.asarray(np.logical_and(left_contact, right_contact), dtype=np.float32)
+        forward_mask = np.asarray(np.maximum(command[:, 0], 0.0) > 1.0e-6, dtype=np.float32)
+        return np.asarray(double_stance * forward_mask, dtype=np.float32)
 
 
 class feet_air_time(_FootContactTerm):
@@ -633,7 +630,7 @@ class feet_air_time(_FootContactTerm):
 
     def __init__(self, cfg: ManagerTermBaseCfg, env: _G1Env):
         super().__init__(cfg, env)
-        self._air_time = np.zeros((env.num_envs, 2), dtype=get_global_dtype())
+        self._air_time = np.zeros((env.num_envs, 2), dtype=np.float32)
 
     def reset(self, env_ids: torch.Tensor | np.ndarray | slice | None = None) -> None:
         self._air_time[env_ids if env_ids is not None else slice(None)] = 0.0
@@ -644,12 +641,10 @@ class feet_air_time(_FootContactTerm):
         contact = np.column_stack([left_contact, right_contact])
         step_dt = _real(self.name, "step_dt", env.step_dt, minimum=0.0, strict_minimum=True)
         self._air_time = np.where(contact, 0.0, self._air_time + step_dt).astype(
-            get_global_dtype(), copy=False
+            np.float32, copy=False
         )
         in_range = (self._air_time > 0.05) & (self._air_time < 0.5)
-        return np.asarray(
-            np.sum(in_range.astype(get_global_dtype()), axis=1), dtype=get_global_dtype()
-        )
+        return np.asarray(np.sum(in_range.astype(np.float32), axis=1), dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -721,9 +716,7 @@ class forward_progress(_LinVelTerm):
             return torch.clamp(forward_speed / commanded_speed, max=1.0).to(dtype=torch.float32)
         commanded_speed = np.maximum(command[:, 0], 1e-6)
         forward_speed = np.maximum(linvel[:, 0], 0.0)
-        return np.asarray(
-            np.minimum(forward_speed / commanded_speed, 1.0), dtype=get_global_dtype()
-        )
+        return np.asarray(np.minimum(forward_speed / commanded_speed, 1.0), dtype=np.float32)
 
 
 def _term_command_name(term: str, params: dict[str, Any]) -> str:
@@ -751,7 +744,7 @@ class under_speed(_LinVelTerm):
         commanded_speed = np.maximum(command[:, 0], 1e-6)
         forward_speed = np.maximum(linvel[:, 0], 0.0)
         gap = np.maximum(command[:, 0] - forward_speed, 0.0)
-        return np.asarray(gap / commanded_speed, dtype=get_global_dtype())
+        return np.asarray(gap / commanded_speed, dtype=np.float32)
 
 
 class g1_tilt_exceeded(_UpvectorTerm):
@@ -885,7 +878,7 @@ class penalty_close_feet_xy(_SensorTerm):
         feet_dist = np.linalg.norm(feet_delta, axis=1)
         return np.asarray(
             np.where(feet_dist < self._threshold, _square(feet_dist - self._threshold), 0.0),
-            dtype=get_global_dtype(),
+            dtype=np.float32,
         )
 
 
