@@ -1411,7 +1411,15 @@ class _BiasEntity:
     def __init__(self, num_envs: int, num_joints: int) -> None:
         self.num_joints = num_joints
         self.joint_names = [f"joint_{index}" for index in range(num_joints)]
-        self.data = SimpleNamespace(encoder_bias=np.zeros((num_envs, num_joints), dtype=np.float32))
+        self._bias = np.zeros((num_envs, num_joints), dtype=np.float32)
+        self.data = self
+
+    @property
+    def encoder_bias(self) -> np.ndarray:
+        return self._bias
+
+    def update_encoder_bias(self, rows, columns, values) -> None:
+        self._bias[np.ix_(rows, np.asarray(columns, dtype=np.intp))] = values
 
     def find_joints(self, names: list[str]) -> list[int]:
         return [self.joint_names.index(name) for name in names]
