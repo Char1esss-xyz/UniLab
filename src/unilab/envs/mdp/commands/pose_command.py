@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from numbers import Real
 from typing import TYPE_CHECKING
 
-import numpy as np
 import torch
 
 from unilab.managers.command_manager import CommandTerm, CommandTermCfg
@@ -23,7 +22,7 @@ if TYPE_CHECKING:
 
 
 def _real(value: object, *, label: str, minimum: float | None = None) -> float:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
+    if isinstance(value, bool) or not isinstance(value, Real):
         raise TypeError(f"{label} must be a real number")
     result = float(value)
     if not math.isfinite(result):
