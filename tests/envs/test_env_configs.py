@@ -349,8 +349,11 @@ def test_g1_motion_manager_ppo_wraps_only_active_rows_in_one_state_commit(
         torch.testing.assert_close(reset_rows[0], torch.tensor([1], device=env.device))
         assert command.time_steps[0] == command.tensor_sampler.current_clip_end_frames[0]
         assert command.time_steps[1] <= command.tensor_sampler.current_clip_end_frames[1]
-        expected_motion = command.motion.get_motion_at_frame(command.time_steps)
-        np.testing.assert_array_equal(command.joint_pos, expected_motion.joint_pos)
+        expected_joint_pos = command._motion_features[
+            :,
+            : command.motion.num_joints,
+        ].index_select(0, command.time_steps.to(dtype=torch.int64))
+        torch.testing.assert_close(command.joint_pos, expected_joint_pos)
         torch.testing.assert_close(command._robot_body_pos_w, command.robot_body_pos_w)
         assert command._robot_cache_step == env.common_step_counter
     finally:
