@@ -180,19 +180,25 @@ def _sample_distribution(
     params: np.ndarray,
     shape: tuple[int, ...],
     distribution: str,
-) -> np.ndarray:
+) -> torch.Tensor:
     low = torch.as_tensor(params[0], dtype=torch.float64, device=rng.device)
     high = torch.as_tensor(params[1], dtype=torch.float64, device=rng.device)
     if distribution == "gaussian":
-        return rng.normal(low, high, shape, dtype=torch.float64).cpu().numpy()
+        return rng.normal(low, high, shape, dtype=torch.float64)
     if distribution == "log_uniform":
-        return (
-            rng.uniform(torch.log(low), torch.log(high), shape, dtype=torch.float64)
-            .exp()
-            .cpu()
-            .numpy()
-        )
-    return rng.uniform(low, high, shape, dtype=torch.float64).cpu().numpy()
+        return rng.uniform(torch.log(low), torch.log(high), shape, dtype=torch.float64).exp()
+    return rng.uniform(low, high, shape, dtype=torch.float64)
+
+
+def _selected_reset_defaults_tensor(
+    defaults: np.ndarray,
+    env_ids: np.ndarray,
+    *,
+    canonical_ndim: int,
+    device: torch.device,
+) -> torch.Tensor:
+    selected = _selected_reset_defaults(defaults, env_ids, canonical_ndim=canonical_ndim)
+    return torch.from_numpy(np.ascontiguousarray(selected)).to(dtype=torch.float64, device=device)
 
 
 def _apply_randomization_operation(
@@ -1073,22 +1079,28 @@ class RandomizeRigidBodyMass(ManagerTermBase):
                 f"environment rows; got {ids.tolist()} for {env.num_envs} environments"
             )
         if self._startup_values is None:
-            samples = _sample_distribution(
+            sampled = _sample_distribution(
                 _require_torch_rng(env, "randomize_rigid_body_mass"),
                 self._distribution_params,
                 (env.num_envs, self._body_ids.size),
                 self._distribution,
             )
-            default_mass = _selected_reset_defaults(
+            default_mass = _selected_reset_defaults_tensor(
                 self._default_mass,
                 ids,
                 canonical_ndim=1,
+                device=sampled.device,
             )
-            values = np.asarray(
-                _apply_randomization_operation(default_mass, samples, self._operation),
-                dtype=np.float64,
+            values = (
+                _apply_randomization_operation_tensor(
+                    default_mass,
+                    sampled,
+                    self._operation,
+                )
+                .clamp_min(self._min_mass)
+                .cpu()
+                .numpy()
             )
-            np.maximum(values, self._min_mass, out=values)
             if not np.isfinite(values).all():
                 raise ValueError(
                     "EventManager term 'randomize_rigid_body_mass' produced NaN or Inf "
@@ -1172,23 +1184,27 @@ class RandomizeRigidBodyMass(ManagerTermBase):
             self._apply_device(env, cast(torch.Tensor, env_ids))
             return
         ids = resolve_env_ids(env, env_ids)
-        samples = _sample_distribution(
+        sampled = _sample_distribution(
             _require_torch_rng(env, "randomize_rigid_body_mass"),
             self._distribution_params,
             (ids.size, self._body_ids.size),
             self._distribution,
         )
-        default_mass = _selected_reset_defaults(
+        default_mass = _selected_reset_defaults_tensor(
             self._default_mass,
             ids,
             canonical_ndim=1,
+            device=sampled.device,
         )
-        values = _apply_randomization_operation(
-            default_mass,
-            samples,
-            self._operation,
+        values = (
+            _apply_randomization_operation_tensor(
+                default_mass,
+                sampled,
+                self._operation,
+            )
+            .clamp_min(self._min_mass)
+            .cpu()
         )
-        np.maximum(values, self._min_mass, out=values)
         self._entity.write_body_mass_to_sim(
             values,
             body_ids=self._body_ids,
@@ -1544,22 +1560,23 @@ class RandomizePhysicsSceneGravity(ManagerTermBase):
     ) -> None:
         del gravity_distribution_params, operation, distribution
         ids = resolve_env_ids(env, env_ids)
-        samples = _sample_distribution(
+        sampled = _sample_distribution(
             _require_torch_rng(env, "randomize_gravity"),
             self._distribution_params,
             (ids.size, 3),
             self._distribution,
         )
-        default_gravity = _selected_reset_defaults(
+        default_gravity = _selected_reset_defaults_tensor(
             self._default_gravity,
             ids,
             canonical_ndim=1,
+            device=sampled.device,
         )
-        values = _apply_randomization_operation(
+        values = _apply_randomization_operation_tensor(
             default_gravity,
-            samples,
+            sampled,
             self._operation,
-        )
+        ).cpu()
         env.scene.write_gravity_to_sim(
             values,
             ids,
