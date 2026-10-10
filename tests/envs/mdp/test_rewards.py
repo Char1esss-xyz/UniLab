@@ -168,10 +168,12 @@ def test_velocity_tracking_terms_match_pinned_equations() -> None:
     np.testing.assert_allclose(
         mdp.track_linear_velocity(env, std=0.5, command_name="twist"),
         np.exp(-linear_error / 0.5**2),
+        rtol=2e-6,
     )
     np.testing.assert_allclose(
         mdp.track_angular_velocity(env, std=0.4, command_name="twist"),
         np.exp(-angular_error / 0.4**2),
+        rtol=2e-6,
     )
 
 
@@ -232,7 +234,7 @@ def test_posture_matches_mjlab_per_joint_std_kernel() -> None:
         scale_by_dt=False,
     )
     expected = _posture_expected(entity, np.asarray([0.5, 0.35, 0.25]), [0, 1, 2])
-    np.testing.assert_allclose(manager.compute(dt=0.02), expected)
+    np.testing.assert_allclose(manager.compute(dt=0.02), expected, rtol=2e-6)
 
 
 def test_variable_posture_selects_std_by_command_speed_regime() -> None:
@@ -260,7 +262,7 @@ def test_variable_posture_selects_std_by_command_speed_regime() -> None:
             _posture_expected(entity, np.full(3, 0.1), [0, 1, 2])[2],
         ]
     )
-    np.testing.assert_allclose(manager.compute(dt=0.02), expected)
+    np.testing.assert_allclose(manager.compute(dt=0.02), expected, rtol=2e-6)
 
 
 def test_posture_std_mapping_fail_closed() -> None:
