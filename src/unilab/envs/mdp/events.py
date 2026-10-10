@@ -972,14 +972,20 @@ class PdGains(ManagerTermBase):
             _require_torch_rng(env, "pd_gains"), self._kd_range, shape, self._distribution
         )
         if self._operation == "scale":
-            default_kp = np.array(
-                _selected_reset_defaults(self._default_kp, ids, canonical_ndim=1), copy=True
+            default_kp = _selected_reset_defaults_tensor(
+                self._default_kp,
+                ids,
+                canonical_ndim=1,
+                device=kp.device,
             )
-            default_kd = np.array(
-                _selected_reset_defaults(self._default_kd, ids, canonical_ndim=1), copy=True
+            default_kd = _selected_reset_defaults_tensor(
+                self._default_kd,
+                ids,
+                canonical_ndim=1,
+                device=kd.device,
             )
-            kp = kp * torch.from_numpy(default_kp).to(dtype=kp.dtype, device=kp.device)
-            kd = kd * torch.from_numpy(default_kd).to(dtype=kd.dtype, device=kd.device)
+            kp = kp * default_kp.to(dtype=kp.dtype, device=kp.device)
+            kd = kd * default_kd.to(dtype=kd.dtype, device=kd.device)
         self._entity.write_actuator_gains_to_sim(
             kp,
             kd,
