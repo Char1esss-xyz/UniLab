@@ -51,7 +51,7 @@ def _row_scale_cfg() -> dict[str, ObservationGroupCfg]:
             terms={
                 "scaled": ObservationTermCfg(
                     func=lambda env: env.obs,
-                    scale=np.array([[1.0], [10.0], [100.0], [1000.0]], dtype=np.float32),
+                    scale=torch.tensor([[1.0], [10.0], [100.0], [1000.0]], dtype=torch.float32),
                 ),
             },
         ),
