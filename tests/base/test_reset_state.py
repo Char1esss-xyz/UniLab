@@ -567,6 +567,55 @@ def test_actuator_gains_compose_with_state_in_one_reset_commit() -> None:
     np.testing.assert_array_equal(payload.kd, [[0.8, 2.0, 0.7], [0.6, 2.0, 0.5]])
 
 
+def test_host_randomization_write_accepts_cpu_tensor_values() -> None:
+    backend = _Backend()
+    transaction = _transaction(backend)
+    columns, _, _ = transaction.bind_actuator_gain_write(
+        np.array([2, 0], dtype=np.int32),
+        term_name="pd_gains:robot",
+    )
+
+    with transaction.scoped(torch.tensor([1], dtype=torch.int64)):
+        transaction.reset_to_default(np.array([1], dtype=np.int32), term_name="default")
+        transaction.write_actuator_gains(
+            np.array([1], dtype=np.int32),
+            columns,
+            torch.tensor([[4.0, 2.0]], dtype=torch.float64),
+            torch.tensor([[0.4, 0.2]], dtype=torch.float64),
+            term_name="pd_gains:robot",
+        )
+
+    payload = backend.randomization_calls[0]
+    assert payload is not None
+    np.testing.assert_array_equal(payload.kp, [[2.0, 20.0, 4.0]])
+    np.testing.assert_array_equal(payload.kd, [[0.2, 2.0, 0.4]])
+
+
+def test_host_randomization_write_rejects_non_cpu_tensor_values() -> None:
+    if torch.cuda.device_count() == 0:
+        pytest.skip("non-CPU Torch device is unavailable")
+    backend = _Backend()
+    transaction = _transaction(backend)
+    columns, _, _ = transaction.bind_actuator_gain_write(
+        np.array([0], dtype=np.int32),
+        term_name="pd_gains:robot",
+    )
+
+    with (
+        transaction.scoped(torch.tensor([0], dtype=torch.int64)),
+        pytest.raises(TypeError, match="host write requires a CPU Torch tensor"),
+    ):
+        transaction.write_actuator_gains(
+            np.array([0], dtype=np.int32),
+            columns,
+            torch.zeros((1, 1), dtype=torch.float64, device="cuda"),
+            torch.zeros((1, 1), dtype=torch.float64, device="cuda"),
+            term_name="pd_gains:robot",
+        )
+
+    assert backend.set_state_calls == []
+
+
 def test_actuator_gain_sparse_rows_abort_without_backend_mutation() -> None:
     backend = _Backend()
     transaction = _transaction(backend)
