@@ -76,8 +76,8 @@ class joint_torque_l2(ManagerTermBase):
                 f"{selected_names} != {tuple(action.target_names)}"
             )
         self._torque = torch.empty_like(action.tensor_target)
-        self._target_index = torch.from_numpy(action.target_ids.copy()).to(
-            device=action.tensor_target.device, dtype=torch.int64
+        self._target_index = torch.tensor(
+            action.target_ids, device=action.tensor_target.device, dtype=torch.int64
         )
         self._kp_tensor = torch.as_tensor(
             kp, device=action.tensor_target.device, dtype=torch.float32
