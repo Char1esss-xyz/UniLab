@@ -1096,24 +1096,19 @@ class RandomizeRigidBodyMass(ManagerTermBase):
                 canonical_ndim=1,
                 device=sampled.device,
             )
-            values = (
-                _apply_randomization_operation_tensor(
-                    default_mass,
-                    sampled,
-                    self._operation,
-                )
-                .clamp_min(self._min_mass)
-                .cpu()
-                .numpy()
-            )
-            if not np.isfinite(values).all():
+            values = _apply_randomization_operation_tensor(
+                default_mass,
+                sampled,
+                self._operation,
+            ).clamp_min(self._min_mass)
+            if not bool(torch.isfinite(values).all()):
                 raise ValueError(
                     "EventManager term 'randomize_rigid_body_mass' produced NaN or Inf "
                     "startup values"
                 )
             self._startup_values = values
         self._entity.record_startup_body_mass_to_sim(
-            self._startup_values,
+            self._startup_values.cpu(),
             body_ids=self._body_ids,
             env_ids=ids,
             term_name="randomize_rigid_body_mass",
