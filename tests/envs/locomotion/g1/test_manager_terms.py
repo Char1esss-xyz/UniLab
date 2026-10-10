@@ -338,6 +338,7 @@ def test_velocity_command_dead_zone_zeroes_small_planar_commands():
     env = SimpleNamespace(
         num_envs=64,
         rng=np.random.default_rng(0),
+        torch_rng=TorchManagerRng.seeded(0),
         step_dt=0.02,
         scene={
             "robot": SimpleNamespace(
