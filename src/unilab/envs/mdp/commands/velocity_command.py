@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from numbers import Real
 from typing import TYPE_CHECKING, Any, cast
 
-import numpy as np
 import torch
 
 from unilab.managers.command_manager import CommandTerm, CommandTermCfg
