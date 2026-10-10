@@ -20,7 +20,6 @@ from unilab.managers.event_manager import EventTermCfg
 from unilab.managers.manager_base import ManagerTermBase
 from unilab.managers.scene_entity_config import SceneEntityCfg
 from unilab.managers.torch_rng import TorchManagerRng
-from unilab.utils.rotation import np_quat_apply_batched, np_quat_from_euler_xyz, np_quat_mul
 
 if TYPE_CHECKING:
     from unilab.base.entity import Entity
@@ -85,7 +84,7 @@ def _sample_se3_range(
     range_dict: dict[str, tuple[float, float]] | None,
     shape: tuple[int, ...],
     rng: TorchManagerRng,
-) -> np.ndarray:
+) -> torch.Tensor:
     """Sample uniform ``[x, y, z, roll, pitch, yaw]`` offsets with Torch RNG."""
     if not shape or shape[-1] != len(_SE3_KEYS):
         raise ValueError(
@@ -113,7 +112,7 @@ def _sample_se3_range(
         raise ValueError(f"reset_root_state_uniform range minimum exceeds maximum for keys {keys}")
     lower = torch.as_tensor(ranges[:, 0], dtype=torch.float64, device=rng.device)
     upper = torch.as_tensor(ranges[:, 1], dtype=torch.float64, device=rng.device)
-    return rng.uniform(lower, upper, shape, dtype=torch.float64).cpu().numpy()
+    return rng.uniform(lower, upper, shape, dtype=torch.float64)
 
 
 def _event_choice(value: Any, *, term_name: str, name: str, choices: tuple[str, ...]) -> str:
@@ -1887,10 +1886,13 @@ class ApplyBodyImpulse(ManagerTermBase):
             ).reshape(count, num_bodies, 3)
             if self._body_point_offset is not None:
                 quats = self._entity.data.body_link_quat_w[trigger_ids][:, self._local_body_ids]
-                offset_w = np_quat_apply_batched(
-                    quats.reshape(-1, 4),
-                    np.broadcast_to(self._body_point_offset, (count * num_bodies, 3)),
-                ).reshape(count, num_bodies, 3)
+                quat_rows = torch.from_numpy(np.ascontiguousarray(quats)).reshape(-1, 4)
+                offsets = (
+                    torch.from_numpy(self._body_point_offset)
+                    .to(dtype=quat_rows.dtype)
+                    .expand(count * num_bodies, 3)
+                )
+                offset_w = _tensor_quat_apply(quat_rows, offsets).reshape(count, num_bodies, 3)
                 torques = torques + np.cross(offset_w, forces)
             self._active_forces[trigger_ids] = forces
             self._active_torques[trigger_ids] = torques
@@ -2054,7 +2056,9 @@ def reset_root_state_uniform(
     ids = resolve_env_ids(env, env_ids)
     asset = cast("Entity", env.scene[asset_cfg.name])
     try:
-        root_states = np.array(asset.data.default_root_state[ids], copy=True)
+        default_root_state = asset.data.default_root_state_torch(torch.device(env.device))
+        rows = torch.from_numpy(np.ascontiguousarray(ids, dtype=np.int64))
+        root_states = default_root_state.index_select(0, rows).clone()
     except NotImplementedError as exc:
         raise NotImplementedError(
             "EventManager term 'reset_root_state_uniform' requires a floating-root "
@@ -2065,16 +2069,22 @@ def reset_root_state_uniform(
     pose_samples = _sample_se3_range(
         pose_range, (len(ids), 6), _require_torch_rng(env, "reset_root_state_uniform")
     )
-    root_states[:, 0:3] = root_states[:, 0:3] + pose_samples[:, 0:3] + env.scene.env_origins[ids]
-    orientation_delta = np_quat_from_euler_xyz(
+    root_states[:, 0:3] = (
+        root_states[:, 0:3]
+        + pose_samples[:, 0:3].to(dtype=root_states.dtype)
+        + env.scene.env_origins_torch(torch.device(env.device)).index_select(0, rows)
+    )
+    orientation_delta = _tensor_quat_from_euler_xyz(
         pose_samples[:, 3], pose_samples[:, 4], pose_samples[:, 5]
     )
-    root_states[:, 3:7] = np_quat_mul(root_states[:, 3:7], orientation_delta)
+    root_states[:, 3:7] = _tensor_quat_mul(
+        root_states[:, 3:7], orientation_delta.to(root_states.dtype)
+    )
 
     velocity_samples = _sample_se3_range(
         velocity_range, (len(ids), 6), _require_torch_rng(env, "reset_root_state_uniform")
     )
-    root_states[:, 7:13] = root_states[:, 7:13] + velocity_samples
+    root_states[:, 7:13] = root_states[:, 7:13] + velocity_samples.to(dtype=root_states.dtype)
     asset.write_root_state_to_sim(root_states, env_ids=ids)
 
 
@@ -2111,6 +2121,16 @@ def _tensor_quat_from_euler_xyz(
         ),
         dim=-1,
     )
+
+
+def _tensor_quat_apply(quat_wxyz: torch.Tensor, vector: torch.Tensor) -> torch.Tensor:
+    """Apply broadcast-compatible wxyz quaternions to device-resident vectors."""
+    quat_xyz = quat_wxyz[..., 1:4]
+    if vector.ndim < quat_xyz.ndim:
+        vector = vector.expand_as(quat_xyz)
+    cross = torch.linalg.cross(quat_xyz, vector, dim=-1)
+    second_cross = torch.linalg.cross(quat_xyz, cross, dim=-1)
+    return vector + 2.0 * quat_wxyz[..., 0:1] * cross + 2.0 * second_cross
 
 
 def _tensor_quat_mul(left_wxyz: torch.Tensor, right_wxyz: torch.Tensor) -> torch.Tensor:

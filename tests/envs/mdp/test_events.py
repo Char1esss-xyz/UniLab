@@ -67,11 +67,12 @@ class _CaptureEntity:
 
     def write_root_state_to_sim(
         self,
-        root_state: np.ndarray,
+        root_state: np.ndarray | torch.Tensor,
         env_ids: np.ndarray | None = None,
     ) -> None:
         assert env_ids is not None
-        self.writes.append((root_state.copy(), env_ids.copy()))
+        root = root_state.clone() if isinstance(root_state, torch.Tensor) else root_state.copy()
+        self.writes.append((root, env_ids.copy()))
 
 
 class _CaptureScene:
