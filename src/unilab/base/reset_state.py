@@ -2885,16 +2885,25 @@ class ResetStateTransaction:
 
     def _validate_values(
         self,
-        values: np.ndarray,
+        values: np.ndarray | torch.Tensor,
         *,
         shape: tuple[int, ...],
         capability: str,
         term_name: str,
     ) -> np.ndarray:
+        if isinstance(values, torch.Tensor):
+            if values.device.type != "cpu":
+                raise TypeError(
+                    f"EventManager term '{term_name}' {capability} host write requires a "
+                    f"CPU Torch tensor; got {values.device}"
+                )
+            if not values.is_contiguous():
+                values = values.contiguous()
+            values = values.numpy()
         if not isinstance(values, np.ndarray):
             raise TypeError(
-                f"EventManager term '{term_name}' {capability} must be np.ndarray, "
-                f"got {type(values).__name__}"
+                f"EventManager term '{term_name}' {capability} must be np.ndarray or a CPU "
+                f"torch.Tensor, got {type(values).__name__}"
             )
         if values.shape != shape:
             raise ValueError(
