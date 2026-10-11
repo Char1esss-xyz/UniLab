@@ -2894,8 +2894,8 @@ class Entity:
 
     def write_actuator_gains_to_sim(
         self,
-        kp: np.ndarray,
-        kd: np.ndarray,
+        kp: torch.Tensor,
+        kd: torch.Tensor,
         actuator_ids: np.ndarray | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
@@ -3802,7 +3802,7 @@ class Entity:
 
     def write_root_link_pose_to_sim(
         self,
-        root_pose: np.ndarray,
+        root_pose: torch.Tensor,
         env_ids: torch.Tensor | slice | None = None,
     ) -> None:
         """Stage world position and wxyz root orientation during reset."""
@@ -3820,7 +3820,7 @@ class Entity:
 
     def write_root_link_velocity_to_sim(
         self,
-        root_velocity: np.ndarray,
+        root_velocity: torch.Tensor,
         env_ids: torch.Tensor | slice | None = None,
     ) -> None:
         """Stage world linear/angular root velocity during reset."""

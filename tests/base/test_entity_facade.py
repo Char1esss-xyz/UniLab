@@ -540,19 +540,19 @@ def test_entity_root_writes_use_cached_layout_and_one_reset_commit() -> None:
 
     with transaction.scoped(torch.tensor([0, 2], dtype=torch.int64)):
         robot.write_root_link_pose_to_sim(
-            np.array(
+            torch.tensor(
                 [
                     [10.0, 11.0, 12.0, half_sqrt, 0.0, 0.0, half_sqrt],
                     [20.0, 21.0, 22.0, 1.0, 0.0, 0.0, 0.0],
                 ],
-                dtype=np.float32,
+                dtype=torch.float32,
             ),
             env_ids=torch.tensor([2, 0], dtype=torch.int64),
         )
         robot.write_root_link_velocity_to_sim(
-            np.array(
+            torch.tensor(
                 [[1.0, 2.0, 3.0, 1.0, 0.0, 0.0], [4.0, 5.0, 6.0, 0.0, 1.0, 2.0]],
-                dtype=np.float32,
+                dtype=torch.float32,
             ),
             env_ids=torch.tensor([2, 0], dtype=torch.int64),
         )
@@ -579,7 +579,7 @@ def test_entity_read_reset_root_pose_returns_staged_or_default_pose() -> None:
 
     with transaction.scoped(torch.tensor([0, 2], dtype=torch.int64)):
         robot.write_root_link_pose_to_sim(
-            np.array([[10.0, 11.0, 12.0, 1.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+            torch.tensor([[10.0, 11.0, 12.0, 1.0, 0.0, 0.0, 0.0]], dtype=torch.float32),
             env_ids=torch.tensor([2], dtype=torch.int64),
         )
         staged = robot.read_reset_root_pose(env_ids=torch.tensor([0, 2], dtype=torch.int64))
