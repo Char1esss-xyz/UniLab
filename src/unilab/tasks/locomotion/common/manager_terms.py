@@ -523,16 +523,13 @@ class feet_air_while_standing(ManagerTermBase):
     def _read_contact(self) -> torch.Tensor:
         read_plan = getattr(self._env.scene, "_tensor_read_plan", None)
         sensor_names = getattr(read_plan, "sensor_names", {}).get("robot", ())
-        if read_plan is not None and set(self._sensor_names).issubset(set(sensor_names)):
-            values = read_plan.sensor_tensor_views("robot", self._sensor_names).values
-            return torch.cat([values[name] for name in self._sensor_names], dim=1)
-        try:
-            return _torch_state(self._view.read())
-        except (KeyError, TypeError, ValueError, NotImplementedError) as exc:
-            raise type(exc)(
-                f"Manager term '{self.name}' named-foot-sensor capability failed on "
-                f"backend '{self._view.backend_type}': {exc}"
-            ) from exc
+        if read_plan is None or not set(self._sensor_names).issubset(set(sensor_names)):
+            raise NotImplementedError(
+                f"Manager term '{self.name}' requires its named sensors "
+                f"{self._sensor_names} in the packed Torch read plan"
+            )
+        values = read_plan.sensor_tensor_views("robot", self._sensor_names).values
+        return torch.cat([values[name] for name in self._sensor_names], dim=1)
 
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
@@ -550,10 +547,7 @@ def _command_tensor(
     term: str,
     command_name: str,
 ) -> torch.Tensor:
-    command = _command(env, term, command_name)
-    if isinstance(command, torch.Tensor):
-        return command.to(dtype=torch.float32)
-    return _torch_state(command)
+    return _command(env, term, command_name).to(dtype=torch.float32)
 
 
 def _torch_state(
