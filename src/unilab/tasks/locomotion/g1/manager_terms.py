@@ -485,20 +485,14 @@ class _GaitRewardTerm(_SensorTerm):
             (self._linvel, ("pelvis_local_linvel",)),
             (env.num_envs, 3),
         )
-        if isinstance(linvel, torch.Tensor):
-            forward_speed = torch.clamp(linvel[:, 0], min=0.0)
-            return (forward_speed >= self._min_forward_speed).to(dtype=torch.float32)
-        forward_speed = np.maximum(linvel[:, 0], 0.0)
-        return np.asarray(forward_speed >= self._min_forward_speed, dtype=np.float32)
+        forward_speed = torch.clamp(_torch_values(linvel)[:, 0], min=0.0)
+        return (forward_speed >= self._min_forward_speed).to(dtype=torch.float32)
 
     def _gate_from_forward_speed(
         self, forward_speed: np.ndarray | torch.Tensor
     ) -> np.ndarray | torch.Tensor:
-        if isinstance(forward_speed, torch.Tensor):
-            positive_speed = torch.clamp(forward_speed, min=0.0)
-            return (positive_speed >= self._min_forward_speed).to(dtype=torch.float32)
-        positive_speed = np.maximum(forward_speed, 0.0)
-        return np.asarray(positive_speed >= self._min_forward_speed, dtype=np.float32)
+        positive_speed = torch.clamp(_torch_values(forward_speed), min=0.0)
+        return (positive_speed >= self._min_forward_speed).to(dtype=torch.float32)
 
     def _phase_reward_inputs(
         self, env: _G1Env
@@ -570,19 +564,12 @@ class _FootContactTerm(_GaitRewardTerm):
     def tensor_sensor_names(self) -> tuple[str, ...]:
         return (*super().tensor_sensor_names, *_FOOT_CONTACT_SENSORS)
 
-    def _contact_pair(
-        self, env: ManagerBasedRlEnv
-    ) -> tuple[np.ndarray | torch.Tensor, np.ndarray | torch.Tensor]:
+    def _contact_pair(self, env: ManagerBasedRlEnv) -> tuple[torch.Tensor, torch.Tensor]:
         values = self._read_state_tensor(
             env, "foot contact", (self._contacts, _FOOT_CONTACT_SENSORS), (self.num_envs, 8)
         )
-        if isinstance(values, torch.Tensor):
-            left = torch.any(values[:, :4] > 0.5, dim=1)
-            right = torch.any(values[:, 4:] > 0.5, dim=1)
-            return left, right
-        left = np.any(values[:, :4] > 0.5, axis=1)
-        right = np.any(values[:, 4:] > 0.5, axis=1)
-        return left, right
+        contacts = _torch_values(values) > 0.5
+        return torch.any(contacts[:, :4], dim=1), torch.any(contacts[:, 4:], dim=1)
 
 
 class feet_phase_contact(_FootContactTerm):
