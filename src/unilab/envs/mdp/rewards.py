@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import torch
 
+from unilab.envs.mdp.observations import _quat_apply_inverse, _root_body_view
 from unilab.managers.manager_base import ManagerTermBase, ManagerTermBaseCfg
 from unilab.managers.scene_entity_config import SceneEntityCfg
 
@@ -147,12 +148,20 @@ def flat_orientation_l2(
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
     """Penalize non-flat base orientation."""
-    asset = cast("Entity", env.scene[asset_cfg.name])
-    gravity = torch.as_tensor(
-        asset.data.projected_gravity_b[:, :2],
-        dtype=torch.float32,
-        device=getattr(env, "device", torch.device("cpu")),
-    )
+    asset, view = _root_body_view(env, asset_cfg)
+    if view is not None:
+        gravity_w = torch.as_tensor(
+            asset.data.gravity_vec_w,
+            dtype=torch.float32,
+            device=getattr(env, "device", torch.device("cpu")),
+        ).expand((view.quat_w.shape[0], 3))
+        gravity = _quat_apply_inverse(view.quat_w[:, 0, :], gravity_w)
+    else:
+        gravity = torch.as_tensor(
+            asset.data.projected_gravity_b[:, :2],
+            dtype=torch.float32,
+            device=getattr(env, "device", torch.device("cpu")),
+        )
     return torch.sum(torch.square(gravity), dim=1)
 
 
@@ -169,7 +178,12 @@ def upright(
     """
     scale = _positive_std("upright", std)
     asset = cast("Entity", env.scene[asset_cfg.name])
-    body_quat_w = asset.data.body_link_quat_w[:, asset_cfg.body_ids, :]
+    read_plan = getattr(env.scene, "_tensor_read_plan", None)
+    if read_plan is not None and getattr(asset, "_body_names", None) is not None:
+        selected_names = _selected_body_names(asset, asset_cfg)
+        body_quat_w = read_plan.body_tensor_view(asset, selected_names).quat_w
+    else:
+        body_quat_w = asset.data.body_link_quat_w[:, asset_cfg.body_ids, :]
     if body_quat_w.shape != (env.num_envs, 1, 4):
         raise ValueError(
             f"upright requires exactly one body; received state shape {body_quat_w.shape}"
@@ -201,12 +215,16 @@ def track_linear_velocity(
 ) -> torch.Tensor:
     """Reward commanded base linear velocity, assuming commanded z is zero."""
     scale = _positive_std("track_linear_velocity", std)
-    asset = cast("Entity", env.scene[asset_cfg.name])
+    asset, view = _root_body_view(env, asset_cfg)
     command = _command(env, command_name)
-    actual = torch.as_tensor(
-        asset.data.root_link_lin_vel_b,
-        dtype=torch.float32,
-        device=getattr(env, "device", torch.device("cpu")),
+    actual = (
+        view.lin_vel_w[:, 0, :]
+        if view is not None
+        else torch.as_tensor(
+            asset.data.root_link_lin_vel_b,
+            dtype=torch.float32,
+            device=getattr(env, "device", torch.device("cpu")),
+        )
     )
     command_t = torch.as_tensor(
         command, dtype=torch.float32, device=getattr(env, "device", torch.device("cpu"))
@@ -224,12 +242,16 @@ def track_angular_velocity(
 ) -> torch.Tensor:
     """Reward commanded yaw rate while keeping roll/pitch rates near zero."""
     scale = _positive_std("track_angular_velocity", std)
-    asset = cast("Entity", env.scene[asset_cfg.name])
+    asset, view = _root_body_view(env, asset_cfg)
     command = _command(env, command_name)
-    actual = torch.as_tensor(
-        asset.data.root_link_ang_vel_b,
-        dtype=torch.float32,
-        device=getattr(env, "device", torch.device("cpu")),
+    actual = (
+        view.ang_vel_w[:, 0, :]
+        if view is not None
+        else torch.as_tensor(
+            asset.data.root_link_ang_vel_b,
+            dtype=torch.float32,
+            device=getattr(env, "device", torch.device("cpu")),
+        )
     )
     command_t = torch.as_tensor(
         command, dtype=torch.float32, device=getattr(env, "device", torch.device("cpu"))
@@ -245,7 +267,12 @@ def body_angular_velocity_penalty(
 ) -> torch.Tensor:
     """Penalize roll/pitch angular velocity of one selected body."""
     asset = cast("Entity", env.scene[asset_cfg.name])
-    ang_vel = asset.data.body_link_ang_vel_w[:, asset_cfg.body_ids, :]
+    read_plan = getattr(env.scene, "_tensor_read_plan", None)
+    if read_plan is not None and getattr(asset, "_body_names", None) is not None:
+        selected_names = _selected_body_names(asset, asset_cfg)
+        ang_vel = read_plan.body_tensor_view(asset, selected_names).ang_vel_w
+    else:
+        ang_vel = asset.data.body_link_ang_vel_w[:, asset_cfg.body_ids, :]
     if ang_vel.shape != (env.num_envs, 1, 3):
         raise ValueError(
             "body_angular_velocity_penalty requires exactly one body; "
@@ -282,6 +309,12 @@ def _selected_joint_names(asset: Entity, asset_cfg: SceneEntityCfg) -> list[str]
     if isinstance(asset_cfg.joint_names, str):
         return [asset_cfg.joint_names]
     return list(asset_cfg.joint_names)
+
+
+def _selected_body_names(asset: Entity, asset_cfg: SceneEntityCfg) -> tuple[str, ...]:
+    body_ids = asset_cfg.body_ids
+    indices = range(len(asset.body_names)) if isinstance(body_ids, slice) else body_ids
+    return tuple(asset.body_names[int(index)] for index in indices)
 
 
 class posture(ManagerTermBase):
