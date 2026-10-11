@@ -62,14 +62,13 @@ class _Vec3SensorTerm(SensorTermBase):
 
     def _read_sensor_tensor(self, env: ManagerBasedRlEnv) -> np.ndarray | torch.Tensor:
         read_plan = getattr(env.scene, "_tensor_read_plan", None)
-        if read_plan is None:
+        if read_plan is None or not set(self.tensor_sensor_names).issubset(
+            set(getattr(read_plan, "sensor_names", {}).get("robot", ()))
+        ):
+            return self._read_sensor(env)
+        if not hasattr(read_plan, "sensor_tensor_views"):
             return self._read_sensor(env)
         entity = env.scene["robot"]
-        compiled = set(read_plan.sensor_names.get("robot", ()))
-        if read_plan.device.type == "cuda" and not set(self.tensor_sensor_names).issubset(compiled):
-            # Narrow device-resident adapters may publish only their audited
-            # scalar subset. Keep the validated host/cache reader for the rest.
-            return self._read_sensor(env)
         values = read_plan.sensor_tensor_views(entity, self.tensor_sensor_names).values[
             self._sensor_name
         ]
