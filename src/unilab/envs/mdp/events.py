@@ -487,8 +487,8 @@ class _ModelFieldRandomizer(ManagerTermBase):
 
     def _write(
         self,
-        values: np.ndarray,
-        env_ids: np.ndarray,
+        values: torch.Tensor,
+        env_ids: torch.Tensor,
     ) -> None:
         raise NotImplementedError
 
@@ -805,7 +805,7 @@ class GeomFriction(_ModelFieldRandomizer):
         names = tuple(entity.geom_names[int(index)] for index in local_ids)
         return local_ids, defaults, names
 
-    def _write(self, values: np.ndarray, env_ids: np.ndarray) -> None:
+    def _write(self, values: torch.Tensor, env_ids: torch.Tensor) -> None:
         self._entity.write_geom_friction_to_sim(
             values,
             self._local_ids,
@@ -839,7 +839,7 @@ class JointArmature(_ModelFieldRandomizer):
         names = tuple(entity.joint_names[int(index)] for index in local_ids)
         return local_ids, defaults, names
 
-    def _write(self, values: np.ndarray, env_ids: np.ndarray) -> None:
+    def _write(self, values: torch.Tensor, env_ids: torch.Tensor) -> None:
         self._entity.write_joint_armature_to_sim(
             values,
             self._local_ids,
