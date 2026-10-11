@@ -79,7 +79,6 @@ class _FakeEnv:
         self.common_step_counter = counter
         self.step_dt = 0.02
         self.device = torch.device("cpu")
-        self.rng = np.random.default_rng(0)
         self.torch_rng = TorchManagerRng.seeded(0)
         self.scene = _fake_scene(sensor_data)
         self.scene.refresh_tensor_read_plan()

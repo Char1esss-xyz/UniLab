@@ -55,6 +55,7 @@ from unilab.managers import (
     TerminationTermCfg,
 )
 from unilab.managers.scene_entity_config import SceneEntityCfg
+from unilab.managers.torch_rng import TorchManagerRng
 
 
 class _FakeBackend:
@@ -2947,13 +2948,13 @@ def test_reset_seed_updates_the_shared_generator_in_place() -> None:
     cfg.events = {}
     env, _ = _make_env(cfg)
     env.init_state()
-    generator = env.rng
+    generator = env.torch_rng
 
     env.reset(seed=123, env_indices=torch.tensor([0], dtype=torch.int64))
 
-    assert env.rng is generator
-    expected = np.random.default_rng(123).random()
-    assert env.rng.random() == pytest.approx(expected)
+    assert env.torch_rng is generator
+    expected = TorchManagerRng.seeded(123).random(1)
+    torch.testing.assert_close(env.torch_rng.random(1), expected)
 
 
 def test_per_substep_metrics_fail_without_post_substep_backend_hook() -> None:

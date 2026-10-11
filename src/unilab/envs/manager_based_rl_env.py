@@ -341,7 +341,6 @@ class ManagerBasedRlEnv(TorchEnv):
         super().__init__(cfg, backend, num_envs, device=runtime_device)
         actual_seed = cfg.seed if cfg.seed is not None else secrets.randbits(63)
         cfg.seed = actual_seed
-        self.rng = np.random.default_rng(actual_seed)
         self._torch_rng_owner = TorchManagerRng(device=self.device)
         self.torch_rng = self._torch_rng_owner
         self._torch_generator = self._torch_rng_owner.generator if self._torch_rng_owner else None
@@ -1110,9 +1109,9 @@ class ManagerBasedRlEnv(TorchEnv):
                 "ManagerBasedRlEnv randomized initial episode counters require "
                 f"max_episode_steps > 1; got {max_steps}"
             )
-        return torch.from_numpy(
-            self.rng.integers(0, max_steps, size=self.num_envs, dtype=np.int64)
-        ).to(device=self.device, dtype=torch.int64)
+        return self.torch_rng.integers(0, max_steps, self.num_envs, dtype=torch.int64).to(
+            device=self.device, dtype=torch.int64
+        )
 
     def init_state(self) -> TorchEnvState:
         state = super().init_state()
@@ -1693,8 +1692,6 @@ class ManagerBasedRlEnv(TorchEnv):
             seed = secrets.randbits(63)
         if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
             raise ValueError(f"ManagerBasedRlEnv seed must be a non-negative integer, got {seed!r}")
-        replacement = np.random.default_rng(seed)
-        self.rng.bit_generator.state = replacement.bit_generator.state
         if self._torch_rng_owner is not None:
             self._torch_rng_owner.manual_seed(seed)
         self._cfg.seed = seed
