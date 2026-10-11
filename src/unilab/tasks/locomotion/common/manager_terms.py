@@ -101,9 +101,7 @@ def _command(env: ManagerBasedRlEnv, term: str, command_name: str) -> np.ndarray
         raise KeyError(f"{term} command capability '{command_name}' is unavailable") from exc
     if command is None:
         raise KeyError(f"{term} command capability '{command_name}' is unavailable")
-    if isinstance(command, torch.Tensor):
-        return command
-    return _state(term, f"command '{command_name}'", command, (env.num_envs, 3))
+    return _torch_state(command)
 
 
 def _asset(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg) -> Entity:
@@ -559,7 +557,11 @@ def _command_tensor(
     return _torch_state(command)
 
 
-def _torch_state(value: np.ndarray, *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+def _torch_state(
+    value: np.ndarray | torch.Tensor, *, dtype: torch.dtype = torch.float32
+) -> torch.Tensor:
+    if isinstance(value, torch.Tensor):
+        return value.to(dtype=dtype)
     return torch.from_numpy(np.ascontiguousarray(value)).to(dtype=dtype)
 
 
