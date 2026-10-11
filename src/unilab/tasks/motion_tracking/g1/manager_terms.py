@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-import numpy as np
 import torch
 
 from unilab.managers import ManagerTermBase, ManagerTermBaseCfg
@@ -28,25 +27,54 @@ class joint_acc_l2(ManagerTermBase):
         if not isinstance(asset_cfg, SceneEntityCfg):
             raise TypeError("joint_acc_l2 asset_cfg must be SceneEntityCfg")
         self._entity = cast("Entity", env.scene[asset_cfg.name])
-        self._joint_ids = np.arange(self._entity.num_joints, dtype=np.intp)[asset_cfg.joint_ids]
-        self._previous = self._entity.data.joint_vel[:, self._joint_ids].copy()
+        self._entity_name = asset_cfg.name
+        joint_ids = (
+            tuple(range(self._entity.num_joints))
+            if isinstance(asset_cfg.joint_ids, slice)
+            else tuple(asset_cfg.joint_ids)
+        )
+        self._joint_names = tuple(self._entity.joint_names[index] for index in joint_ids)
+        self._device = torch.device(getattr(env, "device", "cpu"))
+        self._joint_index = torch.tensor(joint_ids, dtype=torch.int64, device=self._device)
+        self._previous = torch.zeros(
+            (env.num_envs, len(self._joint_names)),
+            dtype=torch.float32,
+            device=self._device,
+        )
 
-    def reset(self, env_ids: torch.Tensor | np.ndarray | slice | None) -> None:
-        ids = np.arange(self.num_envs, dtype=np.intp)
-        if env_ids is not None:
-            ids = ids[env_ids]
-        self._previous[ids] = self._entity.data.joint_vel[np.ix_(ids, self._joint_ids)]
+    @property
+    def tensor_state_entity(self) -> str:
+        return self._entity_name
+
+    def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+        rows = (
+            torch.arange(self.num_envs, dtype=torch.int64, device=self._device)
+            if env_ids is None
+            else torch.arange(self.num_envs, dtype=torch.int64, device=self._device)[env_ids]
+            if isinstance(env_ids, slice)
+            else env_ids.detach().to(dtype=torch.int64, device=self._device).reshape(-1)
+        )
+        joint_view = self._joint_view()
+        selected = joint_view.joint_vel.index_select(1, self._joint_index).index_select(0, rows)
+        self._previous.index_copy_(0, rows, selected)
 
     def __call__(
         self,
         env: ManagerBasedRlEnv,
         asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-    ) -> np.ndarray:
+    ) -> torch.Tensor:
         del asset_cfg
-        velocity = self._entity.data.joint_vel[:, self._joint_ids]
+        joint_view = self._joint_view()
+        velocity = joint_view.joint_vel.index_select(1, self._joint_index)
         acceleration = (velocity - self._previous) / env.step_dt
         self._previous[:] = velocity
-        return np.sum(np.square(acceleration), axis=-1)
+        return acceleration.square().sum(dim=-1).to(dtype=torch.float32)
+
+    def _joint_view(self):
+        read_plan = getattr(self._env.scene, "_tensor_read_plan", None)
+        if read_plan is not None and read_plan.ready:
+            return read_plan.joint_tensor_view(self._entity)
+        return self._entity.joint_tensor_view(self._device)
 
 
 class joint_torque_l2(ManagerTermBase):
