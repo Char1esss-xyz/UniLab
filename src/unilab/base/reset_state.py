@@ -1311,7 +1311,7 @@ class ResetStateTransaction:
         self,
         env_ids: torch.Tensor,
         layout: BackendRootStateLayout,
-        root_state: np.ndarray,
+        root_state: torch.Tensor,
         *,
         term_name: str,
     ) -> None:

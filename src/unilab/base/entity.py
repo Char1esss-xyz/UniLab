@@ -2740,7 +2740,7 @@ class Entity:
 
     def write_root_state_to_sim(
         self,
-        root_state: np.ndarray,
+        root_state: torch.Tensor,
         env_ids: torch.Tensor | slice | None = None,
     ) -> None:
         """Stage a 13-D world-frame root state in the active reset transaction."""
