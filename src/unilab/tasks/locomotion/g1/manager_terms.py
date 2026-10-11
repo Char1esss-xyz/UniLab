@@ -847,6 +847,7 @@ class G1VelocityCommandCfg(UniformVelocityCommandCfg):
 
 class G1VelocityCommand(UniformVelocityCommand):
     cfg: G1VelocityCommandCfg  # pyright: ignore[reportIncompatibleVariableOverride]
+    uses_tensor_reset_rows = True
 
     def __init__(self, cfg: G1VelocityCommandCfg, env: ManagerBasedRlEnv):
         self._planar_dead_zone = _real(

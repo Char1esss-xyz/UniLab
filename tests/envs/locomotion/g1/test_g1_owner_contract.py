@@ -67,7 +67,7 @@ _OFFPOLICY_REWARDS = (
     "feet_phase",
     "alive",
 )
-_TENSOR_RESET_EVENT_BACKENDS = {"mjwarp", "newton"}
+_TENSOR_RESET_EVENT_BACKENDS = {"mujoco", "mjwarp", "newton"}
 _MOTRIX_PACKED_HOST_BRIDGE_BACKENDS = {"motrix"}
 
 _OBSERVATION_TERMS = (
@@ -540,6 +540,12 @@ def test_g1_registry_executes_real_manager_runtime(
 
     try:
         assert isinstance(env, ManagerBasedRlEnv)
+        if (
+            backend in _TENSOR_RESET_EVENT_BACKENDS
+            or backend in _MOTRIX_PACKED_HOST_BRIDGE_BACKENDS
+        ):
+            assert env.event_manager.uses_tensor_reset_rows
+            assert env.command_manager.uses_tensor_reset_rows()
         assert env.obs_groups_spec == {"obs": obs_dim, "critic": critic_dim}
         assert env.action_space.shape == (num_dof,)
         action = env.action_manager.get_term("joint_pos")

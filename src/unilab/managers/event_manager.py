@@ -209,13 +209,25 @@ class EventManager(ManagerBase):
             raise ValueError(f"Event mode '{mode}' requires the time-step of the environment.")
 
         if mode == "reset" and self.uses_tensor_reset_rows:
-            if any(
-                term_cfg.min_step_count_between_reset for term_cfg in self._mode_term_cfgs["reset"]
-            ):
-                raise NotImplementedError(
-                    "tensor reset-row events do not support min_step_count_between_reset"
-                )
-            for term_cfg in self._mode_term_cfgs["reset"]:
+            for index, term_cfg in enumerate(self._mode_term_cfgs["reset"]):
+                if term_cfg.min_step_count_between_reset:
+                    assert global_env_step_count is not None
+                    assert env_ids is not None
+                    assert isinstance(env_ids, torch.Tensor)
+                    last_triggered_step = self._reset_term_last_triggered_step_id[index][env_ids]
+                    triggered_at_least_once = self._reset_term_last_triggered_once[index][env_ids]
+                    steps_since_triggered = global_env_step_count - last_triggered_step
+                    valid_trigger = steps_since_triggered >= term_cfg.min_step_count_between_reset
+                    valid_trigger |= (last_triggered_step == 0) & ~triggered_at_least_once
+                    valid_env_ids = env_ids[valid_trigger]
+                    if valid_env_ids.numel() == 0:
+                        continue
+                    self._reset_term_last_triggered_once[index][valid_env_ids] = True
+                    self._reset_term_last_triggered_step_id[index][valid_env_ids] = (
+                        global_env_step_count
+                    )
+                    term_cfg.func(self._env, valid_env_ids, **term_cfg.params)
+                    continue
                 term_cfg.func(self._env, env_ids, **term_cfg.params)
             return
 

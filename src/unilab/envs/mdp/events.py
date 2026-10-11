@@ -853,6 +853,8 @@ dof_armature = joint_armature
 class PdGains(ManagerTermBase):
     """Pinned-mjlab-compatible PD gain randomization on UniLab reset payloads."""
 
+    uses_tensor_rows = True
+
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedRlEnv):
         super().__init__(env)
         if cfg.mode != "reset":
