@@ -1288,7 +1288,7 @@ class RandomizeBodyMassInertia(ManagerTermBase):
             asset_cfg.body_ids,
             term_name=term_name,
         )
-        if not np.array_equal(self._body_ids, inertia_ids):
+        if self._body_ids.tolist() != inertia_ids.tolist():
             raise RuntimeError(
                 f"EventManager term '{term_name}' mass/inertia body bindings diverged: "
                 f"{self._body_ids.tolist()} != {inertia_ids.tolist()}"
@@ -1317,7 +1317,7 @@ class RandomizeBodyMassInertia(ManagerTermBase):
                 dtype=torch.float64,
             )
             self._scales = torch.exp(2.0 * alpha)
-        rows = torch.from_numpy(np.ascontiguousarray(ids, dtype=np.int64))
+        rows = ids.to(dtype=torch.int64)
         scales = self._scales.index_select(0, rows).to(device=self._scales.device)
         default_mass = _selected_reset_defaults_tensor(
             self._default_mass,
@@ -1590,7 +1590,7 @@ class RandomizePhysicsSceneGravity(ManagerTermBase):
             ).to(device=sampled.device)
         else:
             default_gravity = _selected_reset_defaults_tensor(
-                self._default_gravity.cpu().numpy(),
+                self._default_gravity,
                 ids,
                 canonical_ndim=1,
                 device=sampled.device,
@@ -1992,12 +1992,20 @@ class RandomizeEncoderBias(ManagerTermBase):
                 f"EventManager term '{term_name}' asset_cfg must be SceneEntityCfg, "
                 f"got {type(asset_cfg).__name__}"
             )
-        bias_range = np.asarray(cfg.params["bias_range"], dtype=np.float64)
-        if bias_range.shape != (2,) or not np.isfinite(bias_range).all():
+        try:
+            raw_bias_range = cfg.params["bias_range"]
+            if isinstance(raw_bias_range, (str, bytes)) or len(tuple(raw_bias_range)) != 2:
+                raise ValueError
+            bias_lower, bias_upper = float(raw_bias_range[0]), float(raw_bias_range[1])
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                f"EventManager term '{term_name}' bias_range must be a numeric (min, max) pair"
+            ) from exc
+        if not (math.isfinite(bias_lower) and math.isfinite(bias_upper)):
             raise ValueError(f"EventManager term '{term_name}' bias_range must be a finite pair")
-        if bias_range[0] > bias_range[1]:
+        if bias_lower > bias_upper:
             raise ValueError(f"EventManager term '{term_name}' bias_range minimum exceeds maximum")
-        self._range = (float(bias_range[0]), float(bias_range[1]))
+        self._range = (bias_lower, bias_upper)
         self._entity = cast("Entity", env.scene[asset_cfg.name])
         all_joint_ids = tuple(range(self._entity.num_joints))
         if isinstance(asset_cfg.joint_ids, slice):
