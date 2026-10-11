@@ -164,7 +164,8 @@ class base_height_l2(ManagerTermBase):
 
 def alive(env: ManagerBasedRlEnv) -> torch.Tensor:
     """Constant reward for every step, unconditional as in the legacy tasks."""
-    return torch.ones((env.num_envs,), dtype=torch.float32)
+    device = torch.device(getattr(env, "device", torch.device("cpu")))
+    return torch.ones((env.num_envs,), dtype=torch.float32, device=device)
 
 
 class joint_deviation_l1(ManagerTermBase):
