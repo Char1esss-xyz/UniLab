@@ -195,6 +195,10 @@ class ManagerScene(Protocol):
 
     def bind_gravity_write(self, *, term_name: str) -> np.ndarray: ...
 
+    def bind_gravity_write_torch(
+        self, *, term_name: str, device: str | torch.device
+    ) -> torch.Tensor: ...
+
     def write_gravity_to_sim(
         self, values: np.ndarray, env_ids: np.ndarray, *, term_name: str
     ) -> None: ...
