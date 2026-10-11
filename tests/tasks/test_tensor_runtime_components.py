@@ -60,6 +60,11 @@ def test_semantic_fingerprint_rejects_semantic_mutation() -> None:
     )
 
 
+def test_semantic_fingerprint_rejects_non_finite_scalar() -> None:
+    with pytest.raises(ValueError, match="non-finite scalar"):
+        semantic_fingerprint("unilab.test.owner.v1", {"std": float("nan")})
+
+
 def test_tensor_observation_noise_uses_declared_uniform_bounds() -> None:
     noise = TensorObservationNoise.from_uniform_terms(
         (
