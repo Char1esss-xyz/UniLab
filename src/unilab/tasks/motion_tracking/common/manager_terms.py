@@ -539,8 +539,9 @@ class MotionCommand(CommandTerm):
             raise ValueError(
                 f"MotionCommand body order {tuple(body_names)} does not match {cfg.body_names}"
             )
-        motion_body_ids = self.robot.motion_body_ids[tuple(body_ids)]
-        self.motion = self._make_motion_loader(cfg.motion_file, motion_body_ids)
+        motion_body_ids = self.robot.motion_body_ids[body_ids]
+        motion_body_indices = tuple(int(body_id) for body_id in motion_body_ids)
+        self.motion = self._make_motion_loader(cfg.motion_file, motion_body_indices)
         if self.motion.num_joints != len(self.robot.joint_names):
             raise ValueError(
                 f"MotionCommand motion joint width {self.motion.num_joints} does not match "
