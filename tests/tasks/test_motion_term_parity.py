@@ -540,7 +540,14 @@ def test_joint_pos_limits_matches_reference_equation() -> None:
     rng = np.random.default_rng(123)
     joint_pos = rng.standard_normal((8, 5), dtype=np.float32)
     limits = np.asarray([[-1.0, 1.0]] * 5, dtype=np.float32)
-    asset = SimpleNamespace(data=SimpleNamespace(joint_pos=joint_pos, soft_joint_pos_limits=limits))
+    asset = SimpleNamespace(
+        data=SimpleNamespace(
+            joint_pos=joint_pos,
+            soft_joint_pos_limits_torch=lambda device: torch.as_tensor(
+                limits, dtype=torch.float32, device=device
+            ),
+        )
+    )
     env = SimpleNamespace(scene={"robot": asset}, device=torch.device("cpu"))
     asset_cfg = SimpleNamespace(name="robot", joint_ids=np.array([4, 2, 0], dtype=np.intp))
 
