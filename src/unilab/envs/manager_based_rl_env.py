@@ -514,6 +514,8 @@ class ManagerBasedRlEnv(TorchEnv):
         narrow = (
             self._backend.get_tensor_capabilities().execution is TensorExecution.DEVICE_RESIDENT
         )
+        for name, term_cfg in self.event_manager.term_cfgs.items():
+            specs.extend(self._manager_term_body_read_specs("event", name, term_cfg.func))
         for manager_name, manager in (
             ("reward", self.reward_manager),
             ("termination", self.termination_manager),
@@ -776,7 +778,7 @@ class ManagerBasedRlEnv(TorchEnv):
         self,
         manager_name: str,
         term_name: str,
-        term_cfg: RewardTermCfg | TerminationTermCfg,
+        term_cfg: EventTermCfg | RewardTermCfg | TerminationTermCfg,
         *,
         narrow: bool = False,
     ) -> list[SceneTensorReadSpec]:

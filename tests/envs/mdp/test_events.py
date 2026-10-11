@@ -32,7 +32,7 @@ from unisim.dr.types import (
     TensorResetRandomizationPayload,
 )
 
-from unilab.base.entity import EntityCfg, EntityScene
+from unilab.base.entity import EntityCfg, EntityScene, SceneTensorReadSpec
 from unilab.base.reset_state import ResetStateTransaction
 from unilab.envs import mdp
 from unilab.managers import EventManager, EventTermCfg, SceneEntityCfg
@@ -1116,11 +1116,14 @@ def test_apply_body_impulse_lifecycle_stages_sustains_and_expires() -> None:
 
 
 def test_apply_body_impulse_offset_generates_cross_torque() -> None:
-    env, backend, _ = _transaction_env(
-        rng_seed=37,
-        interval_force_supported=True,
-        interval_torque_supported=True,
+    env, backend, _ = _tensor_dr_env(device_reset_randomization=False, device=torch.device("cpu"))
+    backend.interval_force_supported = True
+    backend.interval_torque_supported = True
+    env.scene._tensor_read_plan = scene_compile = env.scene.compile_tensor_reads(
+        env.device,
+        (SceneTensorReadSpec(entity="robot", body_names=("base",)),),
     )
+    scene_compile.refresh()
     manager = EventManager(
         {
             "impulse": EventTermCfg(
@@ -1832,16 +1835,24 @@ class _TensorBackend(_Backend):
         super().__init__(**kwargs)
         self.device_reset_randomization = device_reset_randomization
         self.tensor_reset_calls: list[tuple[Any, Any, Any, Any]] = []
+        self.body_tensor_views = {
+            "pos_w": torch.zeros((self.num_envs, 1, 3), dtype=torch.float32),
+            "quat_w": torch.zeros((self.num_envs, 1, 4), dtype=torch.float32),
+            "lin_vel_w": torch.zeros((self.num_envs, 1, 3), dtype=torch.float32),
+            "ang_vel_w": torch.zeros((self.num_envs, 1, 3), dtype=torch.float32),
+        }
+        self.body_tensor_views["quat_w"][..., 0] = 1.0
 
     def get_tensor_capabilities(self) -> TensorLifecycleCapabilities:
         return TensorLifecycleCapabilities(
             execution=TensorExecution.DEVICE_RESIDENT,
             state_views=True,
             state_fields=frozenset({"qpos", "qvel"}),
-            sensor_views=False,
+            sensor_views=True,
             stepping=True,
             selected_reset=True,
             reset_randomization=True,
+            tracked_body_views=True,
             process_topology=TensorProcessTopology.IN_PROCESS,
             data_plane=TensorDataPlane.DIRECT,
             stream_event_ownership="fake synchronous stream",
@@ -1852,6 +1863,29 @@ class _TensorBackend(_Backend):
     def set_state_tensor(self, env_indices, qpos, qvel, randomization=None) -> dict:
         self.tensor_reset_calls.append((env_indices, qpos, qvel, randomization))
         return {"ok": True}
+
+    def get_tracked_body_views(self, body_names=None, device=None):
+        assert tuple(body_names) == ("base",)
+        return SimpleNamespace(body_names=tuple(body_names), **self.body_tensor_views)
+
+    def get_state_views(self, names, device=None):
+        return {
+            "qpos": torch.zeros((self.num_envs, 3), dtype=torch.float32),
+            "qvel": torch.zeros((self.num_envs, 3), dtype=torch.float32),
+        }
+
+    def get_sensor_view(self, name, device="cpu"):
+        field = next(
+            value
+            for prefix, value in (
+                ("track_pos_w_", self.body_tensor_views["pos_w"]),
+                ("track_quat_w_", self.body_tensor_views["quat_w"]),
+                ("track_linvel_w_", self.body_tensor_views["lin_vel_w"]),
+                ("track_angvel_w_", self.body_tensor_views["ang_vel_w"]),
+            )
+            if name.startswith(prefix)
+        )
+        return field[:, 0]
 
 
 def _tensor_dr_env(

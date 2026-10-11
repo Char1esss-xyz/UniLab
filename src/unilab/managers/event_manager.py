@@ -119,6 +119,15 @@ class EventManager(ManagerBase):
         return self._mode_term_names
 
     @property
+    def term_cfgs(self) -> dict[str, EventTermCfg]:
+        """Return active event term configs keyed by their global term name."""
+        return {
+            name: self._mode_term_cfgs[mode][index]
+            for mode, names in self._mode_term_names.items()
+            for index, name in enumerate(names)
+        }
+
+    @property
     def available_modes(self) -> list[EventMode]:
         return list(self._mode_term_names.keys())
 
