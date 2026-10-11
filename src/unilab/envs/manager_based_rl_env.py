@@ -601,6 +601,8 @@ class ManagerBasedRlEnv(TorchEnv):
             asset_cfg = params.get("asset_cfg") if isinstance(params, dict) else None
             entity_name = getattr(asset_cfg, "name", None)
         if not isinstance(entity_name, str) or not entity_name:
+            entity_name = getattr(term, "entity_name", None)
+        if not isinstance(entity_name, str) or not entity_name:
             entity_name = "robot"
         return [SceneTensorReadSpec(entity=entity_name, body_names=tuple(body_names))]
 
