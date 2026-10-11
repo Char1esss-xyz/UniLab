@@ -3217,7 +3217,7 @@ class Entity:
         joint_ids: np.ndarray | Sequence[int] | slice | None = None,
         *,
         term_name: str,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, torch.Tensor]:
         """Bind entity-local joints and immutable default DOF armatures."""
         if self._reset_state is None:
             raise self._capability_error(
@@ -3235,7 +3235,7 @@ class Entity:
             model_dof_ids[local_ids],
             term_name=f"{term_name}:{self.name}",
         )
-        return self._readonly_local_binding(local_ids, defaults)
+        return local_ids, defaults
 
     def write_joint_armature_to_sim(
         self,
@@ -3268,7 +3268,7 @@ class Entity:
         geom_ids: np.ndarray | Sequence[int] | slice | None = None,
         *,
         term_name: str,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, torch.Tensor]:
         """Bind entity-local geoms and immutable default friction vectors."""
         if self._reset_state is None or self._geom_ids is None:
             raise self._capability_error(
@@ -3285,7 +3285,7 @@ class Entity:
             self._geom_ids[local_ids],
             term_name=f"{term_name}:{self.name}",
         )
-        return self._readonly_local_binding(local_ids, defaults)
+        return local_ids, defaults
 
     def write_geom_friction_to_sim(
         self,
