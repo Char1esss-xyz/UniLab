@@ -943,7 +943,7 @@ class ResetStateTransaction:
     def write_gravity(
         self,
         env_ids: torch.Tensor,
-        values: np.ndarray | torch.Tensor,
+        values: torch.Tensor,
         *,
         term_name: str,
     ) -> None:

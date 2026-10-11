@@ -1203,8 +1203,8 @@ def test_owner_tensor_transaction_rejects_reset_randomization() -> None:
     with pytest.raises(RuntimeError, match="step-owner tensor transaction"):
         with transaction.scoped_device_owner_tensor(torch.arange(4, dtype=torch.int64)):
             transaction.write_gravity(
-                rows.detach().cpu().numpy(),
-                np.array([[0.0, 0.0, -9.5]], dtype=np.float64),
+                rows.detach().cpu(),
+                torch.tensor([[0.0, 0.0, -9.5]], dtype=torch.float64),
                 term_name="gravity_owner",
             )
 
@@ -1262,7 +1262,7 @@ def test_tensor_reset_commit_carries_randomization_payload() -> None:
     with transaction.scoped_device_event_tensor(rows):
         transaction.write_gravity(
             rows,
-            np.array([[0.0, 0.0, -9.5], [0.0, 0.0, -10.0]], dtype=np.float64),
+            torch.tensor([[0.0, 0.0, -9.5], [0.0, 0.0, -10.0]], dtype=torch.float64),
             term_name="gravity_owner",
         )
 
@@ -1293,7 +1293,7 @@ def test_tensor_reset_commit_rejects_randomization_without_capability() -> None:
         with transaction.scoped_device_event_tensor(rows):
             transaction.write_gravity(
                 rows,
-                np.array([[0.0, 0.0, -9.8]], dtype=np.float64),
+                torch.tensor([[0.0, 0.0, -9.8]], dtype=torch.float64),
                 term_name="gravity_owner",
             )
 
@@ -1437,7 +1437,7 @@ def test_tensor_reset_rejects_mixing_host_and_device_randomization() -> None:
             )
             transaction.write_gravity(
                 torch.tensor([0], dtype=torch.int64),
-                np.array([[0.0, 0.0, -9.5]]),
+                torch.tensor([[0.0, 0.0, -9.5]]),
                 term_name="gravity_owner",
             )
     assert backend.tensor_reset_calls == []
