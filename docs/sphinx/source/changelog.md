@@ -30,6 +30,22 @@ PyPI 版本变更与未发布变更；发布日期采用 PyPI 上传日期。完
   step/reset 不再接受 NumPy 输入，也不再做隐藏 host 转换（ADR-0011、
   ADR-0012）。
 
+- Removed the production Numba implementation and dependency: the CPU motion
+  command and its kernels were removed, `cpu_ids` now owns only Linux process
+  affinity, and all G1 motion owners use the device-resident
+  `MotionCommandCfg`. Manager/env runtime packages reject NumPy imports and
+  hidden Torch↔NumPy conversions; the cold NPZ MotionLoader remains the only
+  task-runtime NumPy leaf, while base owners consume legacy NumPy formats only
+  in explicit adapter/reset-host boundaries
+  ([#2124](https://github.com/Motphys/UniLab/issues/2124),
+  [ADR-0015](https://github.com/Motphys/UniLab/blob/main/docs/sphinx/source/adr/ADR-0015-no-numba-and-explicit-numpy-leaf-boundaries.md)).
+  移除 production Numba 实现与依赖：删除 CPU motion command 和 kernels，
+  `cpu_ids` 仅保留 Linux process affinity 语义，所有 G1 motion owner 均使用
+  device-resident `MotionCommandCfg`。Manager/env runtime package 禁止 NumPy
+  import 与隐藏 Torch↔NumPy 转换；cold NPZ MotionLoader 仍是 task runtime
+  唯一 NumPy leaf，base owner 只在显式 adapter/reset-host boundary 内消化
+  legacy NumPy format（#2124、ADR-0015）。
+
 - Production training now enters through the sole Manager-Based factory and the
   scoped tensor backend set. Retired task owners, the WarpSAC config tree, and
   task-owned direct training environment classes were removed; fused task
