@@ -239,18 +239,6 @@ def _model_field_default_rows(
     return selected
 
 
-def _apply_randomization_operation(
-    default: np.ndarray,
-    samples: np.ndarray,
-    operation: str,
-) -> torch.Tensor:
-    if operation == "add":
-        return default + samples
-    if operation == "scale":
-        return default * samples
-    return samples
-
-
 def _require_torch_rng(env: ManagerBasedRlEnv, term_name: str) -> TorchManagerRng:
     rng = getattr(env, "torch_rng", None)
     if not isinstance(rng, TorchManagerRng):
