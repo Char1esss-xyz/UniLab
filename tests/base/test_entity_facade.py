@@ -300,7 +300,7 @@ def test_entity_binding_selects_per_world_default_columns() -> None:
     ids = torch.tensor([1], dtype=torch.int64)
     with transaction.scoped(ids):
         entity.write_body_mass_to_sim(
-            np.asarray([[7.0]]),
+            torch.asarray([[7.0]]),
             body_ids,
             ids,
             term_name="variant_mass",

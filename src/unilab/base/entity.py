@@ -3357,7 +3357,7 @@ class Entity:
 
     def write_body_mass_to_sim(
         self,
-        values: np.ndarray,
+        values: torch.Tensor,
         body_ids: np.ndarray | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
@@ -3377,7 +3377,7 @@ class Entity:
 
     def record_startup_body_mass_to_sim(
         self,
-        values: np.ndarray,
+        values: torch.Tensor,
         body_ids: np.ndarray | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
@@ -3445,7 +3445,7 @@ class Entity:
 
     def write_body_ipos_to_sim(
         self,
-        values: np.ndarray,
+        values: torch.Tensor,
         body_ids: np.ndarray | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
@@ -3465,7 +3465,7 @@ class Entity:
 
     def record_startup_body_ipos_to_sim(
         self,
-        values: np.ndarray,
+        values: torch.Tensor,
         body_ids: np.ndarray | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
@@ -3537,7 +3537,7 @@ class Entity:
 
     def write_body_inertia_to_sim(
         self,
-        values: np.ndarray,
+        values: torch.Tensor,
         body_ids: np.ndarray | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
