@@ -355,16 +355,13 @@ class _FootSensorTerm(_GaitTerm):
     def _read(self) -> torch.Tensor:
         read_plan = getattr(self._env.scene, "_tensor_read_plan", None)
         sensor_names = getattr(read_plan, "sensor_names", {}).get("robot", ())
-        if read_plan is not None and set(self._sensor_names).issubset(set(sensor_names)):
-            values = read_plan.sensor_tensor_views("robot", self._sensor_names).values
-            return torch.cat([values[name] for name in self._sensor_names], dim=1)
-        try:
-            return torch.as_tensor(self._view.read(), device=self._device)
-        except (KeyError, TypeError, ValueError, NotImplementedError) as exc:
-            raise type(exc)(
-                f"Manager term '{self.name}' named-foot-sensor capability failed on "
-                f"backend '{self._view.backend_type}': {exc}"
-            ) from exc
+        if read_plan is None or not set(self._sensor_names).issubset(set(sensor_names)):
+            raise NotImplementedError(
+                f"Manager term '{self.name}' requires its named sensors "
+                f"{self._sensor_names} in the packed Torch read plan"
+            )
+        values = read_plan.sensor_tensor_views("robot", self._sensor_names).values
+        return torch.cat([values[name] for name in self._sensor_names], dim=1)
 
 
 class feet_phase_contact(_FootSensorTerm):
@@ -408,16 +405,13 @@ class feet_phase_contact(_FootSensorTerm):
     def _read_contact(self) -> torch.Tensor:
         read_plan = getattr(self._env.scene, "_tensor_read_plan", None)
         sensor_names = getattr(read_plan, "sensor_names", {}).get("robot", ())
-        if read_plan is not None and set(self._sensor_names).issubset(set(sensor_names)):
-            values = read_plan.sensor_tensor_views("robot", self._sensor_names).values
-            return torch.cat([values[name] for name in self._sensor_names], dim=1)
-        try:
-            return _torch_state(self._view.read())
-        except (KeyError, TypeError, ValueError, NotImplementedError) as exc:
-            raise type(exc)(
-                f"Manager term '{self.name}' named-foot-sensor capability failed on "
-                f"backend '{self._view.backend_type}': {exc}"
-            ) from exc
+        if read_plan is None or not set(self._sensor_names).issubset(set(sensor_names)):
+            raise NotImplementedError(
+                f"Manager term '{self.name}' requires its named sensors "
+                f"{self._sensor_names} in the packed Torch read plan"
+            )
+        values = read_plan.sensor_tensor_views("robot", self._sensor_names).values
+        return torch.cat([values[name] for name in self._sensor_names], dim=1)
 
     def __call__(self, env: _GaitEnv, **params: Any) -> torch.Tensor:
         del params

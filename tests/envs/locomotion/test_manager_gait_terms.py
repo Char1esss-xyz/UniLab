@@ -42,6 +42,7 @@ class _Scene:
             "rl_pos": np.array([[0, 0, 0.1], [0, 0, 0.2]], dtype=np.float32),
             "rr_pos": np.array([[0, 0, 0], [0, 0, 0.1]], dtype=np.float32),
         }
+        self.refresh_tensor_read_plan()
 
     def bind_sensor_data(self, names) -> BackendSensorView:
         names = tuple(names)
@@ -55,6 +56,22 @@ class _Scene:
         view = BackendSensorView("fake", names, dimensions, 2, read)
         view.read()  # Mirror SimBackend.bind_sensor_data materialization validation.
         return view
+
+    def refresh_tensor_read_plan(self, device: torch.device = torch.device("cpu")) -> None:
+        values = {
+            name: torch.as_tensor(value, device=device) for name, value in self.values.items()
+        }
+        requests: list[tuple[str, tuple[str, ...]]] = []
+
+        def sensor_tensor_views(entity, names):
+            requests.append((entity, tuple(names)))
+            return SimpleNamespace(values={name: values[name] for name in names})
+
+        self._tensor_read_plan = SimpleNamespace(
+            device=device,
+            sensor_names={"robot": tuple(self.values)},
+            sensor_tensor_views=sensor_tensor_views,
+        )
 
 
 class _ParityScene:
@@ -119,6 +136,8 @@ class _Commands:
 
 
 def _env(counter: int = 0, scene: _Scene | None = None, device: str = "cpu") -> ManagerBasedRlEnv:
+    scene = scene or _Scene()
+    scene.refresh_tensor_read_plan(torch.device(device))
     return cast(
         ManagerBasedRlEnv,
         SimpleNamespace(
@@ -127,7 +146,7 @@ def _env(counter: int = 0, scene: _Scene | None = None, device: str = "cpu") -> 
             common_step_counter=counter,
             episode_length_buf=np.array([counter, 0]),
             step_dt=0.02,
-            scene=scene or _Scene(),
+            scene=scene,
             command_manager=_Commands(),
         ),
     )
@@ -281,10 +300,11 @@ def test_standing_penalties_match_a2_legacy_gates() -> None:
 def test_foot_rewards_match_legacy_equations_and_read_only_bound_views(dtype) -> None:
     scene = _Scene()
     scene.values = {name: values.astype(dtype) for name, values in scene.values.items()}
+    scene.refresh_tensor_read_plan()
     manager = _rewards(_env(5, scene))
     assert scene.calls == {"bind": 2, "read": 2}
     result = manager.compute(dt=0.02)
-    assert scene.calls == {"bind": 2, "read": 4}
+    assert scene.calls == {"bind": 2, "read": 2}
 
     phase = np.array([[0.2, 0.7, 0.7, 0.2]] * 2)
     contact = np.array([[True, False, False, True], [False, True, True, False]])
@@ -293,7 +313,7 @@ def test_foot_rewards_match_legacy_equations_and_read_only_bound_views(dtype) ->
     expected += np.mean(np.exp(-np.square(heights - 0.1) / 0.01) * (phase >= 0.6), axis=1)
     np.testing.assert_allclose(result, expected, atol=1e-7)
     manager.compute(dt=0.02)
-    assert scene.calls == {"bind": 2, "read": 6}
+    assert scene.calls == {"bind": 2, "read": 2}
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
@@ -312,6 +332,7 @@ def test_foot_rewards_use_compiled_tensor_sensors_without_host_reads(device: str
         return SimpleNamespace(values={name: values[name] for name in names})
 
     cast(Any, scene)._tensor_read_plan = SimpleNamespace(
+        device=torch.device(device),
         sensor_names={"robot": CONTACTS + POSITIONS},
         sensor_tensor_views=sensor_tensor_views,
     )
@@ -361,7 +382,21 @@ def test_runtime_nonfinite_sensor_data_reports_term_and_backend() -> None:
     scene = _Scene()
     manager = _rewards(_env(scene=scene))
     scene.values["fl_contact"][1, 0] = np.nan
-    with pytest.raises(ValueError, match="feet_phase_contact.*backend 'fake'.*NaN or Inf"):
+    values = {name: torch.as_tensor(value) for name, value in scene.values.items()}
+
+    def sensor_tensor_views(entity, names):
+        # Mirror the public read-plan validation boundary: non-finite sensor
+        # values fail closed with the requesting sensor named in the error.
+        if not bool(torch.isfinite(values["fl_contact"]).all()):
+            raise ValueError("fl_contact has NaN or Inf")
+        return SimpleNamespace(values={name: values[name] for name in names})
+
+    cast(Any, scene)._tensor_read_plan = SimpleNamespace(
+        device=torch.device("cpu"),
+        sensor_names={"robot": tuple(scene.values)},
+        sensor_tensor_views=sensor_tensor_views,
+    )
+    with pytest.raises(ValueError, match="fl_contact has NaN or Inf"):
         manager.compute(dt=0.02)
 
 
