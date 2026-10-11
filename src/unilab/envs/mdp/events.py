@@ -13,7 +13,6 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-import numpy as np
 import torch
 
 from unilab.managers.event_manager import EventTermCfg
@@ -1762,6 +1761,14 @@ class ApplyBodyImpulse(ManagerTermBase):
         )
     )
 
+    @property
+    def entity_name(self) -> str:
+        return self._asset_cfg_name
+
+    @property
+    def tensor_body_names(self) -> tuple[str, ...]:
+        return self._body_names if self._body_point_offset is not None else ()
+
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedRlEnv):
         super().__init__(env)
         term_name = "apply_body_impulse"
@@ -1816,6 +1823,7 @@ class ApplyBodyImpulse(ManagerTermBase):
             self._body_point_offset = None
 
         self._entity = cast("Entity", env.scene[asset_cfg.name])
+        self._asset_cfg_name = asset_cfg.name
         self._uses_torque = (
             bool((self._torque_range != 0.0).any()) or self._body_point_offset is not None
         )
@@ -1823,6 +1831,9 @@ class ApplyBodyImpulse(ManagerTermBase):
             asset_cfg.body_ids,
             torque=self._uses_torque,
             term_name=term_name,
+        )
+        self._body_names = tuple(
+            self._entity.body_names[int(index)] for index in self._local_body_ids
         )
         self._step_dt = float(env.step_dt)
         if not math.isfinite(self._step_dt) or self._step_dt <= 0.0:
@@ -1891,8 +1902,16 @@ class ApplyBodyImpulse(ManagerTermBase):
                 self._torque_range[0], self._torque_range[1], count * num_bodies * 3
             ).reshape(count, num_bodies, 3)
             if self._body_point_offset is not None:
-                quats = self._entity.data.body_link_quat_w
-                quat_rows = self._selected_body_quats(quats, trigger_ids)
+                read_plan = getattr(self._env.scene, "_tensor_read_plan", None)
+                if read_plan is None:
+                    raise NotImplementedError(
+                        "EventManager term 'apply_body_impulse' requires the packed "
+                        "Torch body-state read plan for body_point_offset"
+                    )
+                quats = read_plan.body_tensor_view(self._asset_cfg_name, self._body_names).quat_w
+                quat_rows = self._selected_body_quats(
+                    quats.to(device=self._device, dtype=torch.float64), trigger_ids
+                )
                 offsets = (
                     torch.tensor(self._body_point_offset)
                     .to(dtype=quat_rows.dtype)
@@ -1946,14 +1965,10 @@ class ApplyBodyImpulse(ManagerTermBase):
 
     def _selected_body_quats(
         self,
-        quats: torch.Tensor | np.ndarray,
+        quats: torch.Tensor,
         trigger_ids: torch.Tensor,
     ) -> torch.Tensor:
-        rows = (
-            quats
-            if isinstance(quats, torch.Tensor)
-            else torch.from_numpy(np.ascontiguousarray(quats))
-        ).to(device=self._device)
+        rows = quats.to(device=self._device)
         rows = rows.index_select(0, trigger_ids.to(device=self._device))
         columns = self._local_body_ids.to(device=self._device)
         return rows.index_select(1, columns).reshape(-1, 4)
