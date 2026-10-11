@@ -155,16 +155,7 @@ def test_manager_noise_and_temporal_buffers_do_not_import_numpy() -> None:
 
 
 def test_locomotion_runtime_terms_do_not_use_environment_numpy_rng() -> None:
-    paths = (
-        _REPO_ROOT / "src" / "unilab" / "tasks" / "locomotion" / "g1" / "manager_terms.py",
-        _REPO_ROOT
-        / "src"
-        / "unilab"
-        / "tasks"
-        / "locomotion"
-        / "common"
-        / "rough_manager_terms.py",
-    )
+    paths = (_REPO_ROOT / "src" / "unilab" / "tasks" / "locomotion" / "g1" / "manager_terms.py",)
     offenders = [
         (path.relative_to(_REPO_ROOT).as_posix(), line_number)
         for path in paths

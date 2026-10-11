@@ -41,7 +41,7 @@ _TASK_SOURCE_ROOTS = (
     SRC_ROOT / "unilab" / "envs",
     SRC_ROOT / "unilab" / "tasks",
 )
-_TERRAIN_CONSUMER_PATHS = (Path("locomotion/common/rough_manager_terms.py"),)
+_TERRAIN_CONSUMER_PATHS: tuple[Path, ...] = ()
 
 NUM_ENVS = 2
 SIM_DT = 0.005

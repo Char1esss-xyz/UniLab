@@ -10,8 +10,7 @@ during environment construction.
 The core reusable pieces are:
 
 - `unilab.base.scene.SceneCfg` for `terrain` and scene files.
-- `unilab.tasks.locomotion.common.rough_manager_terms` for the reusable rough
-  terrain generator and action/command owner terms.
+- `unilab.terrains` sub-terrain factories for generator composition.
 - `unilab.tasks.locomotion.common.height_scan` for cold height-scan offsets.
 
 For example, an owner can declare a generated terrain without putting terrain
@@ -24,7 +23,7 @@ env:
       hfield_name: terrain_hfield
       geom_name: floor
       generator:
-        _target_: unilab.tasks.locomotion.common.rough_manager_terms.QuadrupedRoughTerrainCfg
+        _target_: unilab.terrains.TerrainGeneratorCfg
         seed: 42
 ```
 
