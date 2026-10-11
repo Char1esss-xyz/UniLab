@@ -193,10 +193,11 @@ class _SensorTerm(SensorTermBase):
         view, sensor_names = binding
         read_plan = getattr(env.scene, "_tensor_read_plan", None)
         owner_sensors = set(getattr(read_plan, "sensor_names", {}).get("robot", ()))
-        if read_plan is not None and not set(sensor_names).issubset(owner_sensors):
-            read_plan = None
-        if read_plan is None:
-            return _state(self.name, capability, self._read(view, self.name), shape)
+        if read_plan is None or not set(sensor_names).issubset(owner_sensors):
+            raise NotImplementedError(
+                f"Manager term '{self.name}' requires its {capability} sensors "
+                f"{sensor_names} in the packed Torch read plan"
+            )
         entity = env.scene["robot"]
         views = read_plan.sensor_tensor_views(entity, sensor_names).values
         if len(sensor_names) == 1:
