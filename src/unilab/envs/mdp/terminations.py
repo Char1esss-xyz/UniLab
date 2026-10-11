@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, cast
 
 import torch
 
+from unilab.envs.mdp.observations import _quat_apply_inverse, _root_body_view
 from unilab.managers.scene_entity_config import SceneEntityCfg
 
 if TYPE_CHECKING:
@@ -53,10 +54,18 @@ def bad_orientation(
         raise TypeError("bad_orientation limit_angle must be a real number")
     if not math.isfinite(limit_angle):
         raise ValueError("bad_orientation limit_angle must be finite")
-    asset = cast("Entity", env.scene[asset_cfg.name])
-    projected_gravity = _state_tensor(
-        "bad_orientation", asset.data.projected_gravity_b, env.num_envs, width=3
-    )
+    asset, view = _root_body_view(env, asset_cfg)
+    if view is not None:
+        gravity = torch.as_tensor(
+            asset.data.gravity_vec_w,
+            dtype=torch.float32,
+            device=getattr(env, "device", torch.device("cpu")),
+        ).expand((view.quat_w.shape[0], 3))
+        projected_gravity = _quat_apply_inverse(view.quat_w[:, 0, :], gravity)
+    else:
+        projected_gravity = _state_tensor(
+            "bad_orientation", asset.data.projected_gravity_b, env.num_envs, width=3
+        )
     angle = torch.acos((-projected_gravity[:, 2]).clamp(-1.0, 1.0)).abs()
     return angle > limit_angle
 
