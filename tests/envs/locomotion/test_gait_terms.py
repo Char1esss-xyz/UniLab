@@ -201,13 +201,25 @@ def test_feet_clearance_matches_mjlab_velocity_weighted_error() -> None:
     scene.robot.data.body_link_pos_w[:] = [[[0, 0, 0.12], [0, 0, 0.05]]]
     scene.robot.data.body_link_lin_vel_w[:] = [[[0.3, 0.4, 0.0], [0.0, -0.5, 0.0]]]
     env = _env(scene)
-    cost = gait_terms.feet_clearance(env, target_height=0.1, command_name="twist")
+    term = _term(
+        gait_terms.feet_clearance,
+        env,
+        target_height=0.1,
+        command_name="twist",
+    )
+    cost = term(env)
     expected = np.abs(np.array([0.12, 0.05]) - 0.1) * np.array([0.5, 0.5])
     np.testing.assert_allclose(cost, [np.sum(expected)] * 2, rtol=1e-6)
 
     standing = _env(scene, command=np.zeros((2, 3), dtype=np.float32))
+    standing_term = _term(
+        gait_terms.feet_clearance,
+        standing,
+        target_height=0.1,
+        command_name="twist",
+    )
     np.testing.assert_allclose(
-        gait_terms.feet_clearance(standing, target_height=0.1, command_name="twist"),
+        standing_term(standing),
         [0.0, 0.0],
     )
 
@@ -395,8 +407,9 @@ def test_foot_height_returns_per_foot_body_z() -> None:
     scene = _Scene()
     scene.robot.data.body_link_pos_w[:] = [[[0.0, 0.0, 0.031], [0.0, 0.0, 0.052]]]
     env = _env(scene)
+    term = _term(gait_terms.foot_height, env)
     np.testing.assert_allclose(
-        gait_terms.foot_height(env),
+        term(env),
         [[0.031, 0.052], [0.031, 0.052]],
         rtol=1e-6,
     )
