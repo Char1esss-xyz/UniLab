@@ -9,9 +9,15 @@ from typing import Any, cast
 import numpy as np
 import pytest
 import torch
-from unisim.backend.base import SimBackend
+from unisim.backend.base import (
+    SimBackend,
+    TensorDataPlane,
+    TensorExecution,
+    TensorLifecycleCapabilities,
+    TensorProcessTopology,
+)
 
-from unilab.base.entity import EntityCfg, EntityScene
+from unilab.base.entity import EntityCfg, EntityScene, SceneTensorReadSpec
 from unilab.envs import mdp
 from unilab.managers import ObservationGroupCfg, ObservationManager, ObservationTermCfg
 from unilab.managers._types import ManagerBasedRlEnv
@@ -53,10 +59,37 @@ class _Backend:
             [[[0.1, 0.2, 0.3]], [[-0.1, -0.2, -0.3]]], dtype=np.float32
         )
 
+    def get_tensor_capabilities(self):
+        return TensorLifecycleCapabilities(
+            execution=TensorExecution.DEVICE_RESIDENT,
+            state_views=True,
+            state_fields=frozenset(("qpos", "qvel")),
+            sensor_views=True,
+            process_topology=TensorProcessTopology.IN_PROCESS,
+            data_plane=TensorDataPlane.DIRECT,
+            stream_event_ownership="caller owns the Torch stream",
+            torch_devices=("cpu",),
+        )
+
+    def get_state_views(self, names, device=None):
+        return {
+            "qpos": torch.as_tensor(self.dof_pos, dtype=torch.float32, device=device),
+            "qvel": torch.as_tensor(self.dof_vel, dtype=torch.float32, device=device),
+        }
+
+    def get_sensor_view(self, name, device=None):
+        return torch.as_tensor(self.sensor_values[name], dtype=torch.float32, device=device)
+
     def get_joint_dof_pos_indices(self, names) -> np.ndarray:
         return np.asarray([self.joint_names.index(name) for name in names], dtype=np.int32)
 
     def get_joint_dof_vel_indices(self, names) -> np.ndarray:
+        return self.get_joint_dof_pos_indices(names)
+
+    def get_joint_state_qpos_indices(self, names) -> np.ndarray:
+        return self.get_joint_dof_pos_indices(names)
+
+    def get_joint_state_qvel_indices(self, names) -> np.ndarray:
         return self.get_joint_dof_pos_indices(names)
 
     def get_body_ids(self, names) -> np.ndarray:
@@ -165,6 +198,14 @@ def _env() -> tuple[ManagerBasedRlEnv, _Backend]:
             torch_rng=TorchManagerRng.seeded(4),
         ),
     )
+    env.scene._tensor_read_plan = scene_plan = env.scene.compile_tensor_reads(
+        env.device,
+        (
+            SceneTensorReadSpec(entity="robot"),
+            SceneTensorReadSpec(entity="robot", sensor_names=("gyro", "upvector")),
+        ),
+    )
+    scene_plan.refresh()
     return env, backend
 
 
@@ -196,6 +237,7 @@ def test_root_joint_action_and_command_terms_match_numpy_contract() -> None:
     np.testing.assert_allclose(
         mdp.joint_pos_rel(env, biased=True),
         backend.dof_pos + robot.data.encoder_bias - [0.1, 0.2, 0.3],
+        atol=1e-6,
     )
     np.testing.assert_array_equal(mdp.joint_vel_rel(env), backend.dof_vel)
     np.testing.assert_array_equal(mdp.last_action(env), env.action_manager.action)
@@ -282,7 +324,7 @@ def test_named_sensor_terms_bind_once_and_only_read_cached_views() -> None:
     manager = _sensor_manager(env)
 
     assert manager.group_obs_dim == {"policy": (6,)}
-    assert backend.sensor_calls == {"bind": 2, "single": 2, "batch": 4}
+    assert backend.sensor_calls == {"bind": 2, "single": 2, "batch": 2}
 
     first = manager.compute_group("policy")
     second = manager.compute_group("policy")
@@ -293,7 +335,7 @@ def test_named_sensor_terms_bind_once_and_only_read_cached_views() -> None:
     )
     np.testing.assert_array_equal(first, expected)
     np.testing.assert_array_equal(second, expected)
-    assert backend.sensor_calls == {"bind": 2, "single": 2, "batch": 8}
+    assert backend.sensor_calls == {"bind": 2, "single": 2, "batch": 2}
 
     gyro_term = manager.get_term_cfg("policy", "gyro").func
     gravity_term = manager.get_term_cfg("policy", "gravity").func
@@ -412,6 +454,9 @@ def test_named_sensor_runtime_drift_reports_term_and_backend() -> None:
         env,
     )
     backend.sensor_values["gyro"] = np.full((2, 3), np.nan, dtype=np.float32)
+    env.scene._tensor_read_plan.invalidate()
+    env.scene._tensor_read_plan._stable_sensor_views.clear()
+    env.scene._tensor_read_plan.refresh()
 
     with pytest.raises(ValueError, match="builtin_sensor.*gyro.*backend 'fake'.*NaN or Inf"):
         manager.compute_group("policy")

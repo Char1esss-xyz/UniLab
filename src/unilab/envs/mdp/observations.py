@@ -86,7 +86,14 @@ class _NamedSensorObservation(ManagerTermBase):
             device = getattr(env, "device", torch.device("cpu"))
             return torch.as_tensor(self._read(), device=device)
         views = read_plan.sensor_tensor_views(entity, sensor_names)
-        return views.values[self._sensor_name]
+        value = views.values[self._sensor_name]
+        if not bool(torch.isfinite(value).all()):
+            raise ValueError(
+                f"Observation term '{self._term_name}' capability "
+                f"'named sensor {self._sensor_name}' on backend "
+                f"'{self._view.backend_type}' returned NaN or Inf"
+            )
+        return value
 
     @property
     def tensor_sensor_names(self) -> tuple[str, ...]:
@@ -294,14 +301,19 @@ def joint_pos_rel(
     joint_ids = asset_cfg.joint_ids
     device = getattr(env, "device", torch.device("cpu"))
     read_plan = getattr(env.scene, "_tensor_read_plan", None)
-    if read_plan is not None:
-        state = read_plan.joint_tensor_view(asset)
-        return (
-            state.joint_pos[:, joint_ids] - asset.data.default_joint_pos_torch(device)[:, joint_ids]
-        )
-    joint_pos = asset.data.joint_pos_biased if biased else asset.data.joint_pos
-    result = joint_pos[:, joint_ids] - asset.data.default_joint_pos[:, joint_ids]
-    return torch.as_tensor(result, dtype=torch.float32, device=device)
+    if read_plan is None:
+        joint_pos = asset.data.joint_pos_biased if biased else asset.data.joint_pos
+        result = joint_pos[:, joint_ids] - asset.data.default_joint_pos[:, joint_ids]
+        return torch.as_tensor(result, dtype=torch.float32, device=device)
+    state = read_plan.joint_tensor_view(asset)
+    result = (
+        state.joint_pos[:, joint_ids] - asset.data.default_joint_pos_torch(device)[:, joint_ids]
+    )
+    return (
+        result
+        if not biased
+        else result + asset.data.encoder_bias_tensor.to(result.device)[:, joint_ids]
+    )
 
 
 def joint_vel_rel(
@@ -312,13 +324,11 @@ def joint_vel_rel(
     joint_ids = asset_cfg.joint_ids
     device = getattr(env, "device", torch.device("cpu"))
     read_plan = getattr(env.scene, "_tensor_read_plan", None)
-    if read_plan is not None:
-        state = read_plan.joint_tensor_view(asset)
-        return (
-            state.joint_vel[:, joint_ids] - asset.data.default_joint_vel_torch(device)[:, joint_ids]
-        )
-    result = asset.data.joint_vel[:, joint_ids] - asset.data.default_joint_vel[:, joint_ids]
-    return torch.as_tensor(result, dtype=torch.float32, device=device)
+    if read_plan is None:
+        result = asset.data.joint_vel[:, joint_ids] - asset.data.default_joint_vel[:, joint_ids]
+        return torch.as_tensor(result, dtype=torch.float32, device=device)
+    state = read_plan.joint_tensor_view(asset)
+    return state.joint_vel[:, joint_ids] - asset.data.default_joint_vel_torch(device)[:, joint_ids]
 
 
 def last_action(env: ManagerBasedRlEnv, action_name: str | None = None) -> torch.Tensor:
