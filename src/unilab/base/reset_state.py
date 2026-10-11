@@ -544,7 +544,7 @@ class ResetStateTransaction:
         self,
         env_ids: torch.Tensor,
         column_ids: np.ndarray,
-        values: np.ndarray,
+        values: torch.Tensor,
         *,
         term_name: str,
     ) -> None:
@@ -587,7 +587,7 @@ class ResetStateTransaction:
         self,
         env_ids: torch.Tensor,
         column_ids: np.ndarray,
-        values: np.ndarray,
+        values: torch.Tensor,
         *,
         term_name: str,
     ) -> None:
@@ -630,7 +630,7 @@ class ResetStateTransaction:
         self,
         env_ids: torch.Tensor,
         column_ids: np.ndarray,
-        values: np.ndarray,
+        values: torch.Tensor,
         *,
         term_name: str,
     ) -> None:
@@ -673,7 +673,7 @@ class ResetStateTransaction:
         self,
         env_ids: torch.Tensor,
         column_ids: np.ndarray,
-        values: np.ndarray,
+        values: torch.Tensor,
         *,
         term_name: str,
     ) -> None:
@@ -719,7 +719,7 @@ class ResetStateTransaction:
         self,
         env_ids: torch.Tensor,
         column_ids: np.ndarray,
-        values: np.ndarray,
+        values: torch.Tensor,
         *,
         term_name: str,
     ) -> None:
