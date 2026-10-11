@@ -68,6 +68,12 @@ class _Entity:
                 dtype=np.float32,
             ),
             gravity_vec_w=np.asarray([0.0, 0.0, -1.0], dtype=np.float32),
+            default_joint_pos_torch=lambda device: torch.as_tensor(
+                [[0.1, 0.0, 0.2]] * 3, dtype=torch.float32, device=device
+            ),
+            soft_joint_pos_limits_torch=lambda device: torch.as_tensor(
+                [[-0.15, 0.15], [-0.3, 0.3], [-0.4, 0.4]], dtype=torch.float32, device=device
+            ),
         )
 
     def find_joints(self, keys, preserve_order: bool = False):
