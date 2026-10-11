@@ -835,7 +835,7 @@ class ResetStateTransaction:
         dof_ids: np.ndarray,
         *,
         term_name: str,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, torch.Tensor]:
         """Bind DOF-armature columns and immutable backend defaults."""
         default = self._materialize_randomization_default(
             RESET_TERM_DOF_ARMATURE,
@@ -853,14 +853,14 @@ class ResetStateTransaction:
             columns,
             field=RESET_TERM_DOF_ARMATURE,
         )
-        return self._readonly_binding(columns, selected)
+        return columns, self._torch_default_table(selected)
 
     def bind_geom_friction_write(
         self,
         geom_ids: np.ndarray,
         *,
         term_name: str,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, torch.Tensor]:
         """Bind geom-friction rows and immutable backend defaults."""
         default = self._materialize_randomization_default(
             RESET_TERM_GEOM_FRICTION,
@@ -878,7 +878,13 @@ class ResetStateTransaction:
             columns,
             field=RESET_TERM_GEOM_FRICTION,
         )
-        return self._readonly_binding(columns, selected)
+        return columns, self._torch_default_table(selected)
+
+    def _torch_default_table(self, values: np.ndarray) -> torch.Tensor:
+        """Materialize an immutable backend default as a Torch table."""
+        return torch.from_numpy(np.array(values, dtype=np.float64, copy=True)).to(
+            dtype=torch.float64
+        )
 
     def write_body_mass(
         self,

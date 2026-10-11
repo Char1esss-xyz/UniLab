@@ -213,14 +213,14 @@ def _selected_reset_defaults_tensor(
 
 
 def _model_field_default_rows(
-    defaults: np.ndarray,
+    defaults: torch.Tensor,
     env_ids: torch.Tensor,
     *,
     field_width: int,
     device: torch.device,
 ) -> torch.Tensor:
     """Select entity-local model-field defaults without a host row conversion."""
-    table = torch.from_numpy(np.ascontiguousarray(defaults))
+    table = defaults
     canonical_ndim = 1 if field_width == 1 else 2
     canonical = table.ndim == canonical_ndim
     rows = env_ids.to(dtype=torch.int64, device=device)
