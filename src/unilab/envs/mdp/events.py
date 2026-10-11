@@ -41,14 +41,13 @@ def _gain_range(
     distribution: Literal["uniform", "log_uniform"],
 ) -> tuple[float, float]:
     try:
-        bounds = np.asarray(value, dtype=np.float64)
+        if isinstance(value, (str, bytes)) or len(tuple(value)) != 2:
+            raise ValueError(f"pd_gains {name} must have shape (2,)")
+        lower, upper = float(value[0]), float(value[1])
     except (TypeError, ValueError) as exc:
         raise TypeError(f"pd_gains {name} must be a numeric (min, max) pair") from exc
-    if bounds.shape != (2,):
-        raise ValueError(f"pd_gains {name} must have shape (2,), got {bounds.shape}")
-    if not np.isfinite(bounds).all():
+    if not (math.isfinite(lower) and math.isfinite(upper)):
         raise ValueError(f"pd_gains {name} must contain only finite values")
-    lower, upper = float(bounds[0]), float(bounds[1])
     if lower > upper:
         raise ValueError(f"pd_gains {name} minimum {lower} exceeds maximum {upper}")
     if distribution == "log_uniform" and lower <= 0.0:
@@ -91,27 +90,27 @@ def _sample_se3_range(
             f"reset_root_state_uniform SE(3) sample shape must end in 6; received {shape}"
         )
     try:
-        ranges = np.asarray(
+        ranges = torch.tensor(
             [(range_dict or {}).get(key, (0.0, 0.0)) for key in _SE3_KEYS],
-            dtype=np.float64,
+            dtype=torch.float64,
         )
     except (TypeError, ValueError) as exc:
         raise ValueError(
             "reset_root_state_uniform ranges must map each SE(3) key to a numeric (min, max) pair"
         ) from exc
-    if ranges.shape != (len(_SE3_KEYS), 2):
+    if tuple(ranges.shape) != (len(_SE3_KEYS), 2):
         raise ValueError(
             "reset_root_state_uniform ranges must map each SE(3) key to a "
             f"(min, max) pair; received shape {ranges.shape}"
         )
-    if not np.isfinite(ranges).all():
+    if not bool(torch.isfinite(ranges).all()):
         raise ValueError("reset_root_state_uniform ranges must contain only finite values")
     invalid = ranges[:, 0] > ranges[:, 1]
-    if np.any(invalid):
-        keys = [_SE3_KEYS[index] for index in np.flatnonzero(invalid)]
+    if bool(invalid.any()):
+        keys = [_SE3_KEYS[index] for index in torch.nonzero(invalid).flatten().tolist()]
         raise ValueError(f"reset_root_state_uniform range minimum exceeds maximum for keys {keys}")
-    lower = torch.as_tensor(ranges[:, 0], dtype=torch.float64, device=rng.device)
-    upper = torch.as_tensor(ranges[:, 1], dtype=torch.float64, device=rng.device)
+    lower = ranges[:, 0].to(device=rng.device)
+    upper = ranges[:, 1].to(device=rng.device)
     return rng.uniform(lower, upper, shape, dtype=torch.float64)
 
 
@@ -136,52 +135,50 @@ def _distribution_parameters(
     name: str,
     width: int | None = None,
     distribution: str,
-) -> np.ndarray:
+) -> torch.Tensor:
     try:
-        params = np.asarray(value, dtype=np.float64)
+        params = torch.as_tensor(value, dtype=torch.float64)
     except (TypeError, ValueError) as exc:
         raise TypeError(
             f"EventManager term '{term_name}' parameter '{name}' must contain numeric values"
         ) from exc
     expected = (2,) if width is None else (2, width)
-    if params.shape != expected:
+    if tuple(params.shape) != expected:
         raise ValueError(
             f"EventManager term '{term_name}' parameter '{name}' has shape {params.shape}; "
             f"expected {expected}"
         )
-    if not np.isfinite(params).all():
+    if not bool(torch.isfinite(params).all()):
         raise ValueError(
             f"EventManager term '{term_name}' parameter '{name}' must contain only finite values"
         )
     if distribution == "gaussian":
-        if np.any(params[1] < 0.0):
+        if bool((params[1] < 0.0).any()):
             raise ValueError(
                 f"EventManager term '{term_name}' parameter '{name}' standard deviation "
                 "must be non-negative"
             )
     else:
-        if np.any(params[0] > params[1]):
+        if bool((params[0] > params[1]).any()):
             raise ValueError(
                 f"EventManager term '{term_name}' parameter '{name}' lower bound exceeds upper bound"
             )
-        if distribution == "log_uniform" and np.any(params <= 0.0):
+        if distribution == "log_uniform" and bool((params <= 0.0).any()):
             raise ValueError(
                 f"EventManager term '{term_name}' parameter '{name}' must be positive "
                 "for log_uniform sampling"
             )
-    result = np.array(params, copy=True)
-    result.setflags(write=False)
-    return result
+    return params.clone()
 
 
 def _sample_distribution(
     rng: TorchManagerRng,
-    params: np.ndarray,
+    params: torch.Tensor,
     shape: tuple[int, ...],
     distribution: str,
 ) -> torch.Tensor:
-    low = torch.as_tensor(params[0], dtype=torch.float64, device=rng.device)
-    high = torch.as_tensor(params[1], dtype=torch.float64, device=rng.device)
+    low = params[0].to(device=rng.device, dtype=torch.float64)
+    high = params[1].to(device=rng.device, dtype=torch.float64)
     if distribution == "gaussian":
         return rng.normal(low, high, shape, dtype=torch.float64)
     if distribution == "log_uniform":
@@ -205,7 +202,7 @@ def _apply_randomization_operation(
     default: np.ndarray,
     samples: np.ndarray,
     operation: str,
-) -> np.ndarray:
+) -> torch.Tensor:
     if operation == "add":
         return default + samples
     if operation == "scale":
@@ -236,7 +233,10 @@ def _axis_ranges(
         raise ValueError(
             f"EventManager term '{term_name}' parameter '{name}' has unknown axes {unknown}"
         )
-    parameters = np.asarray([value.get(key, (0.0, 0.0)) for key in keys], dtype=object).T
+    parameters = [
+        [value.get(key, (0.0, 0.0))[0] for key in keys],
+        [value.get(key, (0.0, 0.0))[1] for key in keys],
+    ]
     return _distribution_parameters(
         parameters,
         term_name=term_name,
@@ -716,8 +716,8 @@ class _ModelFieldRandomizer(ManagerTermBase):
         return _require_torch_rng(env, self.name).device
 
     def _sample_axis(self, env: ManagerBasedRlEnv, axis: int, count: int) -> torch.Tensor:
-        parameters = torch.from_numpy(self._ranges[:, axis].copy()).to(
-            dtype=torch.float64, device=self._sample_device(env)
+        parameters = torch.as_tensor(
+            self._ranges[:, axis], dtype=torch.float64, device=self._sample_device(env)
         )
         rng = _require_torch_rng(env, self.name)
         return _sample_axis_tensor(
@@ -1624,7 +1624,7 @@ class PushBySettingVelocity(ManagerTermBase):
             name="velocity_range",
             keys=_SE3_KEYS,
         )
-        self._angular_active = bool(np.any(ranges[3:] != 0.0))
+        self._angular_active = bool((ranges[3:] != 0.0).any())
         self._entity = cast("Entity", env.scene[asset_cfg.name])
         self._entity.bind_root_linear_velocity_delta(term_name=term_name)
         if self._angular_active:
@@ -1654,7 +1654,7 @@ class PushBySettingVelocity(ManagerTermBase):
             env=env,
         )
         angular_delta = None
-        if np.any(angular_ranges != 0.0):
+        if bool((angular_ranges != 0.0).any()):
             if not self._angular_active:
                 raise NotImplementedError(
                     "EventManager term 'push_by_setting_velocity' velocity_range activated "
@@ -1800,7 +1800,7 @@ class ApplyBodyImpulse(ManagerTermBase):
 
         self._entity = cast("Entity", env.scene[asset_cfg.name])
         self._uses_torque = (
-            bool(np.any(self._torque_range != 0.0)) or self._body_point_offset is not None
+            bool((self._torque_range != 0.0).any()) or self._body_point_offset is not None
         )
         self._local_body_ids, self._backend_body_ids = self._entity.bind_body_wrench(
             asset_cfg.body_ids,
