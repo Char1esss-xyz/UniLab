@@ -13,21 +13,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-import numpy as np
 import torch
 
 from unilab.managers.manager_base import ManagerTermBaseCfg
 
-from .manager_terms import SensorTermBase, _command, _real, _state
+from .manager_terms import SensorTermBase, _command, _real
 
 if TYPE_CHECKING:
     from unilab.managers._types import ManagerBasedRlEnv
 
 
-def _torch_values(values: np.ndarray | torch.Tensor) -> torch.Tensor:
-    if isinstance(values, torch.Tensor):
-        return values.to(dtype=torch.float32)
-    return torch.from_numpy(np.ascontiguousarray(values)).to(dtype=torch.float32)
+def _torch_values(values: torch.Tensor) -> torch.Tensor:
+    return values.to(dtype=torch.float32)
 
 
 class _Vec3SensorTerm(SensorTermBase):
@@ -48,19 +45,11 @@ class _Vec3SensorTerm(SensorTermBase):
                 f"{self._sensor.dimensions} on backend '{self._sensor.backend_type}'"
             )
 
-    def _read_sensor(self, env: ManagerBasedRlEnv) -> np.ndarray:
-        return _state(
-            self.name,
-            f"sensor '{self._sensor_name}'",
-            self._read(self._sensor, self.name),
-            (env.num_envs, 3),
-        )
-
     @property
     def tensor_sensor_names(self) -> tuple[str, ...]:
         return (self._sensor_name,)
 
-    def _read_sensor_tensor(self, env: ManagerBasedRlEnv) -> np.ndarray | torch.Tensor:
+    def _read_sensor_tensor(self, env: ManagerBasedRlEnv) -> torch.Tensor:
         read_plan = getattr(env.scene, "_tensor_read_plan", None)
         owner_sensors = set(getattr(read_plan, "sensor_names", {}).get("robot", ()))
         if read_plan is None or not set(self.tensor_sensor_names).issubset(owner_sensors):
@@ -101,16 +90,12 @@ class _CommandTrackingTerm(_Vec3SensorTerm):
 class track_lin_vel(_CommandTrackingTerm):
     """Exponential reward for tracking commanded xy linear velocity."""
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         linvel = self._read_sensor_tensor(env)
         command = _command(env, self.name, self._command_name)
         linvel_tensor = _torch_values(linvel)
-        command_tensor = (
-            _torch_values(command).to(device=linvel_tensor.device)
-            if isinstance(command, np.ndarray)
-            else command.to(device=linvel_tensor.device, dtype=linvel_tensor.dtype)
-        )
+        command_tensor = command.to(device=linvel_tensor.device, dtype=linvel_tensor.dtype)
         error = (command_tensor[:, :2] - linvel_tensor[:, :2]).square().sum(dim=1)
         return torch.exp(-error / self._sigma)
 
@@ -118,16 +103,12 @@ class track_lin_vel(_CommandTrackingTerm):
 class track_ang_vel(_CommandTrackingTerm):
     """Exponential reward for tracking commanded yaw angular velocity."""
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         gyro = self._read_sensor_tensor(env)
         command = _command(env, self.name, self._command_name)
         gyro_tensor = _torch_values(gyro)
-        command_tensor = (
-            _torch_values(command).to(device=gyro_tensor.device)
-            if isinstance(command, np.ndarray)
-            else command.to(device=gyro_tensor.device, dtype=gyro_tensor.dtype)
-        )
+        command_tensor = command.to(device=gyro_tensor.device, dtype=gyro_tensor.dtype)
         error = (command_tensor[:, 2] - gyro_tensor[:, 2]).square()
         return torch.exp(-error / self._sigma)
 
@@ -135,7 +116,7 @@ class track_ang_vel(_CommandTrackingTerm):
 class lin_vel_z(_Vec3SensorTerm):
     """Penalty for vertical (z) linear velocity."""
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         values = self._read_sensor_tensor(env)[:, 2]
         return _torch_values(values).square()
@@ -144,7 +125,7 @@ class lin_vel_z(_Vec3SensorTerm):
 class ang_vel_xy(_Vec3SensorTerm):
     """Penalty for roll/pitch angular velocity."""
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         return _torch_values(self._read_sensor_tensor(env)[:, :2]).square().sum(dim=1)
 
@@ -152,7 +133,7 @@ class ang_vel_xy(_Vec3SensorTerm):
 class orientation(_Vec3SensorTerm):
     """Penalty for deviation from upright (horizontal upvector components)."""
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         upvector = self._read_sensor_tensor(env)
         return _torch_values(upvector[:, :2]).square().sum(dim=1)

@@ -27,7 +27,7 @@ import torch
 from unilab.managers.manager_base import ManagerTermBase, ManagerTermBaseCfg
 from unilab.managers.scene_entity_config import SceneEntityCfg
 
-from .manager_terms import SensorTermBase, _command, _real, _state
+from .manager_terms import SensorTermBase, _command, _real
 
 if TYPE_CHECKING:
     from unilab.base.entity import Entity

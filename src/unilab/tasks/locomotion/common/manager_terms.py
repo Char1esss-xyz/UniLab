@@ -2,9 +2,9 @@
 
 The equations come from UniLab's quadruped joystick tasks and are reused
 by quadruped and biped owners alike.  The adaptation uses community
-``func + params`` terms, NumPy, and the base-owned sensor facade.  Reward terms
-that read named XML sensors live in ``sensor_reward_terms.py`` and build on the
-``SensorTermBase`` cold-path binding contract defined here.
+``func + params`` terms, Torch state carriers, and packed named-sensor reads.
+Reward terms that read named XML sensors live in ``sensor_reward_terms.py``
+and build on the ``SensorTermBase`` cold-path binding contract defined here.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
-import numpy as np
 import torch
 
 from unilab.managers.manager_base import ManagerTermBase, ManagerTermBaseCfg
@@ -78,17 +77,6 @@ def _names(term: str, value: Any) -> tuple[str, ...]:
     return names
 
 
-def _state(term: str, capability: str, value: Any, shape: tuple[int, ...]) -> np.ndarray:
-    if not isinstance(value, np.ndarray):
-        raise TypeError(f"{term} {capability} must be an np.ndarray")
-    if value.shape != shape:
-        raise ValueError(f"{term} {capability} must have shape {shape}, got {value.shape}")
-    if not np.isfinite(value).all():
-        env_ids = np.flatnonzero(~np.isfinite(value).reshape(shape[0], -1).all(axis=1)).tolist()
-        raise ValueError(f"{term} {capability} contains NaN or Inf for environments {env_ids[:10]}")
-    return value
-
-
 def _command(env: ManagerBasedRlEnv, term: str, command_name: str) -> torch.Tensor:
     if not isinstance(command_name, str) or not command_name:
         raise ValueError(f"{term} command_name must be a non-empty string")
@@ -127,16 +115,6 @@ class SensorTermBase(ManagerTermBase):
             raise type(exc)(
                 f"Manager term '{self.name}' named-sensor capability could not be "
                 f"materialized for {sensor_names}: {exc}"
-            ) from exc
-
-    @staticmethod
-    def _read(view: ManagerSensorView, term: str) -> np.ndarray:
-        try:
-            return view.read()
-        except (KeyError, TypeError, ValueError, NotImplementedError) as exc:
-            raise type(exc)(
-                f"Manager term '{term}' named-sensor capability failed on "
-                f"backend '{view.backend_type}': {exc}"
             ) from exc
 
 
@@ -550,12 +528,8 @@ def _command_tensor(
     return _command(env, term, command_name).to(dtype=torch.float32)
 
 
-def _torch_state(
-    value: np.ndarray | torch.Tensor, *, dtype: torch.dtype = torch.float32
-) -> torch.Tensor:
-    if isinstance(value, torch.Tensor):
-        return value.to(dtype=dtype)
-    return torch.from_numpy(np.ascontiguousarray(value)).to(dtype=dtype)
+def _torch_state(value: torch.Tensor, *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+    return value.to(dtype=dtype)
 
 
 __all__ = [

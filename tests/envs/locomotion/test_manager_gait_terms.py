@@ -125,14 +125,14 @@ class _ParityScene:
 
 
 class _Commands:
-    def __init__(self, command: np.ndarray | None = None) -> None:
+    def __init__(self, command: torch.Tensor | None = None) -> None:
         self.command = (
-            np.array([[0.5, -0.2, 0.3], [-0.1, 0.4, -0.2]], dtype=np.float32)
+            torch.tensor([[0.5, -0.2, 0.3], [-0.1, 0.4, -0.2]], dtype=torch.float32)
             if command is None
             else command
         )
 
-    def get_command(self, name: str) -> np.ndarray:
+    def get_command(self, name: str) -> torch.Tensor:
         if name != "twist":
             raise KeyError(name)
         return self.command
@@ -272,10 +272,9 @@ def test_standing_aware_foot_rewards_gate_swing_and_expect_planted_feet(device: 
 
 def test_standing_penalties_match_a2_legacy_gates() -> None:
     parity_env = _parity_env()
-    cast(Any, parity_env).command_manager.command[:] = [
-        [0.0, 0.0, 0.0],
-        [0.5, 0.0, 0.0],
-    ]
+    cast(Any, parity_env).command_manager.command.copy_(
+        torch.tensor([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=torch.float32)
+    )
     stand_still = _reward_value(
         parity_env,
         manager_terms.stand_still_l1,
@@ -285,10 +284,9 @@ def test_standing_penalties_match_a2_legacy_gates() -> None:
     np.testing.assert_allclose(stand_still, [0.2, 0.0], atol=1e-7)
 
     foot_env = _env()
-    cast(Any, foot_env).command_manager.command[:] = [
-        [0.0, 0.0, 0.0],
-        [0.5, 0.0, 0.0],
-    ]
+    cast(Any, foot_env).command_manager.command.copy_(
+        torch.tensor([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=torch.float32)
+    )
     feet_air = _reward_value(
         foot_env,
         manager_terms.feet_air_while_standing,
@@ -463,9 +461,7 @@ def test_base_reward_terms_match_go2_flat_equations() -> None:
         ),
     }
     expected = {
-        "track_xy": np.exp(
-            -np.sum(np.square(command[:, :2] - local_linvel[:, :2]), axis=1) / sigma
-        ),
+        "track_xy": torch.exp(-(command[:, :2] - local_linvel[:, :2]).square().sum(dim=1) / sigma),
         "track_yaw": np.exp(-np.square(command[:, 2] - gyro[:, 2]) / sigma),
         "lin_z": np.square(local_linvel[:, 2]),
         "ang_xy": np.sum(np.square(gyro[:, :2]), axis=1),
