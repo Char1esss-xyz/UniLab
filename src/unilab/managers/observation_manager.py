@@ -913,9 +913,9 @@ class ObservationManager(ManagerBase):
 
                 if term_cfg.scale is not None:
                     scale = torch.as_tensor(term_cfg.scale, dtype=torch.float32)
-                    self._scale_tensors[id(term_cfg)] = scale.broadcast_to(
-                        initial_obs.shape
-                    ).clone()
+                    self._scale_tensors[id(term_cfg)] = (
+                        scale.broadcast_to(initial_obs.shape).clone().to(device=self._device)
+                    )
 
                 if term_cfg.noise is not None and isinstance(
                     term_cfg.noise, noise_cfg.NoiseModelCfg
