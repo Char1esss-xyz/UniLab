@@ -223,7 +223,6 @@ _WALK_PROFILE_IDS = {
     "sac-genesis",
     "sac-newton",
     "sac-motrix",
-    "sac-rough-mujoco",
     "flashsac-mujoco",
 }
 

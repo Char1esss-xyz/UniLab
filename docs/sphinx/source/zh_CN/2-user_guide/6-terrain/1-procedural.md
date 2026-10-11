@@ -9,8 +9,7 @@ adapter 只在环境构建阶段物化地形。
 核心可复用部分包括：
 
 - `unilab.base.scene.SceneCfg`：`terrain` 与 scene 文件。
-- `unilab.tasks.locomotion.common.rough_manager_terms`：可复用 rough terrain
-  generator 与 action/command owner term。
+- `unilab.terrains` sub-terrain factory：generator 组合。
 - `unilab.tasks.locomotion.common.height_scan`：cold height-scan 采样偏移。
 
 例如，owner 可以声明生成式 terrain，而不让 backend 感知任务语义：
@@ -22,7 +21,7 @@ env:
       hfield_name: terrain_hfield
       geom_name: floor
       generator:
-        _target_: unilab.tasks.locomotion.common.rough_manager_terms.QuadrupedRoughTerrainCfg
+        _target_: unilab.terrains.TerrainGeneratorCfg
         seed: 42
 ```
 
