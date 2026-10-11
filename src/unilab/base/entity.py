@@ -4492,7 +4492,7 @@ class EntityScene(Mapping[str, Entity]):
 
     def write_gravity_to_sim(
         self,
-        values: np.ndarray,
+        values: torch.Tensor,
         env_ids: torch.Tensor,
         *,
         term_name: str,
