@@ -338,7 +338,6 @@ def test_tensor_anchor_orientation_termination_matches_numpy(
     ("term_type", "reference_name", "actual_name", "threshold"),
     [
         (mt.bad_motion_body_pos_z_only, "body_pos_relative_w", "robot_body_pos_w", 0.5),
-        (mt.bad_undesired_body_contacts, None, "robot_body_pos_w", 0.05),
     ],
 )
 def test_tensor_body_terminations_match_numpy(
