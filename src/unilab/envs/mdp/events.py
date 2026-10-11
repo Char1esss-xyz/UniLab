@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
@@ -388,13 +388,9 @@ def _sample_axis_tensor(
         (count, parameters.shape[0]), dtype=parameters.dtype, device=parameters.device
     )
     groups: dict[tuple[float, float], list[int]] = {}
-    host_parameters = parameters.detach().cpu().numpy()
-    for index, pair in enumerate(host_parameters):
+    for index, pair in enumerate(parameters.detach().cpu().tolist()):
         groups.setdefault((float(pair[0]), float(pair[1])), []).append(index)
-    for first, second in groups:
-        indices = torch.tensor(groups[(first, second)], device=parameters.device)
-        low = torch.full((1,), first, dtype=parameters.dtype, device=parameters.device)
-        high = torch.full((1,), second, dtype=parameters.dtype, device=parameters.device)
+    for low, high, indices in _shared_parameter_groups(parameters, groups):
         shared = _sample_distribution_tensor(
             rng,
             low,
@@ -406,8 +402,22 @@ def _sample_axis_tensor(
     return samples
 
 
+def _shared_parameter_groups(
+    parameters: torch.Tensor,
+    groups: Mapping[tuple[float, float], Sequence[int]],
+) -> Iterable[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    """Turn host-scalar shared bounds into device broadcast tensors."""
+    device = parameters.device
+    for (low, high), indices in groups.items():
+        yield (
+            torch.full((1,), low, dtype=parameters.dtype, device=device),
+            torch.full((1,), high, dtype=parameters.dtype, device=device),
+            torch.as_tensor(list(indices), dtype=torch.int64, device=device),
+        )
+
+
 class _ModelFieldRandomizer(ManagerTermBase):
-    """Cold-path-bound NumPy adapter for pinned mjlab model-field DR terms."""
+    """Pinned mjlab-style model-field DR terms with Torch sampling tables."""
 
     _term_name = "model_field"
     _field_width = 1
@@ -581,7 +591,7 @@ class _ModelFieldRandomizer(ManagerTermBase):
             )
         return axes
 
-    def _resolve_ranges(self, value: Any, names: tuple[str, ...]) -> np.ndarray:
+    def _resolve_ranges(self, value: Any, names: tuple[str, ...]) -> torch.Tensor:
         per_entity: list[Any]
         if (
             isinstance(value, list)
@@ -593,8 +603,11 @@ class _ModelFieldRandomizer(ManagerTermBase):
         else:
             per_entity = []
 
-        result = np.empty((len(names), self._field_width, 2), dtype=np.float64)
-        result[:] = np.nan
+        result = torch.full(
+            (len(names), self._field_width, 2),
+            float("nan"),
+            dtype=torch.float64,
+        )
         if per_entity:
             if len(self._axes) != 1:
                 raise ValueError(
@@ -631,7 +644,6 @@ class _ModelFieldRandomizer(ManagerTermBase):
             )
             for axis in self._axes:
                 result[:, axis] = parameters
-        result.setflags(write=False)
         return result
 
     def _build_axis_groups(
@@ -640,21 +652,11 @@ class _ModelFieldRandomizer(ManagerTermBase):
         """Group selected columns sharing identical bounds for one axis on device."""
         ranges = self._device_ranges
         assert ranges is not None
-        parameters = self._ranges[:, axis]
+        parameters = self._ranges[:, axis].to(device=ranges.device)
         groups: dict[tuple[float, float], list[int]] = {}
-        for index, pair in enumerate(parameters):
+        for index, pair in enumerate(parameters.detach().cpu().tolist()):
             groups.setdefault((float(pair[0]), float(pair[1])), []).append(index)
-        result = []
-        for (low, high), indices in groups.items():
-            bounds = _device_reset_table(np.array([low, high]), ranges.device)
-            result.append(
-                (
-                    bounds[0],
-                    bounds[1],
-                    torch.as_tensor(indices, dtype=torch.int64, device=ranges.device),
-                )
-            )
-        return result
+        return list(_shared_parameter_groups(parameters, groups))
 
     def _sample_axis_tensor(self, rng: TorchManagerRng, axis: int, count: int) -> torch.Tensor:
         """Sample one axis on the RNG device, honoring shared_random groups."""
@@ -727,9 +729,7 @@ class _ModelFieldRandomizer(ManagerTermBase):
         return _require_torch_rng(env, self.name).device
 
     def _sample_axis(self, env: ManagerBasedRlEnv, axis: int, count: int) -> torch.Tensor:
-        parameters = torch.as_tensor(
-            self._ranges[:, axis], dtype=torch.float64, device=self._sample_device(env)
-        )
+        parameters = self._ranges[:, axis].to(device=self._sample_device(env))
         rng = _require_torch_rng(env, self.name)
         return _sample_axis_tensor(
             rng,
