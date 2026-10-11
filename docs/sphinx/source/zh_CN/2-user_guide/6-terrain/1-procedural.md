@@ -10,7 +10,6 @@ adapter 只在环境构建阶段物化地形。
 
 - `unilab.base.scene.SceneCfg`：`terrain` 与 scene 文件。
 - `unilab.terrains` sub-terrain factory：generator 组合。
-- `unilab.tasks.locomotion.common.height_scan`：cold height-scan 采样偏移。
 
 例如，owner 可以声明生成式 terrain，而不让 backend 感知任务语义：
 
