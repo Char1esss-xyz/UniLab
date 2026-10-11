@@ -3663,7 +3663,7 @@ class Entity:
                 f"EventManager term '{term_name}' root velocity delta must be np.ndarray "
                 f"or a CPU torch.Tensor, got {type(values).__name__}"
             )
-        expected = (ids.size, 3)
+        expected = (ids.numel(), 3)
         if values.shape != expected:
             raise ValueError(
                 f"EventManager term '{term_name}' root velocity delta has shape "

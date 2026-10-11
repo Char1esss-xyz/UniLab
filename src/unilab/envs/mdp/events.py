@@ -254,7 +254,7 @@ def _axis_ranges(
     term_name: str,
     name: str,
     keys: tuple[str, ...],
-) -> np.ndarray:
+) -> torch.Tensor:
     if not isinstance(value, dict):
         raise TypeError(f"EventManager term '{term_name}' parameter '{name}' must be a dict")
     unknown = sorted(set(value) - set(keys))
@@ -1691,11 +1691,10 @@ class PushBySettingVelocity(ManagerTermBase):
                 size=(ids.numel(), 3),
                 env=env,
             )
-        host_ids = ids.cpu().numpy()
         self._entity.apply_root_velocity_delta_to_sim(
             linear_delta,
             angular_delta,
-            env_ids=host_ids,
+            env_ids=ids,
             term_name="push_by_setting_velocity",
         )
 
