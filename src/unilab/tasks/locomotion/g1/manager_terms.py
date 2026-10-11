@@ -808,11 +808,12 @@ class g1_base_height_below_minimum(ManagerTermBase):
     def __call__(self, env: _G1Env, **params: Any) -> np.ndarray | torch.Tensor:
         del params
         read_plan = getattr(env.scene, "_tensor_read_plan", None)
-        if read_plan is not None:
-            body = read_plan.body_tensor_view(self._entity_name, (self._root_body_name,))
-            return body.pos_w[:, 0, 2] < self._minimum_height
-        robot = env.scene[self._entity_name]
-        return np.asarray(robot.data.root_link_pos_w[:, 2] < self._minimum_height, dtype=np.bool_)
+        if read_plan is None:
+            raise NotImplementedError(
+                f"Manager term '{self.name}' requires the packed root-body read plan"
+            )
+        body = read_plan.body_tensor_view(self._entity_name, (self._root_body_name,))
+        return body.pos_w[:, 0, 2] < self._minimum_height
 
 
 class penalty_feet_ori(_SensorTerm):
