@@ -409,7 +409,7 @@ class ResetStateTransaction:
     def write_entity_state(
         self,
         entity: str,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         *,
         term_name: str,
         root_pose: np.ndarray | None = None,
@@ -465,16 +465,16 @@ class ResetStateTransaction:
             self._entity_fields[entity].add(field)
         self._requesting_terms.add(term_name)
 
-    def read_entity_root_pose(self, entity: str, env_ids: np.ndarray) -> np.ndarray:
+    def read_entity_root_pose(self, entity: str, env_ids: torch.Tensor) -> np.ndarray:
         """Read staged root pose or a detached current public snapshot."""
         self._require_active()
-        env_ids = self._validate_ids(env_ids, capability="read_entity_root_pose")
-        if np.any(~self._active_mask[env_ids]):
+        ids = self._validate_ids(env_ids, capability="read_entity_root_pose")
+        if np.any(~self._active_mask[ids]):
             raise ValueError("entity state read is outside the active reset")
         if "root_pose" in self._entity_values.get(entity, {}):
-            rows = [self._entity_row_index[int(i)] for i in env_ids]
+            rows = [self._entity_row_index[int(i)] for i in ids]
             return self._entity_values[entity]["root_pose"][rows].copy()
-        return self._backend.get_entity_state(entity)["root_pose"][env_ids].copy()
+        return self._backend.get_entity_state(entity)["root_pose"][ids].copy()
 
     def _commit_entities(self) -> None:
         assert self.scene_layout is not None
@@ -542,7 +542,7 @@ class ResetStateTransaction:
 
     def write_geom_size(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         column_ids: np.ndarray,
         values: np.ndarray,
         *,
@@ -585,7 +585,7 @@ class ResetStateTransaction:
 
     def write_geom_solref(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         column_ids: np.ndarray,
         values: np.ndarray,
         *,
@@ -628,7 +628,7 @@ class ResetStateTransaction:
 
     def write_geom_solimp(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         column_ids: np.ndarray,
         values: np.ndarray,
         *,
@@ -671,7 +671,7 @@ class ResetStateTransaction:
 
     def write_dof_damping(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         column_ids: np.ndarray,
         values: np.ndarray,
         *,
@@ -717,7 +717,7 @@ class ResetStateTransaction:
 
     def write_dof_frictionloss(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         column_ids: np.ndarray,
         values: np.ndarray,
         *,
@@ -877,7 +877,7 @@ class ResetStateTransaction:
 
     def write_body_mass(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         body_ids: np.ndarray,
         values: np.ndarray,
         *,
@@ -895,7 +895,7 @@ class ResetStateTransaction:
 
     def write_body_ipos(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         body_ids: np.ndarray,
         values: np.ndarray,
         *,
@@ -913,7 +913,7 @@ class ResetStateTransaction:
 
     def write_body_inertia(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         body_ids: np.ndarray,
         values: np.ndarray,
         *,
@@ -931,7 +931,7 @@ class ResetStateTransaction:
 
     def write_gravity(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         values: np.ndarray,
         *,
         term_name: str,
@@ -964,7 +964,7 @@ class ResetStateTransaction:
 
     def write_dof_armature(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         dof_ids: np.ndarray,
         values: np.ndarray,
         *,
@@ -982,7 +982,7 @@ class ResetStateTransaction:
 
     def write_geom_friction(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         geom_ids: np.ndarray,
         values: np.ndarray,
         *,
@@ -1032,7 +1032,7 @@ class ResetStateTransaction:
 
     def write_actuator_gains(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         actuator_ids: np.ndarray,
         kp: np.ndarray,
         kd: np.ndarray,
@@ -1193,7 +1193,7 @@ class ResetStateTransaction:
             bool(np.any(mask)) for mask in self._randomization_dirty_masks.values()
         )
 
-    def reset_to_default(self, env_ids: torch.Tensor | np.ndarray, *, term_name: str) -> None:
+    def reset_to_default(self, env_ids: torch.Tensor, *, term_name: str) -> None:
         """Stage backend default qpos/qvel for a subset of the active reset."""
         self._require_active()
         ids = self._validate_ids(env_ids, capability="reset_to_default")
@@ -1210,7 +1210,7 @@ class ResetStateTransaction:
                     fields["joint_positions"] = defaults["joint_positions"]
                     fields["joint_velocities"] = defaults["joint_velocities"]
                 if fields:
-                    self.write_entity_state(entity.name, ids, term_name=term_name, **fields)
+                    self.write_entity_state(entity.name, env_ids, term_name=term_name, **fields)
             return
         outside = ids[~self._active_mask[ids]]
         if outside.size:
@@ -1233,7 +1233,7 @@ class ResetStateTransaction:
 
     def write_joint_state(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         qpos_indices: np.ndarray,
         qvel_indices: np.ndarray,
         position: np.ndarray,
@@ -1298,7 +1298,7 @@ class ResetStateTransaction:
 
     def write_root_state(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         layout: BackendRootStateLayout,
         root_state: np.ndarray,
         *,
@@ -1313,8 +1313,8 @@ class ResetStateTransaction:
             capability="root state",
             term_name=term_name,
         )
-        self.write_root_pose(ids, layout, values[:, :7], term_name=term_name)
-        self.write_root_velocity(ids, layout, values[:, 7:], term_name=term_name)
+        self.write_root_pose(env_ids, layout, values[:, :7], term_name=term_name)
+        self.write_root_velocity(env_ids, layout, values[:, 7:], term_name=term_name)
 
     def write_root_state_tensor(
         self,
@@ -1525,7 +1525,7 @@ class ResetStateTransaction:
 
     def write_root_pose(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         layout: BackendRootStateLayout,
         pose: np.ndarray,
         *,
@@ -1548,7 +1548,7 @@ class ResetStateTransaction:
 
     def write_root_velocity(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         layout: BackendRootStateLayout,
         velocity_w: np.ndarray,
         *,
@@ -1586,7 +1586,7 @@ class ResetStateTransaction:
 
     def read_root_pose(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         layout: BackendRootStateLayout,
         *,
         term_name: str,
@@ -1624,7 +1624,7 @@ class ResetStateTransaction:
         return poses
 
     def write_mocap_pose(
-        self, body_name: str, env_ids: np.ndarray, poses: np.ndarray, *, term_name: str
+        self, body_name: str, env_ids: torch.Tensor, poses: np.ndarray, *, term_name: str
     ) -> None:
         """Stage poses; upload only after the ordinary reset state has committed."""
         self._require_active()
@@ -2282,7 +2282,7 @@ class ResetStateTransaction:
     def record_startup_randomization(
         self,
         field: str,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         column_ids: np.ndarray,
         values: np.ndarray,
         *,
@@ -2352,7 +2352,7 @@ class ResetStateTransaction:
     def _write_selected_randomization(
         self,
         field: str,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         column_ids: np.ndarray,
         values: np.ndarray,
         *,
@@ -2534,7 +2534,7 @@ class ResetStateTransaction:
 
     def _prepare_state_write(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         *,
         capability: str,
         term_name: str,
@@ -2565,7 +2565,7 @@ class ResetStateTransaction:
 
     def _prepare_tensor_randomization_write(
         self,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         *,
         capability: str,
         term_name: str,
@@ -2778,19 +2778,12 @@ class ResetStateTransaction:
             )
         return result
 
-    def _validate_ids(self, env_ids: torch.Tensor | np.ndarray, *, capability: str) -> np.ndarray:
+    def _validate_ids(self, env_ids: torch.Tensor, *, capability: str) -> np.ndarray:
         if not isinstance(env_ids, torch.Tensor):
-            if not isinstance(env_ids, np.ndarray):
-                raise TypeError(
-                    f"ManagerBased reset-state {capability} env_ids must be torch.Tensor, "
-                    f"got {type(env_ids).__name__}"
-                )
-            if env_ids.ndim != 1:
-                raise TypeError(
-                    f"ManagerBased reset-state {capability} env_ids must be a 1-D integer "
-                    f"tensor, got shape={env_ids.shape}"
-                )
-            env_ids = torch.from_numpy(np.ascontiguousarray(env_ids, dtype=np.int64))
+            raise TypeError(
+                f"ManagerBased reset-state {capability} env_ids must be torch.Tensor, "
+                f"got {type(env_ids).__name__}"
+            )
         if env_ids.ndim != 1 or env_ids.dtype not in (
             torch.int8,
             torch.int16,

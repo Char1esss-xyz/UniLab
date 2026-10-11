@@ -128,7 +128,7 @@ class JointEffortAction(ActionTerm):
 
 def reset_joints_by_offset(
     env: ManagerBasedRlEnv,
-    env_ids: np.ndarray | torch.Tensor | None,
+    env_ids: torch.Tensor | None,
     position_range: tuple[float, float] | list[float],
     velocity_range: tuple[float, float] | list[float],
     asset_cfg: SceneEntityCfg,
@@ -136,14 +136,13 @@ def reset_joints_by_offset(
     """Write uniformly offset joint defaults through the reset transaction."""
     if env_ids is None:
         raise ValueError("reset_joints_by_offset requires concrete environment IDs")
-    if isinstance(env_ids, torch.Tensor):
-        env_ids = env_ids.detach().cpu().numpy()
+    host_ids = env_ids.detach().cpu().numpy()
     position_lower, position_upper = numeric_range(position_range, label="position_range")
     velocity_lower, velocity_upper = numeric_range(velocity_range, label="velocity_range")
     asset = cast("Entity", env.scene[asset_cfg.name])
     joint_ids = asset_cfg.joint_ids
-    default_position = asset.data.default_joint_pos[env_ids][:, joint_ids]
-    default_velocity = asset.data.default_joint_vel[env_ids][:, joint_ids]
+    default_position = asset.data.default_joint_pos[host_ids][:, joint_ids]
+    default_velocity = asset.data.default_joint_vel[host_ids][:, joint_ids]
     position = default_position + env.rng.uniform(
         position_lower,
         position_upper,
