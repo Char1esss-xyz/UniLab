@@ -78,7 +78,10 @@ class _ParityScene:
     def __init__(self) -> None:
         self._tensor_read_plan = SimpleNamespace(
             device=torch.device("cpu"),
-            sensor_names={},
+            sensor_names={"robot": ("local_linvel", "gyro")},
+            sensor_tensor_views=lambda entity, names: SimpleNamespace(
+                values={name: torch.as_tensor(self.values[name]) for name in names}
+            ),
             body_tensor_view=lambda entity, names: SimpleNamespace(
                 pos_w=torch.tensor([[[1.0, 2.0, 0.4]], [[-1.0, 0.5, 0.2]]], dtype=torch.float32)
             ),
@@ -493,12 +496,14 @@ def test_base_reward_terms_fail_closed_at_nearest_boundary() -> None:
         "gyro": cast(Any, env).scene.robot.data.root_link_ang_vel_b.copy(),
     }
     scene.values["local_linvel"][1, 2] = np.inf
-    scene.bind_sensor_data = lambda names: SimpleNamespace(
-        dimensions=tuple(3 for _ in names),
-        backend_type="fake",
-        read=lambda: np.concatenate([scene.values[name] for name in names], axis=1),
+    scene._tensor_read_plan = SimpleNamespace(
+        device=torch.device("cpu"),
+        sensor_names={"robot": ("local_linvel", "gyro")},
+        sensor_tensor_views=lambda entity, names: SimpleNamespace(
+            values={name: torch.as_tensor(scene.values[name]) for name in names}
+        ),
     )
-    with pytest.raises(ValueError, match="lin_vel_z sensor 'local_linvel' contains NaN or Inf"):
+    with pytest.raises(ValueError, match="named-sensor capability.*NaN or Inf"):
         _reward_value(
             env,
             sensor_reward_terms.lin_vel_z,
