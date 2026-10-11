@@ -616,7 +616,7 @@ def test_entity_caches_unsupported_root_layout_without_hot_path_probe() -> None:
     ):
         with transaction.scoped(torch.tensor([0], dtype=torch.int64)):
             robot.write_root_state_to_sim(
-                np.array([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]),
+                torch.tensor([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]),
                 env_ids=torch.tensor([0], dtype=torch.int64),
             )
     assert backend.calls["root-state layout"] == 1
