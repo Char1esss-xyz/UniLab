@@ -24,6 +24,31 @@ if TYPE_CHECKING:
 _DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
 
 
+def _quat_apply_inverse(quat_wxyz: torch.Tensor, vector: torch.Tensor) -> torch.Tensor:
+    """Rotate vectors by the inverse of broadcast-compatible wxyz quaternions."""
+    quat = torch.cat((quat_wxyz[..., 0:1], -quat_wxyz[..., 1:4]), dim=-1)
+    quat_xyz = quat[..., 1:4]
+    if vector.ndim < quat_xyz.ndim:
+        vector = vector.expand_as(quat_xyz)
+    cross = torch.linalg.cross(quat_xyz, vector, dim=-1)
+    second_cross = torch.linalg.cross(quat_xyz, cross, dim=-1)
+    return vector + 2.0 * quat[..., 0:1] * cross + 2.0 * second_cross
+
+
+def _root_body_view(
+    env: ManagerBasedRlEnv,
+    asset_cfg: SceneEntityCfg,
+) -> tuple["Entity", Any]:
+    asset = cast("Entity", env.scene[asset_cfg.name])
+    read_plan = getattr(env.scene, "_tensor_read_plan", None)
+    root_body_name = getattr(asset, "_root_body_name", None)
+    if read_plan is None or not isinstance(root_body_name, str) or not root_body_name:
+        return asset, None
+    if getattr(asset, "_body_names", None) is None:
+        return asset, None
+    return asset, read_plan.body_tensor_view(asset, (root_body_name,))
+
+
 class _NamedSensorObservation(ManagerTermBase):
     """Cold-path binding shared by pinned named-sensor observation terms."""
 
@@ -145,7 +170,9 @@ def base_lin_vel(
     env: ManagerBasedRlEnv,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-    asset = cast("Entity", env.scene[asset_cfg.name])
+    asset, view = _root_body_view(env, asset_cfg)
+    if view is not None:
+        return view.lin_vel_w[:, 0, :]
     return torch.as_tensor(
         asset.data.root_link_lin_vel_b,
         dtype=torch.float32,
@@ -157,7 +184,9 @@ def base_ang_vel(
     env: ManagerBasedRlEnv,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-    asset = cast("Entity", env.scene[asset_cfg.name])
+    asset, view = _root_body_view(env, asset_cfg)
+    if view is not None:
+        return view.ang_vel_w[:, 0, :]
     return torch.as_tensor(
         asset.data.root_link_ang_vel_b,
         dtype=torch.float32,
@@ -169,7 +198,14 @@ def projected_gravity(
     env: ManagerBasedRlEnv,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-    asset = cast("Entity", env.scene[asset_cfg.name])
+    asset, view = _root_body_view(env, asset_cfg)
+    if view is not None:
+        gravity = torch.as_tensor(
+            asset.data.gravity_vec_w,
+            dtype=torch.float32,
+            device=getattr(env, "device", torch.device("cpu")),
+        ).expand((view.quat_w.shape[0], 3))
+        return _quat_apply_inverse(view.quat_w[:, 0, :], gravity)
     return torch.as_tensor(
         asset.data.projected_gravity_b,
         dtype=torch.float32,
