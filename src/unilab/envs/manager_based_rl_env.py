@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 import gymnasium as gym
-import numpy as np
 import torch
 from unisim.backend.base import (
     DebugOverlayGetter,
@@ -74,6 +73,10 @@ from unilab.managers import (
     TorchManagerRng,
 )
 from unilab.managers.scene_entity_config import SceneEntityCfg
+
+
+def _finite_real(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _manager_terms_field() -> Any:
@@ -138,29 +141,25 @@ class ManagerBasedRlEnvCfg(EnvCfg):
                     f"None; got {self.manager_torch_device!r}"
                 )
         for name, value in (("sim_dt", self.sim_dt), ("ctrl_dt", self.ctrl_dt)):
-            if isinstance(value, bool) or not isinstance(value, (int, float, np.number)):
+            if not _finite_real(value):
                 raise TypeError(f"ManagerBasedRlEnvCfg {name} must be a real number")
-            if not np.isfinite(value) or value <= 0.0:
+            if value <= 0.0:
                 raise ValueError(f"ManagerBasedRlEnvCfg {name} must be finite and positive")
         super().validate()
         ratio = self.ctrl_dt / self.sim_dt
-        if not np.isclose(ratio, round(ratio), rtol=0.0, atol=1e-9):
+        if not math.isclose(ratio, round(ratio), rel_tol=0.0, abs_tol=1e-9):
             raise ValueError(
                 "ManagerBasedRlEnvCfg ctrl_dt must be an integer multiple of sim_dt; "
                 f"received ctrl_dt={self.ctrl_dt}, sim_dt={self.sim_dt}"
             )
         if self.max_episode_seconds is None:
             raise ValueError("ManagerBasedRlEnvCfg max_episode_seconds must be finite and positive")
-        if isinstance(self.max_episode_seconds, bool) or not isinstance(
-            self.max_episode_seconds, (int, float, np.number)
-        ):
+        if not _finite_real(self.max_episode_seconds):
             raise TypeError("ManagerBasedRlEnvCfg max_episode_seconds must be a real number")
-        if not np.isfinite(self.max_episode_seconds) or self.max_episode_seconds <= 0.0:
+        if self.max_episode_seconds <= 0.0:
             raise ValueError("ManagerBasedRlEnvCfg max_episode_seconds must be finite and positive")
         if self.seed is not None and (
-            isinstance(self.seed, bool)
-            or not isinstance(self.seed, (int, np.integer))
-            or self.seed < 0
+            isinstance(self.seed, bool) or not isinstance(self.seed, int) or self.seed < 0
         ):
             raise ValueError("ManagerBasedRlEnvCfg seed must be a non-negative integer or None")
         if self.seed is not None:
@@ -935,10 +934,10 @@ class ManagerBasedRlEnv(TorchEnv):
     @property
     def action_space(self) -> gym.Space:
         return gym.spaces.Box(
-            low=-np.inf,
-            high=np.inf,
+            low=-float("inf"),
+            high=float("inf"),
             shape=(self.action_manager.total_action_dim,),
-            dtype=np.float32,
+            dtype="float32",
         )
 
     @property
