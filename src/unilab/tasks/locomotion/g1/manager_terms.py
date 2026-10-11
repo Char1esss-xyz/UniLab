@@ -117,15 +117,11 @@ def _weights(term: str, name: str, value: Any) -> np.ndarray:
 
 
 def _square(value: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
-    if isinstance(value, torch.Tensor):
-        return torch.square(value)
-    return np.square(value)
+    return torch.square(_torch_values(value))
 
 
 def _exp(value: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
-    if isinstance(value, torch.Tensor):
-        return torch.exp(value)
-    return np.exp(value)
+    return torch.exp(_torch_values(value))
 
 
 def _torch_values(value: np.ndarray | torch.Tensor) -> torch.Tensor:
@@ -135,21 +131,7 @@ def _torch_values(value: np.ndarray | torch.Tensor) -> torch.Tensor:
 
 
 def _values(value: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
-    if isinstance(value, torch.Tensor):
-        return value.to(dtype=torch.float32)
-    return np.asarray(value, dtype=np.float32)
-
-
-def _bool_values(value: np.ndarray | torch.Tensor | Any) -> np.ndarray | torch.Tensor:
-    if isinstance(value, torch.Tensor):
-        return value.to(dtype=torch.float32)
-    return np.asarray(value, dtype=np.float32)
-
-
-def _array_like(value: np.ndarray | torch.Tensor | bool | np.bool_) -> np.ndarray | torch.Tensor:
-    if isinstance(value, (bool, np.bool_)):
-        return np.asarray(value)
-    return value
+    return _torch_values(value)
 
 
 def _state(term: str, capability: str, value: Any, shape: tuple[int, ...]) -> np.ndarray:
@@ -308,7 +290,7 @@ def _advance_gait(env: _G1Env, context: _G1GaitContext) -> np.ndarray | torch.Te
         raise ValueError("G1 gait terms common_step_counter cannot move backwards")
     steps = counter - context.last_counter
     if steps:
-        context.phase = torch.remainder(context.phase + steps * context.delta, 2.0 * np.pi)
+        context.phase = torch.remainder(context.phase + steps * context.delta, 2.0 * math.pi)
     context.last_counter = counter
     return context.phase
 
@@ -349,9 +331,9 @@ def _resample_gait(
     rng_owner = getattr(env, "torch_rng", None)
     if not isinstance(rng_owner, TorchManagerRng):
         raise RuntimeError("G1 gait phase reset requires the Manager-owned Torch generator")
-    left = rng_owner.uniform(0.0, 2.0 * np.pi, (count,), dtype=torch.float32)
+    left = rng_owner.uniform(0.0, 2.0 * math.pi, (count,), dtype=torch.float32)
     if context.init_mode == "independent":
-        right = rng_owner.uniform(0.0, 2.0 * np.pi, (count,), dtype=torch.float32)
+        right = rng_owner.uniform(0.0, 2.0 * math.pi, (count,), dtype=torch.float32)
     else:
         right = left + torch.pi
     samples = torch.stack((left, right), dim=1)
