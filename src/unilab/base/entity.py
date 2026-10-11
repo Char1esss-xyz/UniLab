@@ -3720,8 +3720,8 @@ class Entity:
 
     def apply_body_wrench_to_sim(
         self,
-        forces: np.ndarray,
-        torques: np.ndarray | None,
+        forces: np.ndarray | torch.Tensor,
+        torques: np.ndarray | torch.Tensor | None,
         body_ids: np.ndarray,
         env_ids: torch.Tensor | slice | None = None,
         *,
@@ -3764,7 +3764,7 @@ class Entity:
 
     def _validate_body_wrench_values(
         self,
-        values: np.ndarray | None,
+        values: np.ndarray | torch.Tensor | None,
         ids: torch.Tensor,
         body_ids: np.ndarray,
         *,
@@ -3773,10 +3773,17 @@ class Entity:
     ) -> np.ndarray | None:
         if values is None:
             return None
+        if isinstance(values, torch.Tensor):
+            if values.device.type != "cpu":
+                raise TypeError(
+                    f"EventManager term '{term_name}' body {label} host plan requires a "
+                    f"CPU Torch tensor; got {values.device}"
+                )
+            values = values.contiguous().numpy()
         if not isinstance(values, np.ndarray):
             raise TypeError(
-                f"EventManager term '{term_name}' body {label} must be np.ndarray, "
-                f"got {type(values).__name__}"
+                f"EventManager term '{term_name}' body {label} must be np.ndarray or a "
+                f"CPU torch.Tensor, got {type(values).__name__}"
             )
         host_ids = ids.detach().cpu().numpy()
         expected = (host_ids.size, body_ids.size, 3)
