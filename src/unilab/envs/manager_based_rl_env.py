@@ -533,8 +533,13 @@ class ManagerBasedRlEnv(TorchEnv):
                 )
                 term = manager.get_term_cfg(name).func
                 specs.extend(self._manager_term_body_read_specs(manager_name, name, term))
-                if manager_name == "termination" and term is mdp.bad_orientation:
-                    entity_name = self._termination_entity_name(manager, name)
+                if term in (
+                    mdp.bad_orientation,
+                    mdp.flat_orientation_l2,
+                    mdp.track_linear_velocity,
+                    mdp.track_angular_velocity,
+                ):
+                    entity_name = self._manager_term_entity_name(manager, name)
                     if not self._entity_declares_packed_root(entity_name):
                         continue
                     specs.append(
@@ -562,7 +567,7 @@ class ManagerBasedRlEnv(TorchEnv):
         return isinstance(root_body_name, str) and bool(root_body_name) and body_names is not None
 
     @staticmethod
-    def _termination_entity_name(manager: RewardManager | TerminationManager, name: str) -> str:
+    def _manager_term_entity_name(manager: RewardManager | TerminationManager, name: str) -> str:
         asset_cfg = manager.get_term_cfg(name).params.get("asset_cfg")
         return asset_cfg.name if isinstance(asset_cfg, SceneEntityCfg) else "robot"
 
