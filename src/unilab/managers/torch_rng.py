@@ -1,11 +1,9 @@
-"""Torch-native RNG adapter for explicit device-resident Manager owners.
+"""Torch-native RNG adapter for Manager owners.
 
-The generic Manager seam remains NumPy-owned: ``ManagerBasedRlEnv.rng`` is still
-an ``np.random.Generator`` and its exact stream semantics are covered by tests.
-This adapter is deliberately opt-in for narrow tensor-native owners whose cold
-contract extraction does not execute generic random Manager terms. It never
-converts drawn tensors back to NumPy, so a CUDA owner can keep randomization on
-its declared device.
+The Manager environment owns one explicit CPU or CUDA ``torch.Generator`` and
+publishes this adapter as ``ManagerBasedRlEnv.torch_rng``. It never converts
+drawn tensors back to NumPy, so a CUDA owner can keep randomization on its
+declared device.
 """
 
 from __future__ import annotations

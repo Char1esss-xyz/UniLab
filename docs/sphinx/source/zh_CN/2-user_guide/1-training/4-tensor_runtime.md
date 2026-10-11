@@ -45,11 +45,10 @@ vector。shutdown 时可能保留一个尚未完整发布 vector 的有效行前
 
 ## 随机数生成
 
-通用 Manager seam 仍由 NumPy 拥有：`ManagerBasedRlEnv.rng` 是
-`np.random.Generator`，既有种子流不变。已验证的 device-resident owner 可以
-改为持有 `unilab.managers.TorchManagerRng`。该适配器包装一个显式 CPU/CUDA
-`torch.Generator`，校验种子和未支持的采样语义，并始终在该 generator 的设备
-上返回 tensor。它不是 NumPy bitstream 兼容层。
+Manager 环境持有 `unilab.managers.TorchManagerRng`，它是训练 runtime 的
+唯一 RNG。该适配器包装一个显式 CPU/CUDA `torch.Generator`，校验种子和
+未支持的采样语义，并始终在该 generator 的设备上返回 tensor。它不是 NumPy
+bitstream 兼容层。
 
 当前 scoped G1 Motion Tracking / FlashSAC owner 使用 CUDA
 `TorchManagerRng` 驱动观测噪声、adaptive/mixed motion sampling 与

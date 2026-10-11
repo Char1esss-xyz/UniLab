@@ -112,6 +112,7 @@ def test_fixture_real_mujoco_reset_step_and_partial_reset() -> None:
         assert np.all(np.abs(after[reset_ids, 0]) <= 1.0)
         assert np.all(np.abs(after[reset_ids, 1]) <= 0.25 * np.pi)
 
+        env.set_autoreset(False)
         state = env.step(torch.zeros((8, 1), dtype=torch.float32, device=env.device))
         assert state.obs["obs"].shape == (8, 4)
         assert state.reward.shape == (8,)
@@ -125,10 +126,6 @@ def test_fixture_real_mujoco_reset_step_and_partial_reset() -> None:
         expected = 1.0 - np.square(np.remainder(pole_pos + np.pi, 2.0 * np.pi) - np.pi)
         expected -= 0.01 * np.abs(robot.data.joint_vel[:, 0])
         expected -= 0.005 * np.abs(robot.data.joint_vel[:, 1])
-        # Row 5 timed out during the post-physics auto-reset pass. Its returned
-        # reward is intentionally the terminal pre-reset transition reward, while
-        # the public getters above have already been refreshed to the new episode.
-        expected[5] = state.reward.detach().cpu()[5] / env.step_dt
         np.testing.assert_allclose(state.reward.cpu(), expected * env.step_dt, rtol=1e-5, atol=1e-6)
     finally:
         env.close()
