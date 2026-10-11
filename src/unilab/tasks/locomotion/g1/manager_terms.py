@@ -93,10 +93,10 @@ def _real(
     minimum: float | None = None,
     strict_minimum: bool = False,
 ) -> float:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.number)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{term} {name} must be a real number")
     result = float(value)
-    if not np.isfinite(result):
+    if not math.isfinite(result):
         raise ValueError(f"{term} {name} must be finite")
     if minimum is not None and (result <= minimum if strict_minimum else result < minimum):
         relation = "greater than" if strict_minimum else "at least"
@@ -104,14 +104,14 @@ def _real(
     return result
 
 
-def _weights(term: str, name: str, value: Any) -> np.ndarray:
-    if isinstance(value, (str, bytes)) or not isinstance(value, (tuple, list, np.ndarray)):
+def _weights(term: str, name: str, value: Any) -> torch.Tensor:
+    if isinstance(value, (str, bytes)) or not isinstance(value, (tuple, list)):
         raise TypeError(f"{term} {name} must be a sequence of real numbers")
-    result = np.asarray(
+    result = torch.tensor(
         [_real(term, f"{name}[{index}]", item) for index, item in enumerate(value)],
-        dtype=np.float32,
+        dtype=torch.float32,
     )
-    if result.ndim != 1 or result.shape[0] == 0:
+    if result.ndim != 1 or result.numel() == 0:
         raise ValueError(f"{term} {name} must be a non-empty one-dimensional sequence")
     return result
 
@@ -282,7 +282,7 @@ def _gait_context(env: _G1Env, term: str, frequency: float, init_mode: str) -> _
 
 def _advance_gait(env: _G1Env, context: _G1GaitContext) -> np.ndarray | torch.Tensor:
     counter = env.common_step_counter
-    if isinstance(counter, (bool, np.bool_)) or not isinstance(counter, (int, np.integer)):
+    if isinstance(counter, bool) or not isinstance(counter, int):
         raise TypeError("G1 gait terms require an integer common_step_counter")
     counter = int(counter)
     if counter < context.last_counter:
@@ -315,14 +315,9 @@ def _cached_gait_phase(env: _G1Env, context: _G1GaitContext) -> np.ndarray | tor
     return phase
 
 
-def _resample_gait(
-    env: _G1Env, context: _G1GaitContext, env_ids: torch.Tensor | np.ndarray
-) -> None:
+def _resample_gait(env: _G1Env, context: _G1GaitContext, env_ids: torch.Tensor) -> None:
     device = context.phase.device
-    if isinstance(env_ids, torch.Tensor):
-        rows = env_ids.to(dtype=torch.int64, device=device)
-    else:
-        rows = torch.as_tensor(np.asarray(env_ids), dtype=torch.int64, device=device)
+    rows = env_ids.to(dtype=torch.int64, device=device)
     count = rows.numel()
     if count == 0:
         return
@@ -826,8 +821,9 @@ class weighted_pose(ManagerTermBase):
             raise TypeError(f"{self.name} asset_cfg must be a SceneEntityCfg")
         self._entity_name = asset_cfg.name
         self._joint_ids = asset_cfg.joint_ids
-        weights = _weights(self.name, "pose_weights", cfg.params["pose_weights"])
-        self._weights = torch.tensor(weights, dtype=torch.float32, device=env.device)
+        self._weights = _weights(self.name, "pose_weights", cfg.params["pose_weights"]).to(
+            device=env.device
+        )
 
     @property
     def tensor_state_entity(self) -> str:
@@ -862,9 +858,9 @@ class upper_body_pose(weighted_pose):
 
     def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
         weights = _weights(self.name, "pose_weights", cfg.params["pose_weights"])
-        if weights.shape[0] < 12:
+        if weights.numel() < 12:
             raise ValueError(f"{self.name} pose_weights must cover at least the twelve leg joints")
-        weights = weights.copy()
+        weights = weights.clone()
         weights[:12] = 0.0
         cfg.params["pose_weights"] = weights
         super().__init__(cfg, env)

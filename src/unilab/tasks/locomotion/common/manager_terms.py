@@ -9,6 +9,7 @@ that read named XML sensors live in ``sensor_reward_terms.py`` and build on the
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
 import numpy as np
@@ -39,10 +40,10 @@ def _real(
     maximum: float | None = None,
     strict_minimum: bool = False,
 ) -> float:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.number)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{term} {name} must be a real number")
     result = float(value)
-    if not np.isfinite(result):
+    if not math.isfinite(result):
         raise ValueError(f"{term} {name} must be finite")
     if minimum is not None and (result <= minimum if strict_minimum else result < minimum):
         relation = "greater than" if strict_minimum else "at least"
@@ -52,20 +53,16 @@ def _real(
     return result
 
 
-def _offsets(term: str, value: Any) -> np.ndarray:
-    if isinstance(value, (str, bytes)) or not isinstance(value, (tuple, list, np.ndarray)):
+def _offsets(term: str, value: Any) -> torch.Tensor:
+    if isinstance(value, (str, bytes)) or not isinstance(value, (tuple, list)):
         raise TypeError(f"{term} phase_offsets must be a sequence of four real numbers")
-    if isinstance(value, np.ndarray) and value.ndim != 1:
-        raise ValueError(f"{term} phase_offsets must be one-dimensional, got {value.shape}")
     items = list(value)
     if len(items) != 4:
         raise ValueError(f"{term} phase_offsets must contain 4 values, got {len(items)}")
-    result = np.asarray(
+    return torch.tensor(
         [_real(term, f"phase_offsets[{index}]", item) for index, item in enumerate(items)],
-        dtype=np.float32,
+        dtype=torch.float32,
     )
-    result.setflags(write=False)
-    return result
 
 
 def _names(term: str, value: Any) -> tuple[str, ...]:
@@ -271,10 +268,8 @@ class _GaitTerm(ManagerTermBase):
             self.name, "frequency", cfg.params.get("frequency", 2.0), minimum=0.0
         )
         self._device = torch.device(getattr(env, "device", "cpu"))
-        self._offsets = torch.tensor(
-            _offsets(self.name, cfg.params.get("phase_offsets", _OFFSETS)),
-            dtype=torch.float32,
-            device=self._device,
+        self._offsets = _offsets(self.name, cfg.params.get("phase_offsets", _OFFSETS)).to(
+            device=self._device
         )
         self._step_dt = _real(self.name, "step_dt", env.step_dt, minimum=0.0, strict_minimum=True)
         command_name = cfg.params.get("command_name")
