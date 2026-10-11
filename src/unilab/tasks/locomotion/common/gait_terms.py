@@ -38,6 +38,17 @@ if TYPE_CHECKING:
 _DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
 
 
+def _reset_rows(value: torch.Tensor | slice | None, device: torch.device) -> torch.Tensor | slice:
+    """Return the Torch-only Manager reset selector without implicit host I/O."""
+    if value is None or isinstance(value, slice):
+        return value if value is not None else slice(None)
+    if not isinstance(value, torch.Tensor):
+        raise TypeError("gait term reset rows must be a Torch tensor, slice, or None")
+    if value.device != device:
+        raise TypeError(f"gait term reset rows must be on {device}; got {value.device}")
+    return value
+
+
 def _torch_state(
     value: np.ndarray | torch.Tensor, *, dtype: torch.dtype = torch.float32
 ) -> torch.Tensor:
@@ -132,23 +143,21 @@ class _FootContactTerm(SensorTermBase):
                 f"{self.name} contact sensors must each expose 1-D found or 3-D force; "
                 f"received {self._view.dimensions} on backend '{self._view.backend_type}'"
             )
-        starts = np.cumsum((0, *self._view.dimensions[:-1]), dtype=np.int64)
+        starts = torch.cumsum(
+            torch.tensor((0, *self._view.dimensions[:-1]), dtype=torch.int64), dim=0
+        )
         # MuJoCo ``<contact data="force">`` sensors report the force in the
         # contact frame whose first axis is the contact normal, so the gating
         # component is column 0 for both 1-D ``found`` and 3-D ``force``.
         # ``reduce="netforce"`` variants report world-frame force instead and
         # are outside this contract.
-        columns = starts
         self._flat_width = int(sum(self._view.dimensions))
         # Per-foot column groups in the flattened sensor layout.
         self._columns: list[torch.Tensor] = []
         device = torch.device(getattr(env, "device", "cpu"))
-        offset = 0
         for group in self._groups:
-            self._columns.append(
-                torch.from_numpy(columns[offset : offset + len(group)].copy()).to(device=device)
-            )
-            offset += len(group)
+            self._columns.append(starts[: len(group)].to(device=device))
+            starts = starts[len(group) :]
         if len({len(group) for group in self._groups}) == 1:
             self._group_columns = torch.stack(self._columns, dim=0)
         else:
@@ -249,10 +258,8 @@ class feet_air_time(_FootContactTerm):
             (env.num_envs, self.num_feet), dtype=torch.float32, device=env.device
         )
 
-    def reset(self, env_ids: torch.Tensor | np.ndarray | slice | None = None) -> None:
-        rows = env_ids if env_ids is not None else slice(None)
-        if isinstance(rows, np.ndarray):
-            rows = torch.from_numpy(rows).to(device=self._air_time.device)
+    def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+        rows = _reset_rows(env_ids, self._air_time.device)
         self._air_time[rows] = 0.0
 
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
@@ -324,8 +331,8 @@ class feet_swing_height(_FootContactTerm):
             (env.num_envs, self.num_feet), dtype=torch.bool, device=env.device
         )
 
-    def reset(self, env_ids: torch.Tensor | np.ndarray | slice | None = None) -> None:
-        rows = env_ids if env_ids is not None else slice(None)
+    def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+        rows = _reset_rows(env_ids, self._peak_heights.device)
         self._peak_heights[rows] = 0.0
         self._was_in_air[rows] = False
 
@@ -581,10 +588,8 @@ class foot_air_time(_FootContactTerm):
             (env.num_envs, self.num_feet), dtype=torch.float32, device=env.device
         )
 
-    def reset(self, env_ids: torch.Tensor | np.ndarray | slice | None = None) -> None:
-        rows = env_ids if env_ids is not None else slice(None)
-        if isinstance(rows, np.ndarray):
-            rows = torch.from_numpy(rows).to(device=self._air_time.device)
+    def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+        rows = _reset_rows(env_ids, self._air_time.device)
         self._air_time[rows] = 0.0
 
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
