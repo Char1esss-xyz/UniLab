@@ -476,7 +476,7 @@ class ManagerBasedRlEnv(TorchEnv):
                             sensor_names=tuple(sensor_names),
                         )
                     )
-                if self.device.type != "cpu" and term_cfg.func in (
+                if term_cfg.func in (
                     mdp.joint_pos_rel,
                     mdp.joint_vel_rel,
                 ):
