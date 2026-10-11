@@ -33,4 +33,3 @@ materialization out of `step()`, `reset()`, and hot domain-randomization loops.
 - Terrain configs and presets: `src/unilab/terrains/config.py`
 - Terrain generator: `unisim.terrain.generator`
 - Heightfield terrain types: `src/unilab/terrains/heightfield_terrains.py`
-- Height-scan helper: `src/unilab/tasks/locomotion/common/height_scan.py`

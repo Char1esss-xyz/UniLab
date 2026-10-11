@@ -11,7 +11,6 @@ The core reusable pieces are:
 
 - `unilab.base.scene.SceneCfg` for `terrain` and scene files.
 - `unilab.terrains` sub-terrain factories for generator composition.
-- `unilab.tasks.locomotion.common.height_scan` for cold height-scan offsets.
 
 For example, an owner can declare a generated terrain without putting terrain
 knowledge in the backend:
