@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass
-from typing import Optional
+from types import SimpleNamespace
 
 import gymnasium as gym
 import numpy as np
 import pytest
+import torch
+from unisim.backend.base import (
+    SimBackend,
+    TensorDataPlane,
+    TensorExecution,
+    TensorLifecycleCapabilities,
+)
 
 import unilab.base.registry as registry_mod
-from unilab.base.base import ABEnv, EnvCfg
+from unilab.base.base import EnvCfg
+from unilab.base.torch_env import TorchEnv
 
 # ---------------------------------------------------------------------------
 # Helpers: local env stubs registered only for these tests
@@ -30,10 +39,24 @@ class _TestCfgB(EnvCfg):
     pass
 
 
-class _TestEnvA(ABEnv):
+class _TestEnvA(TorchEnv):
     def __init__(self, cfg, num_envs=1, backend_type="mujoco"):
-        self._cfg = cfg
-        self._num_envs = num_envs
+        from unittest.mock import MagicMock
+
+        backend = MagicMock(spec=SimBackend)
+        backend.tensor_execution.return_value = TensorExecution.HOST_BRIDGE
+        backend.get_tensor_capabilities.return_value = TensorLifecycleCapabilities(
+            execution=TensorExecution.HOST_BRIDGE,
+            state_fields=frozenset({"qpos", "qvel"}),
+            stepping=True,
+            selected_reset=True,
+            packed_host_bridge=True,
+            data_plane=TensorDataPlane.HOST_BRIDGE,
+            stream_event_ownership="registry-test",
+            torch_devices=("cpu",),
+        )
+        backend.step_tensor.return_value = None
+        super().__init__(cfg, backend, num_envs, device="cpu")
 
     @property
     def num_envs(self):
@@ -62,14 +85,27 @@ class _TestEnvA(ABEnv):
     def init_state(self):
         return None
 
-    def step(self, actions):
-        return None
+    def apply_action(self, actions, state):
+        return actions
+
+    def update_state(self, state):
+        return state
+
+    def reset(self, env_indices=None):
+        rows = self._normalize_reset_indices(env_indices)
+        return (
+            {
+                name: torch.zeros((rows.numel(), dim), device=self.device)
+                for name, dim in self.obs_groups_spec.items()
+            },
+            {},
+        )
 
     def close(self):
         pass
 
 
-class _TestEnvMotrix(_TestEnvA):
+class _TestEnvMjwarp(_TestEnvA):
     pass
 
 
@@ -83,7 +119,7 @@ if not registry_mod.contains(_TEST_ENV_B):
 
 if not registry_mod.contains(_TEST_ENV_C):
     registry_mod.register_env_config(_TEST_ENV_C, _TestCfgA)
-    registry_mod.register_env(_TEST_ENV_C, _TestEnvMotrix, "motrix")
+    registry_mod.register_env(_TEST_ENV_C, _TestEnvMjwarp, "mjwarp")
     registry_mod.register_env(_TEST_ENV_C, _TestEnvA, "mujoco")
 
 
@@ -104,6 +140,38 @@ def test_envcfg_decorator_registers():
     assert registry_mod.contains(_name)
 
 
+def test_envcfg_decorator_registers_plain_factory_and_returns_it_unchanged():
+    _name = "_TestDecoratorFactoryEnv"
+
+    def make_cfg() -> EnvCfg:
+        return _TestCfgA()
+
+    registered = registry_mod.envcfg(_name)(make_cfg)
+
+    assert registered is make_cfg
+    assert registry_mod.materialize_env_config(_name) == _TestCfgA()
+
+
+def test_materialize_env_config_rejects_invalid_factory_output():
+    _name = "_TestInvalidFactoryOutput"
+
+    def make_invalid_cfg():
+        return {"sim_dt": 0.01}
+
+    registry_mod.register_env_config(_name, make_invalid_cfg)
+
+    with pytest.raises(
+        TypeError,
+        match=r"_TestInvalidFactoryOutput.*make_invalid_cfg.*dict.*EnvCfg",
+    ):
+        registry_mod.materialize_env_config(_name)
+
+
+def test_register_env_config_rejects_non_callable():
+    with pytest.raises(TypeError, match="config factory must be callable"):
+        registry_mod.register_env_config("_TestNonCallableFactory", None)  # type: ignore[arg-type]
+
+
 def test_env_decorator_registers():
     _name = "_TestDecoratorEnv2"
     if not registry_mod.contains(_name):
@@ -116,6 +184,19 @@ def test_env_decorator_registers():
     listed = registry_mod.list_registered_envs()
     assert _name in listed
     assert "mujoco" in listed[_name]["available_backends"]
+
+
+def test_env_decorator_registers_plain_factory_and_returns_it_unchanged():
+    _name = "_TestDecoratorEnvFactory"
+    registry_mod.register_env_config(_name, _TestCfgA)
+
+    def make_env(cfg: EnvCfg, num_envs: int = 1, backend_type: str = "mujoco") -> TorchEnv:
+        return _TestEnvA(cfg, num_envs=num_envs, backend_type=backend_type)
+
+    registered = registry_mod.env(_name, "mujoco")(make_env)
+
+    assert registered is make_env
+    assert registry_mod._envs[_name].env_factory_dict["mujoco"] is make_env
 
 
 def test_contains_before_and_after_registration():
@@ -159,6 +240,7 @@ def test_make_unregistered_raises():
 def test_list_registered_envs_includes_registered():
     listed = registry_mod.list_registered_envs()
     assert _TEST_ENV_A in listed
+    assert listed[_TEST_ENV_A]["config_factory"] == "_TestCfgA"
     assert "mujoco" in listed[_TEST_ENV_A]["available_backends"]
 
 
@@ -173,7 +255,38 @@ def test_register_env_invalid_backend_raises():
     if not registry_mod.contains(_name):
         registry_mod.register_env_config(_name, _TestCfgA)
     with pytest.raises(ValueError, match="Unsupported simulation backend"):
-        registry_mod.register_env(_name, _TestEnvA, "isaacgym")
+        registry_mod.register_env(_name, _TestEnvA, "not_a_backend")
+
+
+@pytest.mark.parametrize("backend", ["isaacgym", "isaacsim"])
+def test_register_env_rejects_shelved_backend(backend):
+    """Shelved adapters fail closed instead of registering a runtime path."""
+    _name = "_TestShelvedBackendEnv"
+    if not registry_mod.contains(_name):
+        registry_mod.register_env_config(_name, _TestCfgA)
+    with pytest.raises(
+        ValueError,
+        match=r"temporarily out of the tensor-only Manager runtime scope",
+    ):
+        registry_mod.register_env(_name, _TestEnvA, backend)
+
+
+def test_default_backend_order_is_tensor_manager_scope():
+    assert registry_mod._DEFAULT_SIM_BACKEND_ORDER == (
+        "mujoco",
+        "mjwarp",
+        "genesis",
+        "newton",
+        "motrix",
+        "superdex",
+    )
+
+
+def test_drake_is_registered_without_changing_default_backend_order():
+    """Drake is explicit-select only; absent owners still reject it."""
+    assert "drake" in registry_mod._TENSOR_MANAGER_SUPPORTED_SIM_BACKENDS
+    assert "drake" not in registry_mod._DEFAULT_SIM_BACKEND_ORDER
+    assert "drake" not in registry_mod._envs[_TEST_ENV_A].env_factory_dict
 
 
 def test_register_env_without_config_raises():
@@ -189,9 +302,17 @@ def test_register_env_duplicate_backend_raises():
         registry_mod.register_env(_TEST_ENV_A, _TestEnvA, "mujoco")
 
 
-def test_find_available_sim_backend_no_env_cls_raises():
-    """find_available_sim_backend() raises when config exists but no env_cls registered."""
-    # _TEST_ENV_B has config but no env class (registered above without env)
+def test_register_env_rejects_non_callable_factory():
+    _name = "_TestNonCallableEnvFactory"
+    registry_mod.register_env_config(_name, _TestCfgA)
+
+    with pytest.raises(TypeError, match=r"_TestNonCallableEnvFactory.*mujoco.*callable.*object"):
+        registry_mod.register_env(_name, object(), "mujoco")  # type: ignore[arg-type]
+
+
+def test_find_available_sim_backend_no_env_factory_raises():
+    """find_available_sim_backend() raises when config exists but no env factory is registered."""
+    # _TEST_ENV_B has config but no env factory (registered above without env)
     with pytest.raises(ValueError, match="does not support any simulation backend"):
         registry_mod.find_available_sim_backend(_TEST_ENV_B)
 
@@ -212,14 +333,65 @@ def test_make_auto_selects_default_backend_independent_of_registration_order():
     assert isinstance(env, _TestEnvA)
 
 
+def test_make_calls_plain_factory_with_cfg_num_envs_and_backend():
+    @dataclass
+    class _CallableFactoryCfg(EnvCfg):
+        ctrl_dt: float = 0.02
+
+    _name = "_TestCallableEnvFactory"
+    received: dict[str, object] = {}
+
+    def make_env(cfg: EnvCfg, num_envs: int = 1, backend_type: str = "mujoco") -> TorchEnv:
+        received.update(cfg=cfg, num_envs=num_envs, backend_type=backend_type)
+        return _TestEnvA(cfg, num_envs=num_envs, backend_type=backend_type)
+
+    registry_mod.register_env_config(_name, _CallableFactoryCfg)
+    registered = registry_mod.register_env(_name, make_env, "mjwarp")
+
+    made = registry_mod.make(
+        _name,
+        sim_backend=None,
+        env_cfg_override={"ctrl_dt": 0.05},
+        num_envs=7,
+    )
+
+    assert registered is make_env
+    assert isinstance(made, _TestEnvA)
+    assert received["cfg"] is made.cfg
+    assert received["num_envs"] == 7
+    assert received["backend_type"] == "mjwarp"
+    assert made.cfg.ctrl_dt == pytest.approx(0.05)
+
+
+def test_make_rejects_invalid_factory_output_at_registry_boundary():
+    _name = "_TestInvalidEnvFactoryOutput"
+
+    def make_invalid_env(cfg: EnvCfg, num_envs: int = 1, backend_type: str = "mujoco") -> object:
+        return object()
+
+    registry_mod.register_env_config(_name, _TestCfgA)
+    registry_mod.register_env(_name, make_invalid_env, "mujoco")  # type: ignore[arg-type]
+
+    with pytest.raises(
+        TypeError,
+        match=r"_TestInvalidEnvFactoryOutput.*mujoco.*make_invalid_env.*object.*TorchEnv",
+    ):
+        registry_mod.make(_name, sim_backend="mujoco")
+
+
 def test_make_unsupported_backend_raises():
     """make() with an unsupported backend name raises ValueError."""
     with pytest.raises(ValueError, match="does not support simulation backend"):
-        registry_mod.make(_TEST_ENV_A, sim_backend="motrix")
+        registry_mod.make(_TEST_ENV_A, sim_backend="not_a_backend")
 
 
-def test_make_no_env_cls_raises():
-    """make() when no env class registered (only config) raises ValueError."""
+def test_make_rejects_shelved_backend_registration():
+    with pytest.raises(ValueError, match="temporarily out of the tensor-only"):
+        registry_mod.register_env(_TEST_ENV_A, lambda *args, **kwargs: None, "isaacgym")
+
+
+def test_make_no_env_factory_raises():
+    """make() when no env factory is registered (only config) raises ValueError."""
     with pytest.raises(ValueError, match="does not support any simulation backend"):
         registry_mod.make(_TEST_ENV_B, sim_backend=None)
 
@@ -240,7 +412,100 @@ def test_make_with_valid_cfg_override():
     assert env.cfg.ctrl_dt == 0.05
 
 
+def test_make_materializes_fresh_function_owned_config_for_each_call():
+    @dataclass
+    class _FactoryCfg(EnvCfg):
+        ctrl_dt: float = 0.02
+
+    _name = "_TestFunctionFactoryOverrideEnv"
+
+    def make_cfg() -> EnvCfg:
+        return _FactoryCfg()
+
+    registry_mod.register_env_config(_name, make_cfg)
+    registry_mod.register_env(_name, _TestEnvA, "mujoco")
+
+    overridden = registry_mod.make(
+        _name,
+        sim_backend="mujoco",
+        env_cfg_override={"ctrl_dt": 0.05},
+    )
+    default = registry_mod.make(_name, sim_backend="mujoco")
+
+    assert overridden.cfg.ctrl_dt == 0.05
+    assert default.cfg.ctrl_dt == 0.02
+    assert overridden.cfg is not default.cfg
+
+
 def test_make_with_invalid_cfg_override_raises():
     """make() with a config key that doesn't exist raises ValueError."""
     with pytest.raises(ValueError, match="has no attribute"):
         registry_mod.make(_TEST_ENV_A, sim_backend="mujoco", env_cfg_override={"__bogus_key__": 1})
+
+
+# ---------------------------------------------------------------------------
+# Third-party "unilab.tasks" entry-point discovery (issue #1500)
+# ---------------------------------------------------------------------------
+
+
+def _track_imports(monkeypatch):
+    """Patch importlib.import_module to record every imported module name."""
+    imported: list[str] = []
+    real_import = importlib.import_module
+
+    def tracking_import(name, package=None):
+        imported.append(name)
+        return real_import(name, package)
+
+    monkeypatch.setattr("unilab.base.registry.importlib.import_module", tracking_import)
+    return imported
+
+
+def _fake_entry_points(*values: str):
+    eps = [SimpleNamespace(value=v) for v in values]
+
+    def fake_entry_points(*, group: str):
+        assert group == "unilab.tasks"
+        return eps
+
+    return fake_entry_points
+
+
+def test_ensure_registries_discovers_entry_point_packages(monkeypatch):
+    """Packages declared via the "unilab.tasks" entry-point group are imported
+    together with their declared ``__unilab_registry_modules__`` leaf modules."""
+    imported = _track_imports(monkeypatch)
+    monkeypatch.setattr(registry_mod, "entry_points", _fake_entry_points("tests._test_registry"))
+    # Scrub the env var so the fixture package can only arrive via the
+    # entry-point seam under test.
+    monkeypatch.delenv("UNILAB_EXTRA_REGISTRY_PACKAGES", raising=False)
+
+    registry_mod.ensure_registries(packages=[])
+
+    assert "tests._test_registry" in imported
+    assert "tests._test_registry.dummy_flat_env" in imported
+
+
+def test_ensure_registries_entry_point_dedupes_default_packages(monkeypatch):
+    """An entry point naming an already-listed package must not be imported twice."""
+    imported = _track_imports(monkeypatch)
+    monkeypatch.setattr(registry_mod, "entry_points", _fake_entry_points("unilab.tasks"))
+    monkeypatch.delenv("UNILAB_EXTRA_REGISTRY_PACKAGES", raising=False)
+
+    registry_mod.ensure_registries()
+
+    assert imported.count("unilab.tasks") == 1
+
+
+def test_ensure_registries_entry_point_import_failure_is_strict(monkeypatch):
+    """Unlike env-var packages, an installed entry point is deliberate: a broken
+    import must fail closed instead of being downgraded to a warning."""
+    monkeypatch.setattr(
+        registry_mod,
+        "entry_points",
+        _fake_entry_points("definitely_not_a_real_pkg_xyz"),
+    )
+    monkeypatch.delenv("UNILAB_EXTRA_REGISTRY_PACKAGES", raising=False)
+
+    with pytest.raises(ImportError, match="definitely_not_a_real_pkg_xyz"):
+        registry_mod.ensure_registries(packages=[])

@@ -1,95 +1,68 @@
-# Domain Randomization 契约
+# 域随机化 Contract
 
-Domain randomization 是一个 env-owner 的 provider 契约，加上 backend 能力的
-应用。用户配置示例见
-{doc}`../../2-user_guide/5-domain_randomization/0-index`。
+Manager-Based event term 是 UniLab 唯一的 DR lifecycle。任务 provider 协议已移除，
+环境不再携带 DR manager。
 
-## 生命周期分类
+## 生命周期
 
-- Init 生命周期：改变模型身份或几何。这些改动在 env/backend 初始化、
-  materialization 或 cache 构造期间执行。
-- Reset 生命周期：在同一模型身份内改变状态或参数。Provider 通过 `ResetPlan`
-  分发一份 reset 随机化 payload。
-- Interval 生命周期：在两步之间施加扰动，例如 push 或 body force plan。
+- **Construction identity：** `env.fixed_model_variants` 物化最终 read-only
+  assignment，并把 UniSim `FixedVariantPlan` 附到 `SceneCfg`。backend 在 first
+  forward 与 CUDA graph capture 前完成 realization。
+- **Startup：** Manager 构造完成后，backend 先 materialize，event term 再采样
+  一个 full-width per-environment 表，并在 read-plan 绑定、第一次 reset 或 step
+  之前复用公开的 `SimBackend.set_state(..., randomization=...)` boundary 提交。
+  已提交 rows 成为本地 reset baseline，因此后续 selected-row reset 会保留未写入
+  的 startup 值。Startup 是显式 opt-in，用连续分布覆盖换取 steady-state reset
+  路径中的 full-model derived-constant refresh。
+- **Reset：** event term 通过 Entity binding 写入 `ResetStateTransaction`；
+  transaction 只调用一次 `SimBackend.set_state(..., randomization=...)`。
+- **Interval：** event term 通过公开 `SimBackend` contract 使用 backend-owned
+  interval plan。
 
-热路径不得解析 XML/资源，也不得用 `getattr` 或 `hasattr` 探测 backend 私有方法。
+## 能力边界
 
-## Provider 最低要求
+Backend 差异是显式 capability，不是 task-side 分支：
 
-使用 DR 的任务应定义：
+- `DomainRandomizationCapabilities.supported_reset_terms`
+- `supported_interval_terms`
+- fixed-variant layout
+- per-environment playback 支持
 
-1. 一个由任务拥有的 domain-randomization config dataclass。
-2. 一个 `DomainRandomizationProvider`。
-3. 返回 `ResetPlan` 状态与随机化 payload 的 reset 行为。
-4. 必要时通过 `IntervalRandomizationPlan` 实现的 interval 行为。
-5. 在 env 构造中调用 `self._init_domain_randomization(...)`。
+未声明支持的请求 term 会携带 backend 与 term 名称 fail closed。Manager code 不
+import MuJoCo 或 mjbatch，也不访问 backend model/pool。
 
-共享类型位于 `src/unilab/dr/types.py`，manager 行为位于
-`src/unilab/dr/manager.py`。
+## Reset Payload 与默认值
 
-## Backend 能力边界
+`ResetRandomizationPayload` 是 curated NumPy plan，首维为 selected row count。
+支持项包括 body mass/COM/inertia family、gravity、geometry friction/size/solver
+参数、joint damping/armature/friction 与 actuator gains。geometry bounds 等
+派生字段归 backend 所有，caller 不能独立提交。
 
-Backend 支持是显式的。只有当以下三个部分同时存在时，一个 reset 或 interval
-条目才算作统一的 DR 条目：
+冷路径 binding 时，`ResetStateTransaction` 向 UniSim 请求
+`SimBackend.get_reset_term_default(term)`。返回表格是权威默认值，只有两种布局：
 
-1. `ResetRandomizationPayload` 或 `IntervalRandomizationPlan` 中有明确的字段。
-2. backend 声明并实现了该能力。
-3. 任务 config/provider 对该字段进行采样并分发。
+- canonical model table，例如 `body_mass` 的 `(nbody,)`；
+- per-environment fixed-variant table，例如 `(num_envs, nbody)`。
 
-MuJoCo 与 Motrix 的差异保留在 backend 能力声明、backend 实现与 owner YAML 中。
+对 selected reset subset，event term 使用对应 env rows 作为 baseline。只写部分
+model columns 时，transaction 会用同一 env row 填充未写列，再构造一个 dense
+payload。缺失能力、未支持 term、非 floating 表、非法 tail、首维不是 `num_envs`
+的 per-env 表均 fail closed。该边界移除了 UniLab 侧为 inertia 默认值重新 compile
+MuJoCo XML 的路径。
 
-## MuJoCo BatchEnvPool 快照
+## Interval Terms
 
-当前 MuJoCo 的 reset 随机化使用 `BatchEnvPool.reset(..., randomization=...)`，
-并带有固定的字段白名单。带索引的读写可通过 `get_field_indexed(...)` 与
-`set_field_indexed(...)` 实现。该接口位于 `mujoco-uni` 包
-（`mujoco.batch_env`），不在本仓库中；映射到它的 reset-term 常量定义在
-`src/unilab/dr/types.py`。
+Interval plan 基于 term descriptor：`IntervalRandomizationPlan.ops` 携带来自
+`unisim.dr.interval` 的 `IntervalTermOp`。内置 payload contract 由
+`IntervalTermOp.validate` 强制；未知 backend-owned custom term 传给该
+backend handler table。Ops 与 plans 保持 stdlib/NumPy 数据，可跨 spawn collector
+pickle。
 
-支持的 reset 字段及其每 env 整块形状如下。首维始终是 `len(env_ids)`；尾部
-整块大小是该字段在单个 `mjModel` 里的完整 flat 宽度。
+## 仓库证据
 
-| 字段 | 每 env 整块形状 |
-| --- | --- |
-| `body_mass` | `nbody` |
-| `body_ipos` | `3 * nbody` |
-| `body_iquat` | `4 * nbody` |
-| `body_inertia` | `3 * nbody` |
-| `dof_armature` | `nv` |
-| `gravity` | `3` |
-| `geom_friction` | `3 * ngeom` |
-| `kp` | `nu` |
-| `kd` | `nu` |
-
-refresh 行为由 backend 固定：`body_mass`、`body_ipos`、`body_iquat`、
-`body_inertia` 与 `dof_armature` 在写入后会触发 `mj_setConst` refresh，而
-`gravity`、`geom_friction`、`kp` 与 `kd` 不触发。
-
-两点注意：
-
-- `geom_size` 不在 `SUPPORTED_FIELDS` 里。几何尺寸通过 init-lifecycle 的模型
-  materialization 表达（见 `src/unilab/dr/types.py` 中的 `GeomSizeOverride` /
-  `ModelVariantSpec`），不走 reset 随机化。
-- `gravity` 的 reset 随机化需要包含它的 `mujoco-uni` 构建。本仓库锁定
-  `mujoco-uni==3.8.0`，其 `SUPPORTED_FIELDS` 包含 `gravity`；更旧的版本（例如
-  `3.6.0.post6`）则没有。
-
-## 电机控制扩展
-
-对于不将策略输出直接映射到 backend 位置 actuator 的电机-actuator 任务，应将转换
-保留在 env owner 层。通过 `SimBackend.set_pre_step_control(...)` 注册一个
-pre-step 回调；backend 会在物理 substep 之前调用它，并在 stepping 之后刷新
-sensor。
-
-Go2W 是当前全电机 actuator 的示例：它的 env owner 将腿部位置目标与轮子力矩组合
-在一起，而 kp/kd 随机化则保留在 env owner 的 cache 中，从而避免将 MuJoCo 位置
-actuator 的机制泄漏到共享 payload 里。
-
-## 仓库中的证据
-
-- DR 类型：`src/unilab/dr/types.py`
-- DR manager：`src/unilab/dr/manager.py`
-- Backend 接口：`src/unilab/base/backend/base.py`
-- 示例 provider：`src/unilab/envs/locomotion/g1/joystick.py`、
-  `src/unilab/envs/motion_tracking/g1/tracking.py`、
-  `src/unilab/envs/manipulation/sharpa_inhand/rotation.py`
+- Manager lifecycle：`src/unilab/managers/event_manager.py`
+- Reset transaction：`src/unilab/base/reset_state.py`
+- Entity bindings：`src/unilab/base/entity.py`
+- Task-owned fixed variants：`src/unilab/base/variants.py`
+- Backend contract/capability types：`unisim.backend.base`、`unisim.dr.types`
+- ADR：{doc}`ADR-0010 Fixed Model Variant Ownership Boundary </adr/ADR-0010-fixed-model-variant-ownership-boundary>`

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import platform
 import shutil
@@ -15,8 +14,6 @@ from pathlib import Path
 from unilab.assets import ASSETS_ROOT_PATH
 from unilab.assets.hub import resolve_checkpoint_file
 
-_OFFICIAL_MUJOCO_PACKAGE = "mujoco==3.8.0"
-
 
 @dataclass(frozen=True)
 class DemoSpec:
@@ -27,32 +24,22 @@ class DemoSpec:
 
 
 DEMO_REGISTRY: dict[str, DemoSpec] = {
-    "dance": DemoSpec(algo="ppo", task="g1_motion_tracking", sim="motrix", entry="eval"),
-    "wallflip": DemoSpec(algo="ppo", task="g1_wall_flip_tracking", sim="motrix", entry="eval"),
-    "boxtracking": DemoSpec(algo="ppo", task="g1_box_tracking", sim="motrix", entry="eval"),
-    "locomani": DemoSpec(
-        algo="ppo", task="go2_arm_manip_loco", sim="mujoco", entry="play_interactive"
-    ),
-    "inhandgrasp": DemoSpec(
-        algo="hora_distill",
-        task="sharpa_inhand",
-        sim="mujoco_nodr",
-        entry="play_interactive",
-    ),
-    "sharpa_appo_student": DemoSpec(
-        algo="hora_distill",
-        task="sharpa_inhand",
-        sim="mujoco_nodr",
-        entry="play_interactive",
-    ),
+    "dance": DemoSpec(algo="ppo", task="g1_motion_tracking", sim="mujoco", entry="eval"),
     "teaser": DemoSpec(algo="", task="", sim="", entry="teaser"),
 }
 
-_LOCAL_ONLY_CHECKPOINT_DEMOS = {"sharpa_appo_student"}
+_LOCAL_ONLY_CHECKPOINT_DEMOS: set[str] = set()
+_DEMO_PLAY_INTERACTIVE_OVERRIDES: dict[str, tuple[str, ...]] = {}
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+def _package_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def _dev_venv() -> Path | None:
+    """Return the editable checkout's uv venv, or None for pip installs."""
+    venv = Path(__file__).resolve().parents[2] / ".venv"
+    return venv if venv.is_dir() else None
 
 
 def get_demo_spec(demo_name: str) -> DemoSpec:
@@ -102,34 +89,28 @@ def _build_play_interactive_command(
     extra_overrides: Sequence[str],
     root: Path | None = None,
 ) -> list[str]:
-    selected_root = root or _repo_root()
+    selected_root = root or _package_root()
     script = selected_root / "scripts" / "play_interactive.py"
     if not script.is_file():
         raise SystemExit(f"Entrypoint script not found: {script}")
-    if spec.algo == "sac":
-        owner_yaml = (
-            selected_root / "conf" / "offpolicy" / "task" / "sac" / spec.task / f"{spec.sim}.yaml"
-        )
-    elif spec.algo == "hora_distill":
-        owner_yaml = (
-            selected_root / "conf" / "hora_distill" / "task" / spec.task / f"{spec.sim}.yaml"
-        )
-    else:
-        owner_yaml = selected_root / "conf" / spec.algo / "task" / spec.task / f"{spec.sim}.yaml"
+    owner_yaml = selected_root / "conf" / spec.algo / "task" / spec.task / f"{spec.sim}.yaml"
     if not owner_yaml.is_file():
         raise SystemExit(
             f"No owner config exists for algo={spec.algo}, task={spec.task}, sim={spec.sim}: "
             f"{owner_yaml}"
         )
     command = [
-        *_play_interactive_command_prefix(selected_root),
+        *_play_interactive_command_prefix(),
         str(script),
         "--algo",
         spec.algo,
+        "--task",
+        spec.task,
+        "--sim",
+        spec.sim,
     ]
     command.extend(
         [
-            f"task={spec.task}/{spec.sim}",
             f"algo.load_run={checkpoint_path}",
             *extra_overrides,
         ]
@@ -137,102 +118,24 @@ def _build_play_interactive_command(
     return command
 
 
-def _play_interactive_command_prefix(root: Path) -> list[str]:
+def _play_interactive_command_prefix() -> list[str]:
     if platform.system() != "Darwin":
         return [sys.executable]
 
-    _ensure_mujoco_uni_mjpython_app(root)
+    _ensure_mujoco_mjpython_app()
     return [_current_env_mjpython()]
 
 
-def _official_mujoco_env(root: Path) -> Path:
-    return root / ".tmp" / "mjpython-demo"
+def _ensure_mujoco_mjpython_app() -> None:
+    from unilab.cli import _ensure_mujoco_mjpython_app as ensure_app
 
-
-def _official_mujoco_app_mjpython(env_root: Path) -> Path:
-    site_packages = (
-        env_root
-        / "lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
-        / "site-packages"
-    )
-    return site_packages / "mujoco" / "MuJoCo_(mjpython).app" / "Contents" / "MacOS" / "mjpython"
-
-
-def _official_mujoco_app(env_root: Path) -> Path:
-    return _official_mujoco_app_mjpython(env_root).parents[2]
-
-
-def _mujoco_package_dir() -> Path:
-    spec = importlib.util.find_spec("mujoco")
-    if spec is None or spec.origin is None:
-        raise SystemExit("macOS MuJoCo demos require the project mujoco-uni package.")
-    return Path(spec.origin).resolve().parent
-
-
-def _mujoco_uni_mjpython_app() -> Path:
-    return _mujoco_package_dir() / "MuJoCo_(mjpython).app"
-
-
-def _ensure_official_mujoco_env(root: Path) -> Path:
-    env_root = _official_mujoco_env(root)
-    env_mjpython = env_root / "bin" / "mjpython"
-    if env_mjpython.is_file() and _official_mujoco_app_mjpython(env_root).is_file():
-        return env_root
-
-    uv = shutil.which("uv")
-    if uv is None:
-        raise SystemExit(
-            "macOS MuJoCo demos require `uv` to create an isolated official MuJoCo "
-            "mjpython environment."
-        )
-
-    env_root.parent.mkdir(parents=True, exist_ok=True)
-    python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
-    subprocess.run([uv, "venv", str(env_root), "--python", python_version], check=True)
-    subprocess.run(
-        [
-            uv,
-            "pip",
-            "install",
-            "--python",
-            str(env_root / "bin" / "python"),
-            _OFFICIAL_MUJOCO_PACKAGE,
-        ],
-        check=True,
-    )
-    if not env_mjpython.is_file() or not _official_mujoco_app_mjpython(env_root).is_file():
-        raise SystemExit(
-            "Failed to create the isolated official MuJoCo mjpython environment for "
-            "macOS demo playback."
-        )
-    return env_root
-
-
-def _ensure_mujoco_uni_mjpython_app(root: Path) -> None:
-    dest = _mujoco_uni_mjpython_app()
-    if (dest / "Contents" / "MacOS" / "mjpython").is_file():
-        return
-
-    official_env = _ensure_official_mujoco_env(root)
-    shutil.copytree(_official_mujoco_app(official_env), dest, dirs_exist_ok=True)
-    if not (dest / "Contents" / "MacOS" / "mjpython").is_file():
-        raise SystemExit(f"Failed to materialize MuJoCo mjpython app at {dest}")
+    ensure_app()
 
 
 def _current_env_mjpython() -> str:
-    if Path(sys.executable).name == "mjpython":
-        return sys.executable
+    from unilab.cli import _mjpython_executable as resolve_mjpython
 
-    venv_mjpython = Path(sys.executable).with_name("mjpython")
-    if venv_mjpython.is_file():
-        return str(venv_mjpython)
-
-    mjpython = shutil.which("mjpython")
-    if mjpython is not None:
-        return mjpython
-
-    raise SystemExit("macOS MuJoCo demos require `mjpython` in the active environment.")
+    return resolve_mjpython()
 
 
 def build_demo_command(
@@ -249,6 +152,7 @@ def build_demo_command(
     extra: list[str] = []
     if device is not None:
         extra.append(f"training.device={device}")
+    extra.extend(_DEMO_PLAY_INTERACTIVE_OVERRIDES.get(demo_name, ()))
 
     if spec.entry == "eval":
         return build_command(
@@ -271,22 +175,37 @@ def build_demo_command(
 
 
 def _mxpython_executable() -> str:
-    from unilab.cli import _mxpython_executable as resolve_mxpython_executable
+    if Path(sys.executable).name == "mxpython":
+        return sys.executable
 
-    return resolve_mxpython_executable()
+    mxpython = shutil.which("mxpython")
+    if mxpython is not None:
+        return mxpython
+
+    venv_mxpython = Path(sys.executable).with_name("mxpython")
+    if venv_mxpython.is_file():
+        return str(venv_mxpython)
+
+    raise SystemExit(
+        "The macOS teaser renderer uses Motrix's native renderer and must be "
+        "launched with `mxpython`. Install the Motrix extra so `mxpython` is on "
+        "PATH, or run the teaser on a non-macOS platform."
+    )
 
 
 def _run_teaser_demo() -> int:
     if platform.system() == "Darwin" and Path(sys.executable).name != "mxpython":
         command = [
             _mxpython_executable(),
-            str(_repo_root() / "src" / "unilab" / "tools" / "render_teaser.py"),
+            str(_package_root() / "visualization" / "teaser.py"),
         ]
         env = os.environ.copy()
-        env.setdefault("UV_PROJECT_ENVIRONMENT", str(_repo_root() / ".venv"))
+        dev_venv = _dev_venv()
+        if dev_venv is not None:
+            env["UV_PROJECT_ENVIRONMENT"] = str(dev_venv)
         return subprocess.run(command, check=False, env=env).returncode
 
-    from unilab.tools.render_teaser import main as render_teaser_main
+    from unilab.visualization.teaser import main as render_teaser_main
 
     render_teaser_main()
     return 0
@@ -308,7 +227,9 @@ def run_demo(*, demo_name: str, refresh: bool = False, device: str | None = None
         demo_name=demo_name, checkpoint_path=checkpoint_path, device=device
     )
     env = os.environ.copy()
-    env.setdefault("UV_PROJECT_ENVIRONMENT", str(_repo_root() / ".venv"))
+    dev_venv = _dev_venv()
+    if dev_venv is not None:
+        env["UV_PROJECT_ENVIRONMENT"] = str(dev_venv)
     returncode = subprocess.run(command, check=False, env=env).returncode
     if returncode == 0:
         print(f"Demo finished: {demo_name} (algo={spec.algo}, task={spec.task}, sim={spec.sim})")

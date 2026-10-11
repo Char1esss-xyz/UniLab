@@ -9,13 +9,13 @@ for the first time, start with {doc}`../1-getting_started/0-index`.
 :::{grid-item-card} Training
 :link: 1-training/0-index
 :link-type: doc
-CLI routes, Hydra owner YAMLs, logs, checkpoints, Docker, and multi-GPU notes.
+CLI routes, Hydra owner YAMLs, logs, checkpoints, and Docker.
 :::
 
 :::{grid-item-card} Algorithms
 :link: 2-algorithms/0-index
 :link-type: doc
-Compare PPO, APPO, SAC, TD3, FlashSAC, MLX PPO, HIM-PPO, and HORA.
+Compare PPO, APPO, SAC, and FlashSAC.
 :::
 
 :::{grid-item-card} Backends
@@ -42,12 +42,6 @@ Configure reset, init, and interval randomization through task owner configs.
 Export ONNX, inspect NaNs, send W&B logs, and export scenes.
 :::
 
-:::{grid-item-card} Manipulation Notes
-:link: 8-manipulation/0-index
-:link-type: doc
-Task-specific Allegro, Sharpa, and Go2+Airbot notes.
-:::
-
 ::::
 
 ```{toctree}
@@ -61,5 +55,4 @@ Task-specific Allegro, Sharpa, and Go2+Airbot notes.
 5-domain_randomization/0-index
 6-terrain/0-index
 7-tooling/0-index
-8-manipulation/0-index
 ```

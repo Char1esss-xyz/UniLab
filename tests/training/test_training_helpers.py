@@ -1,31 +1,46 @@
 from __future__ import annotations
 
-import sys
-import types
+import logging
 from pathlib import Path
 
 import numpy as np
 import pytest
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
+from omegaconf import OmegaConf
 
-from unilab.base.backend.motrix.backend import MotrixBackend
-from unilab.base.backend.motrix.playback import run_motrix_playback
-from unilab.base.backend.mujoco.backend import MuJoCoBackend
-from unilab.base.backend.mujoco.playback import run_mujoco_playback
+pytest.importorskip("mjbatch")
+pytest.importorskip(
+    "unisim.backend.mujoco.backend",
+    reason="unisim-core MuJoCo adapter (mjbatch build) not available",
+)
+
+from unisim.backend.base import RenderClosedError
+from unisim.backend.motrix.backend import MotrixBackend
+from unisim.backend.motrix.playback import run_motrix_playback
+from unisim.backend.mujoco.backend import MuJoCoBackend
+from unisim.backend.mujoco.playback import run_mujoco_playback
+
+from unilab.base.config_adapter import BackendAdapter
 from unilab.base.scene import SceneCfg
 from unilab.training import (
-    BackendAdapter,
+    get_log_root,
+    nonfatal_play_step,
+    parse_checkpoint_path,
+)
+from unilab.utils.checkpoint import (
+    get_entrypoint_log_root,
     get_latest_checkpoint,
     get_latest_run,
-    parse_checkpoint_path,
+    resolve_appo_checkpoint_path,
     resolve_checkpoint_path,
+    resolve_offpolicy_checkpoint_path,
     resolve_task_checkpoint_path,
 )
 from unilab.visualization.playback import render_play_mode
 
 _ROOT_DIR = Path(__file__).resolve().parents[2]
-_CONF_DIR = _ROOT_DIR / "conf"
+_CONF_DIR = _ROOT_DIR / "src" / "unilab" / "conf"
 
 
 def _resolve_low_level_playback_flags(kwargs: dict[str, object]) -> dict[str, object]:
@@ -43,25 +58,18 @@ def _resolve_low_level_playback_flags(kwargs: dict[str, object]) -> dict[str, ob
 
 def _normalize_overrides(overrides: list[str] | None, *, offpolicy: bool = False) -> list[str]:
     normalized: list[str] = []
-    algo = "sac"
     task_selected = False
 
     for override in overrides or []:
-        if override.startswith("algo="):
-            algo = override.split("=", 1)[1]
-            normalized.append(override)
-            continue
         if override.startswith("task="):
             task_selected = True
-            normalized.append(override)
-            continue
         normalized.append(override)
 
     if not task_selected:
         if offpolicy:
-            normalized.append(f"task={algo}/g1_walk_flat/mujoco")
+            normalized.append("task=g1_walk_flat/mujoco")
         else:
-            normalized.append("task=go1_joystick_flat/mujoco")
+            normalized.append("task=go2_joystick_flat/mujoco")
     return normalized
 
 
@@ -71,10 +79,25 @@ def _ppo_cfg(overrides: list[str] | None = None):
         return compose("config", overrides=_normalize_overrides(overrides))
 
 
-def _offpolicy_cfg(overrides: list[str] | None = None):
+def _offpolicy_cfg(overrides: list[str] | None = None, *, algo: str = "sac"):
     GlobalHydra.instance().clear()
-    with initialize_config_dir(config_dir=str(_CONF_DIR / "offpolicy"), version_base="1.3"):
+    with initialize_config_dir(config_dir=str(_CONF_DIR / algo), version_base="1.3"):
         return compose("config", overrides=_normalize_overrides(overrides, offpolicy=True))
+
+
+def test_nonfatal_play_step_logs_failure_and_continues(capsys: pytest.CaptureFixture[str]):
+    with nonfatal_play_step("ONNX export"):
+        raise RuntimeError("boom")
+
+    captured = capsys.readouterr()
+    assert "WARNING: ONNX export failed; continuing with the remaining play steps." in captured.out
+    assert "RuntimeError: boom" in captured.err
+
+
+def test_nonfatal_play_step_does_not_swallow_keyboard_interrupt():
+    with pytest.raises(KeyboardInterrupt):
+        with nonfatal_play_step("video rendering"):
+            raise KeyboardInterrupt
 
 
 def test_get_latest_run_and_checkpoint_support_shared_checkpoint_resolution(tmp_path: Path):
@@ -107,7 +130,37 @@ def test_resolve_checkpoint_path_accepts_integer_latest_run(tmp_path: Path):
     assert checkpoint_dir == run_dir
 
 
-def test_parse_checkpoint_path_uses_algo_log_name_from_cfg(tmp_path: Path):
+def test_resolve_appo_checkpoint_path_returns_string_paths(tmp_path: Path):
+    task_dir = tmp_path / "logs" / "appo" / "MyTask"
+    run_dir = task_dir / "2024-02-01_00-00-00_mujoco"
+    run_dir.mkdir(parents=True)
+    selected_model = run_dir / "model_9.pt"
+    selected_model.write_bytes(b"")
+
+    checkpoint_path, checkpoint_dir = resolve_appo_checkpoint_path(task_dir, "-1")
+
+    assert checkpoint_path == str(selected_model)
+    assert checkpoint_dir == str(run_dir)
+
+
+def test_resolve_offpolicy_checkpoint_path_reads_repo_log_tree(tmp_path: Path):
+    run_dir = tmp_path / "logs" / "sac" / "MyTask" / "2024-02-01_00-00-00_mujoco"
+    run_dir.mkdir(parents=True)
+    selected_model = run_dir / "model_9.pt"
+    selected_model.write_bytes(b"")
+
+    checkpoint_path, checkpoint_dir = resolve_offpolicy_checkpoint_path(
+        tmp_path, "sac", "MyTask", "-1"
+    )
+
+    assert checkpoint_path == str(selected_model)
+    assert checkpoint_dir == str(run_dir)
+
+
+def test_parse_checkpoint_path_uses_algo_log_name_from_cfg(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.delenv("UNILAB_TEST_LOG_ROOT", raising=False)
     cfg = _ppo_cfg()
     cfg.algo.algo_log_name = "custom_ppo"
 
@@ -124,7 +177,44 @@ def test_parse_checkpoint_path_uses_algo_log_name_from_cfg(tmp_path: Path):
     assert checkpoint_dir == run_dir
 
 
-def test_parse_checkpoint_path_supports_explicit_checkpoint_from_cfg(tmp_path: Path):
+def test_get_log_root_uses_test_log_root_env_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    cfg = _ppo_cfg()
+    cfg.algo.algo_log_name = "custom_ppo"
+    monkeypatch.setenv("UNILAB_TEST_LOG_ROOT", str(tmp_path / "test-logs"))
+
+    log_root = get_log_root(tmp_path / "repo", cfg)
+
+    assert log_root == tmp_path / "test-logs" / "custom_ppo"
+
+
+def test_get_log_root_keeps_configured_log_root_ahead_of_test_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    cfg = _ppo_cfg(["training.log_root=explicit_logs"])
+    cfg.algo.algo_log_name = "custom_ppo"
+    monkeypatch.setenv("UNILAB_TEST_LOG_ROOT", str(tmp_path / "test-logs"))
+
+    log_root = get_log_root(tmp_path / "repo", cfg)
+
+    assert log_root == tmp_path / "repo" / "explicit_logs"
+
+
+def test_get_entrypoint_log_root_uses_test_log_root_env_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setenv("UNILAB_TEST_LOG_ROOT", str(tmp_path / "test-logs"))
+
+    log_root = get_entrypoint_log_root(tmp_path / "repo", algo_log_name="custom_ppo")
+
+    assert log_root == tmp_path / "test-logs" / "custom_ppo"
+
+
+def test_parse_checkpoint_path_supports_explicit_checkpoint_from_cfg(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.delenv("UNILAB_TEST_LOG_ROOT", raising=False)
     cfg = _ppo_cfg()
     cfg.algo.algo_log_name = "custom_ppo"
     cfg.algo.checkpoint = 12
@@ -143,7 +233,10 @@ def test_parse_checkpoint_path_supports_explicit_checkpoint_from_cfg(tmp_path: P
     assert checkpoint_dir == run_dir
 
 
-def test_parse_checkpoint_path_returns_run_dir_when_requested_checkpoint_is_missing(tmp_path: Path):
+def test_parse_checkpoint_path_returns_run_dir_when_requested_checkpoint_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.delenv("UNILAB_TEST_LOG_ROOT", raising=False)
     cfg = _ppo_cfg()
     cfg.algo.algo_log_name = "custom_ppo"
     cfg.algo.checkpoint = 12
@@ -160,7 +253,10 @@ def test_parse_checkpoint_path_returns_run_dir_when_requested_checkpoint_is_miss
     assert checkpoint_dir == run_dir
 
 
-def test_resolve_task_checkpoint_path_supports_explicit_checkpoint(tmp_path: Path):
+def test_resolve_task_checkpoint_path_supports_explicit_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.delenv("UNILAB_TEST_LOG_ROOT", raising=False)
     run_dir = tmp_path / "logs" / "custom_ppo" / "MyTask" / "2024-01-01_00-00-00_mujoco"
     run_dir.mkdir(parents=True)
     (run_dir / "model_9.pt").write_bytes(b"")
@@ -179,7 +275,10 @@ def test_resolve_task_checkpoint_path_supports_explicit_checkpoint(tmp_path: Pat
     assert checkpoint_dir == run_dir
 
 
-def test_resolve_task_checkpoint_path_returns_run_dir_when_checkpoint_missing(tmp_path: Path):
+def test_resolve_task_checkpoint_path_returns_run_dir_when_checkpoint_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.delenv("UNILAB_TEST_LOG_ROOT", raising=False)
     run_dir = tmp_path / "logs" / "custom_ppo" / "MyTask" / "2024-01-01_00-00-00_mujoco"
     run_dir.mkdir(parents=True)
 
@@ -195,7 +294,10 @@ def test_resolve_task_checkpoint_path_returns_run_dir_when_checkpoint_missing(tm
     assert checkpoint_dir == run_dir
 
 
-def test_resolve_task_checkpoint_path_accepts_integer_latest_run(tmp_path: Path):
+def test_resolve_task_checkpoint_path_accepts_integer_latest_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.delenv("UNILAB_TEST_LOG_ROOT", raising=False)
     run_dir = tmp_path / "logs" / "custom_ppo" / "MyTask" / "2024-01-01_00-00-00_mujoco"
     run_dir.mkdir(parents=True)
     selected_model = run_dir / "model_12.pt"
@@ -212,31 +314,40 @@ def test_resolve_task_checkpoint_path_accepts_integer_latest_run(tmp_path: Path)
     assert checkpoint_dir == run_dir
 
 
-def test_backend_adapter_env_cfg_override_for_motrix_sac_g1_walk_flat():
+def test_backend_adapter_env_cfg_override_for_sac_g1_walk_flat():
     """Env cfg override carries reward + env preset fields. Algo is NOT touched."""
-    cfg = _offpolicy_cfg(["task=sac/g1_walk_flat/motrix"])
+    cfg = _offpolicy_cfg(["task=g1_walk_flat/mujoco"])
 
     adapter = BackendAdapter(cfg, root_dir=_ROOT_DIR, algo_name="sac")
     env_cfg_override = adapter.build_task_env_cfg_override()
 
-    # env_cfg_override has reward + env preset fields
-    assert env_cfg_override["reward_config"]["scales"]["tracking_lin_vel"] == pytest.approx(2.2)
-    assert env_cfg_override["domain_rand"]["randomize_kp"] is False
-    assert env_cfg_override["domain_rand"]["randomize_kd"] is False
+    assert env_cfg_override["rewards"]["tracking_lin_vel"]["weight"] == pytest.approx(2.0)
     # algo values come straight from YAML compose — no mutation, matches task owner values
     assert cfg.algo.num_envs == 2048
     assert cfg.algo.max_iterations == 5000
 
 
-def test_backend_adapter_builds_play_scene_override():
-    cfg = _ppo_cfg(["task=g1_motion_tracking/motrix", "training.play_only=true"])
-    assert cfg.training.play_env_num == 16
+def test_backend_adapter_injects_superdex_serial_mode_only_for_interactive_play():
+    interactive = _ppo_cfg(
+        ["task=go2_joystick_flat/superdex", "training.play_render_mode=interactive"]
+    )
+    adapter = BackendAdapter(interactive, root_dir=_ROOT_DIR, algo_name="ppo")
+    assert "superdex_execution_mode" not in adapter.build_task_env_cfg_override()
+    assert adapter.build_play_env_cfg_override()["superdex_execution_mode"] == "serial"
+
+    record = _ppo_cfg(["task=go2_joystick_flat/superdex", "training.play_render_mode=record"])
+    record_override = BackendAdapter(record, root_dir=_ROOT_DIR, algo_name="ppo")
+    assert "superdex_execution_mode" not in record_override.build_play_env_cfg_override()
+
+
+def test_backend_adapter_keeps_motion_manager_scene_during_play():
+    cfg = _ppo_cfg(["task=g1_motion_tracking/mujoco", "training.play_only=true"])
     captured: dict[str, object] = {}
 
     def _fake_materializer(source_model_file: str, **kwargs) -> str:
         captured["source_model_file"] = source_model_file
         captured.update(kwargs)
-        return "/tmp/g1_motion_tracking_play_scene.xml"
+        pytest.fail("manager scene must not be replaced during play")
 
     env_cfg_override = BackendAdapter(
         cfg,
@@ -245,12 +356,62 @@ def test_backend_adapter_builds_play_scene_override():
         scene_materializer=_fake_materializer,
     ).build_play_env_cfg_override()
 
-    assert cfg.training.play_env_num == 16
-    assert env_cfg_override["render_spacing"] == pytest.approx(2.5)
-    assert env_cfg_override["scene"].model_file == "/tmp/g1_motion_tracking_play_scene.xml"
-    assert captured["ground_texture_file"] == str(
-        _ROOT_DIR / "src/unilab/assets/robots/g1/textures/floor.png"
+    assert env_cfg_override["render_spacing"] == pytest.approx(2.0)
+    assert env_cfg_override["scene"]["model_file"].endswith("robots/g1/scene_flat.xml")
+    assert "robot" in env_cfg_override["scene"]["entities"]
+    assert captured == {}
+
+
+def test_backend_adapter_play_profile_merges_partial_observation_term() -> None:
+    """A play profile may change term parameters without removing its callable."""
+    override = {
+        "observations": {
+            "policy": {
+                "enable_corruption": True,
+                "terms": {
+                    "position": {
+                        "func": "example.position",
+                        "params": {"injection_prob": 0.2, "scale": 1.0},
+                        "history_length": 3,
+                    },
+                    "velocity": {
+                        "func": "example.velocity",
+                        "noise": {"std": 0.1},
+                    },
+                },
+            },
+            "critic": {"terms": {"privileged": {"func": "example.privileged"}}},
+        }
+    }
+    profile = OmegaConf.create(
+        {
+            "observations": {
+                "policy": {
+                    "enable_corruption": False,
+                    "terms": {"position": {"params": {"injection_prob": 0.0}}},
+                }
+            }
+        }
     )
+
+    adapter = BackendAdapter(OmegaConf.create({}), root_dir=_ROOT_DIR)
+    adapter._apply_env_profile(override, profile)
+
+    position = override["observations"]["policy"]["terms"]["position"]
+    assert override["observations"]["policy"]["enable_corruption"] is False
+    assert position["func"] == "example.position"
+    assert position["params"] == {"injection_prob": 0.0, "scale": 1.0}
+    assert position["history_length"] == 3
+    assert override["observations"]["policy"]["terms"]["velocity"] == {
+        "func": "example.velocity",
+        "noise": {"std": 0.1},
+    }
+    assert override["observations"]["critic"]["terms"]["privileged"]["func"] == (
+        "example.privileged"
+    )
+
+    adapter._apply_env_profile(override, OmegaConf.create({"events": {"randomize": None}}))
+    assert override["events"]["randomize"] is None
 
 
 def test_render_play_mode_uses_env_interactive_contract():
@@ -265,6 +426,10 @@ def test_render_play_mode_uses_env_interactive_contract():
         def run_playback(self, **kwargs):
             kwargs = _resolve_low_level_playback_flags(kwargs)
             kwargs.pop("frame_state_getter", None)
+            # FakeEnv mimics the real backend boundary: debug overlays and
+            # on_frame fail closed downstream; here they are simply unused.
+            kwargs.pop("debug_overlay_getter", None)
+            kwargs.pop("on_frame", None)
             return run_motrix_playback(backend=self, env=self, **kwargs)
 
         def init_renderer(self, **kwargs):
@@ -331,14 +496,14 @@ def test_motrix_record_play_render_plan_is_headless(tmp_path: Path):
     assert plan.num_steps == 12
 
 
-def test_motrix_interactive_run_playback_treats_window_close_as_done(capsys):
-    class RenderClosedError(RuntimeError):
-        pass
-
+def test_motrix_interactive_run_playback_treats_window_close_as_done(
+    caplog: pytest.LogCaptureFixture,
+):
     class FakeEnv:
         cfg = type("Cfg", (), {"render_spacing": 1.0, "ctrl_dt": 0.02})()
 
     backend = MotrixBackend.__new__(MotrixBackend)
+    backend._portable_mode = False
     backend.init_renderer = lambda **kwargs: None
 
     def _render():
@@ -347,28 +512,27 @@ def test_motrix_interactive_run_playback_treats_window_close_as_done(capsys):
     backend.render = _render
     backend.capture_video_frame = lambda: np.zeros((2, 2, 3), dtype=np.uint8)
 
-    result = backend.run_playback(
-        env=FakeEnv(),
-        initialize=lambda: 0,
-        step=lambda obs: obs + 1,
-        num_steps=None,
-        output_video=None,
-        headless=False,
-        record_video=False,
-    )
+    with caplog.at_level(logging.INFO, logger="unisim.backend.motrix.backend"):
+        result = backend.run_playback(
+            env=FakeEnv(),
+            initialize=lambda: 0,
+            step=lambda obs: obs + 1,
+            num_steps=None,
+            output_video=None,
+            headless=False,
+            record_video=False,
+        )
 
     assert result is None
-    assert "Render window closed." in capsys.readouterr().out
+    assert "Render window closed." in caplog.text
 
 
 def test_motrix_record_run_playback_does_not_swallow_render_closed(tmp_path: Path):
-    class RenderClosedError(RuntimeError):
-        pass
-
     class FakeEnv:
         cfg = type("Cfg", (), {"render_spacing": 1.0, "ctrl_dt": 0.02})()
 
     backend = MotrixBackend.__new__(MotrixBackend)
+    backend._portable_mode = False
     backend.init_renderer = lambda **kwargs: None
 
     def _capture_video_frame():
@@ -404,6 +568,10 @@ def test_render_play_mode_uses_motrix_native_video_capture(
         def run_playback(self, **kwargs):
             kwargs = _resolve_low_level_playback_flags(kwargs)
             kwargs.pop("frame_state_getter", None)
+            # FakeEnv mimics the real backend boundary: debug overlays and
+            # on_frame fail closed downstream; here they are simply unused.
+            kwargs.pop("debug_overlay_getter", None)
+            kwargs.pop("on_frame", None)
             return run_motrix_playback(backend=self, env=self, **kwargs)
 
         def init_renderer(self, **kwargs):
@@ -413,11 +581,12 @@ def test_render_play_mode_uses_motrix_native_video_capture(
             self.capture_calls += 1
             return np.full((2, 3, 3), self.capture_calls, dtype=np.uint8)
 
-    fake_media = types.ModuleType("mediapy")
-    fake_media.write_video = lambda path, frames, fps: captured.update(  # type: ignore[attr-defined]
-        {"video_path": path, "frames": frames, "fps": fps}
+    monkeypatch.setattr(
+        "unisim.backend.playback_common.imageio.mimsave",
+        lambda path, frames, fps: captured.update(
+            {"video_path": path, "frames": frames, "fps": fps}
+        ),
     )
-    monkeypatch.setitem(sys.modules, "mediapy", fake_media)
 
     env = FakeEnv()
     output_path = tmp_path / "motrix.mp4"
@@ -470,6 +639,10 @@ def test_render_play_mode_rejects_motrix_record_with_interactive_window(
         def run_playback(self, **kwargs):
             kwargs = _resolve_low_level_playback_flags(kwargs)
             kwargs.pop("frame_state_getter", None)
+            # FakeEnv mimics the real backend boundary: debug overlays and
+            # on_frame fail closed downstream; here they are simply unused.
+            kwargs.pop("debug_overlay_getter", None)
+            kwargs.pop("on_frame", None)
             return run_motrix_playback(backend=self, env=self, **kwargs)
 
         def init_renderer(self, **kwargs):
@@ -479,11 +652,12 @@ def test_render_play_mode_rejects_motrix_record_with_interactive_window(
             self.capture_calls += 1
             return np.full((2, 3, 3), self.capture_calls, dtype=np.uint8)
 
-    fake_media = types.ModuleType("mediapy")
-    fake_media.write_video = lambda path, frames, fps: captured.update(  # type: ignore[attr-defined]
-        {"video_path": path, "frames": frames, "fps": fps}
+    monkeypatch.setattr(
+        "unisim.backend.playback_common.imageio.mimsave",
+        lambda path, frames, fps: captured.update(
+            {"video_path": path, "frames": frames, "fps": fps}
+        ),
     )
-    monkeypatch.setitem(sys.modules, "mediapy", fake_media)
 
     env = FakeEnv()
     output_path = tmp_path / "motrix_interactive.mp4"
@@ -524,6 +698,7 @@ def test_render_play_mode_defaults_to_env_physics_snapshot(
         def run_playback(self, **kwargs):
             kwargs = _resolve_low_level_playback_flags(kwargs)
             kwargs.pop("render_offset_mode", None)
+            kwargs.pop("on_frame", None)
             return run_mujoco_playback(env=self, **kwargs)
 
     def _render_states_get_frames(state_list, model_file, **kwargs):
@@ -532,14 +707,14 @@ def test_render_play_mode_defaults_to_env_physics_snapshot(
         captured["camera_kwargs"] = kwargs
         return [np.zeros((2, 2, 3), dtype=np.uint8)]
 
-    fake_media = types.ModuleType("mediapy")
-    fake_media.write_video = lambda path, frames, fps: captured.update(  # type: ignore[attr-defined]
-        {"video_path": path, "frames": frames, "fps": fps}
-    )
-
-    monkeypatch.setitem(sys.modules, "mediapy", fake_media)
     monkeypatch.setattr(
-        "unilab.visualization.render_many.render_states_get_frames",
+        "unisim.backend.playback_common.imageio.mimsave",
+        lambda path, frames, fps: captured.update(
+            {"video_path": path, "frames": frames, "fps": fps}
+        ),
+    )
+    monkeypatch.setattr(
+        "unisim.visualization.render_many.render_states_get_frames",
         _render_states_get_frames,
     )
 
@@ -560,9 +735,14 @@ def test_render_play_mode_defaults_to_env_physics_snapshot(
     assert captured["fps"] == 20
 
 
-def test_render_play_mode_uses_visualized_per_env_playback_models_for_video_export(
+def test_render_play_mode_uses_visual_playback_model_for_video_export(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
+    """Video export resolves ONE visual model for every env (#1554).
+
+    The mjbatch executor has no per-env model variants, so playback renders
+    against a single visual model file instead of a per-env list.
+    """
     import mujoco
 
     captured: dict[str, object] = {}
@@ -590,57 +770,40 @@ def test_render_play_mode_uses_visualized_per_env_playback_models_for_video_expo
                 {"ctrl_dt": 0.05, "scene": SceneCfg(model_file=str(visual_model_path))},
             )()
             self.snapshot_calls = 0
-            self._models = [
-                mujoco.MjModel.from_xml_string(
-                    "<mujoco><worldbody><body><geom name='object' type='box' size='0.1 0.1 0.1'/></body></worldbody></mujoco>"
-                ),
-                mujoco.MjModel.from_xml_string(
-                    "<mujoco><worldbody><body><geom name='object' type='box' size='0.2 0.2 0.2'/></body></worldbody></mujoco>"
-                ),
-            ]
 
         def get_physics_state_snapshot(self) -> np.ndarray:
             self.snapshot_calls += 1
             return np.full((2, 2), self.snapshot_calls, dtype=np.float32)
 
         def get_playback_model(self, env_index: int | None = None):
-            idx = 0 if env_index is None else int(env_index)
-            return self._models[idx]
+            raise AssertionError("one visual model serves every env; no per-env lookup")
 
         def run_playback(self, **kwargs):
             kwargs = _resolve_low_level_playback_flags(kwargs)
             kwargs.pop("render_offset_mode", None)
+            kwargs.pop("on_frame", None)
             return run_mujoco_playback(env=self, **kwargs)
 
     def _render_states_get_frames(state_list, model_file, **kwargs):
         del kwargs
         captured["states"] = state_list
         captured["model_file"] = model_file
-        assert isinstance(model_file, list)
-        model0 = mujoco.MjModel.from_binary_path(model_file[0])
-        model1 = mujoco.MjModel.from_binary_path(model_file[1])
-        object0 = mujoco.mj_name2id(model0, mujoco.mjtObj.mjOBJ_GEOM, "object")
-        object1 = mujoco.mj_name2id(model1, mujoco.mjtObj.mjOBJ_GEOM, "object")
-        hand0 = mujoco.mj_name2id(model0, mujoco.mjtObj.mjOBJ_GEOM, "hand_geom")
-        hand1 = mujoco.mj_name2id(model1, mujoco.mjtObj.mjOBJ_GEOM, "hand_geom")
-        ground0 = mujoco.mj_name2id(model0, mujoco.mjtObj.mjOBJ_GEOM, "ground")
-        ground1 = mujoco.mj_name2id(model1, mujoco.mjtObj.mjOBJ_GEOM, "ground")
-        captured["object0_size"] = model0.geom_size[object0].copy()
-        captured["object1_size"] = model1.geom_size[object1].copy()
-        captured["hand0_size"] = model0.geom_size[hand0].copy()
-        captured["hand1_size"] = model1.geom_size[hand1].copy()
-        captured["ground0_size"] = model0.geom_size[ground0].copy()
-        captured["ground1_size"] = model1.geom_size[ground1].copy()
+        assert isinstance(model_file, str)
+        rendered = mujoco.MjModel.from_xml_path(model_file)
+        hand = mujoco.mj_name2id(rendered, mujoco.mjtObj.mjOBJ_GEOM, "hand_geom")
+        ground = mujoco.mj_name2id(rendered, mujoco.mjtObj.mjOBJ_GEOM, "ground")
+        captured["hand_size"] = rendered.geom_size[hand].copy()
+        captured["ground_size"] = rendered.geom_size[ground].copy()
         return [np.zeros((2, 2, 3), dtype=np.uint8)]
 
-    fake_media = types.ModuleType("mediapy")
-    fake_media.write_video = lambda path, frames, fps: captured.update(  # type: ignore[attr-defined]
-        {"video_path": path, "frames": frames, "fps": fps}
-    )
-
-    monkeypatch.setitem(sys.modules, "mediapy", fake_media)
     monkeypatch.setattr(
-        "unilab.visualization.render_many.render_states_get_frames",
+        "unisim.backend.playback_common.imageio.mimsave",
+        lambda path, frames, fps: captured.update(
+            {"video_path": path, "frames": frames, "fps": fps}
+        ),
+    )
+    monkeypatch.setattr(
+        "unisim.visualization.render_many.render_states_get_frames",
         _render_states_get_frames,
     )
 
@@ -657,13 +820,9 @@ def test_render_play_mode_uses_visualized_per_env_playback_models_for_video_expo
 
     assert result == str(output_path)
     assert env.snapshot_calls == 2
-    assert isinstance(captured["model_file"], list)
-    model_files = captured["model_file"]
-    assert len(model_files) == 2
-    np.testing.assert_allclose(captured["object0_size"], [0.1, 0.1, 0.1])
-    np.testing.assert_allclose(captured["object1_size"], [0.2, 0.2, 0.2])
-    np.testing.assert_allclose(captured["hand0_size"], captured["hand1_size"])
-    np.testing.assert_allclose(captured["ground0_size"], captured["ground1_size"])
+    assert captured["model_file"] == str(visual_model_path)
+    np.testing.assert_allclose(captured["hand_size"], [0.05, 0.05, 0.05])
+    np.testing.assert_allclose(captured["ground_size"], [2.0, 2.0, 0.1])
 
 
 def test_render_play_mode_requires_env_snapshot_contract_for_video_export(tmp_path: Path):
@@ -679,6 +838,7 @@ def test_render_play_mode_requires_env_snapshot_contract_for_video_export(tmp_pa
         def run_playback(self, **kwargs):
             kwargs = _resolve_low_level_playback_flags(kwargs)
             kwargs.pop("render_offset_mode", None)
+            kwargs.pop("on_frame", None)
             return run_mujoco_playback(env=self, **kwargs)
 
     with pytest.raises(NotImplementedError, match="unsupported"):

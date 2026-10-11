@@ -5,11 +5,12 @@ UniLab 将运行时 contract、配置、训练脚本和文档分置于不同的 
 | 路径 | Owner 角色 |
 | --- | --- |
 | `scripts/` | 轻量的训练与工具入口。脚本负责组合 Hydra 配置并调用 owner 层代码。 |
-| `conf/` | Hydra 根配置和任务 owner YAML。顶层 CLI 将后端选择暴露为 `--task` 加 `--sim`，然后组合出匹配的 owner YAML。 |
+| `src/unilab/conf/` | Hydra 根配置和任务 owner YAML。顶层 CLI 将后端选择暴露为 `--task` 加 `--sim`，然后组合出匹配的 owner YAML。 |
 | `src/unilab/base/` | Registry、env state、scene 以及 backend contract。 |
 | `src/unilab/envs/` | 任务 env 实现，以及任务专属的 reset、reward、observation 和 DR 逻辑。 |
-| `src/unilab/algos/` | PPO、APPO、off-policy、MLX、HIM-PPO 和 HORA 算法代码。 |
-| `src/unilab/ipc/` | 共享内存与异步 runner 原语。 |
+| `uni_rl` (unilab-rl repo) | APPO 和 off-policy 算法代码。 |
+| `uni_rl.ipc` (unilab-rl repo) | 共享内存与异步 runner 原语。 |
+| `src/unilab/rl/` | 直接集成 RSL-RL PPO 的适配层（VecEnv adapter 与分布式辅助）。 |
 | `src/unilab/training/` | 共享的训练辅助工具，用于日志、回放、种子处理和配置守卫（config guard）。 |
 | `src/unilab/visualization/` | 回放、渲染、NaN 检查以及 scene/export 工具。 |
 | `tests/` | Contract、config、env、algorithm、script 和集成测试。 |
@@ -20,19 +21,16 @@ UniLab 将运行时 contract、配置、训练脚本和文档分置于不同的 
 
 主要的配置根为：
 
-- `conf/ppo/config.yaml`，用于 torch PPO。
-- `conf/ppo/config_mlx.yaml`，用于 MLX PPO。
-- `conf/appo/config.yaml`，用于 APPO。
-- `conf/offpolicy/config.yaml` 加上 `conf/offpolicy/algo/*.yaml`，用于 SAC、
-  TD3 和 FlashSAC。
-- `conf/ppo_him/config.yaml` 和 `conf/hora_distill/config.yaml`，用于
-  专门的 HIM-PPO 和 HORA 路径。
+- `src/unilab/conf/ppo/config.yaml`，用于 torch PPO。
+- `src/unilab/conf/appo/config.yaml`，用于 APPO。
+- `src/unilab/conf/sac/config.yaml` 和 `src/unilab/conf/flashsac/config.yaml`，
+  分别用于 SAC 和 FlashSAC，算法超参数内联在各自的 config.yaml 中。
 
 任务 owner YAML 即后端身份。示例：
 
 ```bash
 uv run train --algo ppo --task go2_joystick_flat --sim mujoco
-uv run train --algo ppo --task go2_joystick_flat --sim motrix
+uv run train --algo ppo --task go2_joystick_flat --sim mujoco
 uv run train --algo sac --task g1_walk_flat --sim mujoco
 ```
 

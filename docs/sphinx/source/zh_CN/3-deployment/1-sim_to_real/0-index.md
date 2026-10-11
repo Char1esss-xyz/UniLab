@@ -51,13 +51,7 @@ G1 路线的运动跟踪部署说明。
 :::{grid-item-card} Go2 运动
 :link: 3-go2_locomotion
 :link-type: doc
-摇杆、崎岖地形与 Go2W 的部署说明。
-:::
-
-:::{grid-item-card} Allegro 手内操作
-:link: 4-allegro_inhand
-:link-type: doc
-手内操作部署检查。
+Go2 joystick-flat 部署说明。
 :::
 
 ::::
@@ -68,7 +62,6 @@ G1 路线的运动跟踪部署说明。
 1-overview
 2-g1_whole_body
 3-go2_locomotion
-4-allegro_inhand
 5-onnx_runtime
 6-domain_randomization
 7-safety_layers

@@ -1,111 +1,132 @@
 # Support Matrix
 
-This matrix is generated conceptually from registry entries, owner YAMLs, and
-tests. The generator implementation is `src/unilab/utils/support_matrix.py`; the
-write target for the generated block is currently the Chinese reference page
-`docs/sphinx/source/zh_CN/5-reference/5-support_matrix.md`.
+Each generated block is assembled from registry entries, owner-YAML backend
+identity, validation inventories, and UniSim's static platform profiles. The
+generator implementation is `scripts/tools/support_matrix.py`. Do not infer
+support beyond the evidence grade shown below.
 
 ## Backend Selection Rules
 
+- The tensor-only Manager runtime currently supports `mujoco`, `mjwarp`,
+  `genesis`, `newton`, `motrix`, and the scoped Drake owner below.
 - The default backend is `mujoco`.
-- Switch to Motrix with `--sim motrix` on the unified CLI.
+- `--sim mjwarp` requires the `mjwarp` extra. Validated combinations are shown
+  in the generated matrix below; all other entrypoints retain their matrix
+  evidence grade.
+- `--sim genesis` requires the `genesis` extra; real CUDA/platform requirements
+  are shown in the generated matrix.
+- `--sim newton` requires the `newton` extra; real CUDA/platform requirements
+  are shown in the generated matrix.
+- `--sim motrix` requires the `motrix` extra; the CPU-authoritative packed
+  HOST_BRIDGE profile is shown in the generated matrix.
+- `--sim drake` requires the local Drake extra and DrakeUni batch extension.
+  Its current scoped support claim is PPO `go2_joystick_flat` only.
 - `--algo`, `--task`, and `--sim` jointly select the owner YAML.
 - Do not treat `training.sim_backend` as a standalone backend switch.
+- `isaacgym`, `isaacsim`, and `superdex` are temporarily outside this runtime
+  scope. Their adapters remain in UniSim, but they are not UniLab production
+  support claims; re-enabling requires capability, parity, and support-matrix
+  evidence (#1811).
 
 ## Playback Differences
 
-- `mujoco`: `--render-mode auto` exports `play_video.mp4`.
-- `motrix`: `--render-mode auto` opens an interactive renderer window; it does
-  not record a video and is not bound by `play_steps`.
-- `--render-mode record`: both backends record a video only.
+- `mujoco`: `--render-mode auto` exports `play_video.mp4`; `--render-mode
+  viser` serves the rollout in a browser-based viser viewer.
+- `mjwarp`: supports explicit, finite-step `record` by default, rendered offline
+  through the task owner's MuJoCo visual model; `--render-mode interactive`
+  routes to the MuJoCo interactive viewer (mjwarp runs the physics while
+  MuJoCo renders env[0], forced to a single env); `--render-mode viser`
+  routes to the browser-based viser viewer with per-env MuJoCo playback
+  models; `auto` and native renderers are not supported.
+- `genesis`: `viser` is unsupported, as is the MuJoCo interactive/offline
+  playback contract described here.
+- `newton`: the canonical owners use `record` through native Newton rendering,
+  with the MuJoCo snapshot as the incomplete-install fallback.
+- `--render-mode record`: MuJoCo and mjwarp record a video only.
 - `--render-mode none`: no playback.
 
-## Evidence Grades
+## Support Matrix
 
-| Grade | Repository Evidence |
-| --- | --- |
-| `Registered` | The env/backend pair appears after `registry.ensure_registries()`. |
-| `Configured` | A matching owner YAML exists under `conf/ppo/task`, `conf/appo/task`, or `conf/offpolicy/task`. |
-| `Tested` | Automated tests cover the entrypoint/task-owner/backend combination through config compose or runtime smoke. |
-| `Benchmarked` | A checked-in benchmark manifest exists for the combination. |
-| `Recommended` | Explicit recommendation metadata exists in the repo. |
+The matrix below is generated from registry entries, owner YAMLs, validation
+inventories, and UniSim platform profiles. Do not edit its tables by hand.
+Refresh it with:
 
-The current generator reports no checked-in benchmark manifest and no separate
-recommendation metadata, so rows do not auto-promote to `Benchmarked` or
-`Recommended`.
+```bash
+uv run scripts/generate_support_matrix.py --write
+```
 
-## Entrypoint x Task Owner
+<!-- BEGIN GENERATED SUPPORT MATRIX -->
+### Evidence Grades
 
-| Entrypoint | Task owner | MuJoCo | Motrix |
-| --- | --- | --- | --- |
-| PPO (torch) | `go1_joystick_flat` | Tested | Tested |
-| PPO (torch) | `go2_joystick_flat` | Tested | Tested |
-| PPO (torch) | `go2_joystick_rough` | Tested | Tested |
-| PPO (torch) | `g1_walk_flat` | Tested | Tested |
-| PPO (torch) | `g1_motion_tracking` | Tested | Tested |
-| PPO (torch) | `g1_flip_tracking` | Tested | Tested |
-| PPO (torch) | `g1_wall_flip_tracking` | Tested | Tested |
-| PPO (torch) | `allegro_inhand` | Tested | Tested |
-| PPO (torch) | `sharpa_inhand` | Tested | Tested |
-| PPO (torch) | `sharpa_inhand_grasp` | Tested | Tested |
-| PPO (torch) | `allegro_inhand_grasp` | Tested | Tested |
-| PPO (torch) | `g1_box_tracking` | Tested | Tested |
-| PPO (torch) | `g1_climb_tracking` | Tested | Tested |
-| PPO (torch) | `g1_motion_tracking_deploy` | Tested | Tested |
-| PPO (torch) | `go1_joystick_rough` | Tested | Tested |
-| PPO (torch) | `go2_arm_manip_loco` | Tested | - |
-| PPO (torch) | `go2_footstand` | Tested | - |
-| PPO (torch) | `go2_handstand` | Tested | Tested |
-| PPO (torch) | `go2w_joystick_flat` | Tested | Tested |
-| PPO (torch) | `go2w_joystick_rough` | Tested | Tested |
-| PPO (mlx) | `go1_joystick_flat` | Tested | Tested |
-| PPO (mlx) | `go2_joystick_flat` | Tested | Tested |
-| PPO (mlx) | `go2_joystick_rough` | Configured | Configured |
-| PPO (mlx) | `g1_walk_flat` | Tested | Tested |
-| PPO (mlx) | `g1_motion_tracking` | Configured | Configured |
-| PPO (mlx) | `g1_flip_tracking` | Configured | Configured |
-| PPO (mlx) | `g1_wall_flip_tracking` | Configured | Configured |
-| PPO (mlx) | `allegro_inhand` | Configured | Configured |
-| PPO (mlx) | `sharpa_inhand` | Configured | Configured |
-| PPO (mlx) | `sharpa_inhand_grasp` | Configured | Configured |
-| PPO (mlx) | `allegro_inhand_grasp` | Configured | Configured |
-| PPO (mlx) | `g1_box_tracking` | Configured | Configured |
-| PPO (mlx) | `g1_climb_tracking` | Configured | Configured |
-| PPO (mlx) | `g1_motion_tracking_deploy` | Configured | Configured |
-| PPO (mlx) | `go1_joystick_rough` | Configured | Configured |
-| PPO (mlx) | `go2_arm_manip_loco` | Configured | - |
-| PPO (mlx) | `go2_footstand` | Configured | - |
-| PPO (mlx) | `go2_handstand` | Configured | Configured |
-| PPO (mlx) | `go2w_joystick_flat` | Configured | Configured |
-| PPO (mlx) | `go2w_joystick_rough` | Configured | Configured |
-| APPO (torch) | `go1_joystick_flat` | Tested | Registered |
-| APPO (torch) | `go2_joystick_flat` | Tested | Registered |
-| APPO (torch) | `g1_walk_flat` | Tested | Registered |
-| APPO (torch) | `g1_motion_tracking` | Tested | Tested |
-| APPO (torch) | `g1_flip_tracking` | Tested | Tested |
-| APPO (torch) | `g1_wall_flip_tracking` | Tested | Tested |
-| APPO (torch) | `allegro_inhand` | Tested | Tested |
-| APPO (torch) | `sharpa_inhand` | Tested | Registered |
-| APPO (torch) | `g1_climb_tracking` | Tested | Tested |
-| SAC (torch) | `g1_walk_flat` | Tested | Tested |
-| SAC (torch) | `g1_walk_rough` | Tested | Tested |
-| SAC (torch) | `g1_motion_tracking` | Tested | Tested |
-| SAC (torch) | `g1_wbt_obs` | Tested | Registered |
-| TD3 (torch) | `go1_joystick_flat` | Registered | Tested |
-| TD3 (torch) | `go2_joystick_flat` | Registered | Tested |
-| TD3 (torch) | `g1_walk_flat` | Tested | Registered |
-| FlashSAC (torch) | `go2_joystick_flat` | Tested | Registered |
-| FlashSAC (torch) | `g1_walk_flat` | Tested | Registered |
+| Grade | Repository evidence |
+|---|---|
+| `Registered` | The env/backend exists in `registry.list_registered_envs()` after `ensure_registries()`. |
+| `Configured` | The owner YAML sets `training.sim_backend` to the backend. |
+| `Tested` | Automated coverage or explicit maintainer validation; it is not a default recommendation. |
+| `Benchmarked` | A checked-in benchmark manifest is bound to the combination. |
+| `Recommended` | Explicit recommendation metadata exists in the repository. |
 
-## Source Index
+`Tested` describes repository evidence only; it does not imply every DR, rendering, or production capability of the MuJoCo owner. No benchmark or recommendation metadata is currently checked in, so rows do not auto-promote to `Benchmarked` or `Recommended`.
 
-- Registry bootstrap: `src/unilab/envs/**` registrations via
-  `unilab.base.registry.ensure_registries()`.
-- Owner YAML scan: `conf/ppo/task/**`, `conf/appo/task/**`,
-  `conf/offpolicy/task/**`.
-- Generic compose coverage:
-  `tests/config/test_config_system.py::test_supported_task_composes`.
-- MLX-specific compose coverage:
-  `tests/config/test_config_system.py::_PPO_MLX_TASKS`.
-- MLX runtime smoke:
-  `tests/algos/test_mlx_ppo.py::test_mlx_ppo_one_iteration_real_env`.
+### Tensor Backend Platform Matrix
+
+This table is derived from UniSim's SDK-free public static inventory. It describes reviewed tensor-lifecycle boundaries, not optional-SDK installation and not automatic task-owner support.
+
+| Backend | Execution / process / data plane | Torch devices | CUDA runtime | Linux+CUDA | macOS | ROCm | Worker | Reset randomization | Fixed variants | Host callbacks | Packed bridge |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `mujoco` | Host bridge / in-process / host bridge | CPU / CUDA | Required only when the learner requests CUDA state/control buffers | Supported: CPU-authoritative physics with optional CUDA Torch buffers | CPU-authoritative host bridge only; no CUDA physics claim | CPU-authoritative host bridge with explicit ROCm Torch buffers (`cuda`) | In-process; no external Python worker | unknown | unknown | Unsupported | Exact |
+| `motrix` | Host bridge / in-process / host bridge | CPU / CUDA | Required only when the learner requests CUDA state/control buffers | Supported: CPU-authoritative physics with optional CUDA Torch buffers | CPU-authoritative host bridge only; no CUDA physics claim | CPU-authoritative host bridge with explicit ROCm Torch buffers (`cuda`) | In-process; no external Python worker | Unsupported | Unsupported | Unsupported | Exact |
+| `drake` | Host bridge / in-process / host bridge | CPU / CUDA | Required only when the learner requests CUDA state/control buffers | Supported: CPU-authoritative physics with optional CUDA Torch buffers | CPU-authoritative host bridge only; no CUDA physics claim | CPU-authoritative host bridge with explicit ROCm Torch buffers (`cuda`) | In-process; no external Python worker | Unsupported | Unsupported | Unsupported | Exact |
+| `mjwarp` | Device-resident / in-process / direct | CUDA | Required for the entire tensor lifecycle | Supported: Linux CUDA only | Unsupported; no CPU, MPS, or ROCm fallback | Unsupported; no CPU, MPS, or ROCm fallback | In-process; no external Python worker | Unsupported | Unsupported | Unsupported | Unsupported |
+| `newton` | Device-resident / in-process / direct | CUDA | Required for the entire tensor lifecycle | Supported: Linux CUDA only | Unsupported; no CPU, MPS, or ROCm fallback | Unsupported; no CPU, MPS, or ROCm fallback | In-process; no external Python worker | Unsupported | Unsupported | Unsupported | Unsupported |
+| `superdex` | Host bridge / in-process / host bridge | CPU / CUDA | Required only when the learner requests CUDA state/control buffers | Supported: CPU-authoritative physics with optional CUDA Torch buffers | CPU-authoritative host bridge only; no CUDA physics claim | CPU-authoritative host bridge with explicit ROCm Torch buffers (`cuda`) | In-process; no external Python worker | Unsupported | Unsupported | Unsupported | Exact |
+| `genesis` | Device-resident / in-process / direct | CUDA | Required for the entire tensor lifecycle | Supported: Linux CUDA only | Unsupported; no CPU, MPS, or ROCm fallback | Unsupported; no CPU, MPS, or ROCm fallback | In-process; no external Python worker | Unsupported | Unsupported | Unsupported | Unsupported |
+
+### Entrypoint x Task Owner
+
+| Entrypoint | Task owner | MuJoCo | Motrix | Drake | mjwarp | Newton | SuperDex | Genesis |
+|------------|------------|---|---|---|---|---|---|---|
+| PPO (torch) | `go2_joystick_flat` (Go2 joystick) | Tested | Tested | Configured | - | - | Configured | - |
+| PPO (torch) | `g1_walk_flat` (G1 walk flat) | Tested | Tested | - | Tested | Registered | - | Configured |
+| PPO (torch) | `g1_motion_tracking` (G1 motion tracking) | Tested | Tested | - | Registered | Registered | - | Registered |
+| APPO (torch) | `go2_joystick_flat` (Go2 joystick) | Tested | Tested | Registered | - | - | Registered | - |
+| APPO (torch) | `g1_walk_flat` (G1 walk flat) | Tested | Registered | - | Registered | Registered | - | Registered |
+| APPO (torch) | `g1_motion_tracking` (G1 motion tracking) | Tested | Tested | - | Registered | Registered | - | Registered |
+| SAC (torch) | `g1_walk_flat` (G1 walk flat) | Tested | Tested | - | Tested | Tested | - | Tested |
+| SAC (torch) | `g1_motion_tracking` (G1 motion tracking) | Tested | Tested | - | Configured | Registered | - | Configured |
+| FlashSAC (torch) | `go2_joystick_flat` (Go2 joystick) | Tested | Registered | Registered | - | - | Registered | - |
+| FlashSAC (torch) | `g1_walk_flat` (G1 walk flat) | Tested | Tested | - | Configured | Registered | - | Registered |
+| FlashSAC (torch) | `g1_motion_tracking` (G1 motion tracking) | Tested | Tested | - | Configured | Configured | - | Configured |
+
+### Source Index
+
+- Registry bootstrap: `src/unilab/envs/**` decorators via `unilab.base.registry.ensure_registries()`.
+- Owner backend identity: `training.sim_backend` in `src/unilab/conf/{ppo,appo,sac,flashsac}/task/**`.
+- Platform/capability source: `unisim.support.get_tensor_platform_profiles()`.
+- Unsupported platform/device requests are guarded before backend construction in `src/unilab/base/backend_factory.py`.
+- Generic compose coverage: `tests/config/test_config_system.py::test_supported_task_composes`.
+<!-- END GENERATED SUPPORT MATRIX -->
+
+## Platform Troubleshooting
+
+CUDA-only tensor backends are rejected before backend construction on CPU, MPS,
+macOS, ROCm/HIP, unavailable CUDA, malformed CUDA ordinals, and out-of-range
+device requests. They do not fall back to NumPy or a host bridge.
+
+Check the Torch runtime and visible ordinals in the same process environment:
+
+```bash
+uv run python -c "import torch; print(torch.__version__, torch.version.cuda, torch.version.hip, torch.cuda.is_available(), torch.cuda.device_count(), torch.cuda.current_device())"
+```
+
+`torch.version.hip` must be `None` for the CUDA-only matrix. If CUDA is
+unavailable, check the NVIDIA driver/container mismatch before changing task
+configuration. If `CUDA_VISIBLE_DEVICES` is set, backend ordinals address that
+remapped namespace, not host-global physical indices.
+
+On macOS and ROCm, use a CPU-authoritative host-bridge backend. On ROCm,
+Manager/TorchEnv uses the current GPU only when MuJoCo training explicitly sets
+`training.collector_tensor_device=cuda` and the backend accepts the routed
+`cuda` `manager_torch_device`; direct environment construction and the training
+default remain CPU. GPU Torch buffers on a host bridge do not imply GPU physics
+or a device-resident backend lifecycle.

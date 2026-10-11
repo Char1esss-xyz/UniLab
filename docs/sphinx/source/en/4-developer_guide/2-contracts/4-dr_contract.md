@@ -1,103 +1,75 @@
 # Domain Randomization Contract
 
-Domain randomization is an env-owner provider contract plus backend capability
-application. User configuration examples live in
-{doc}`../../2-user_guide/5-domain_randomization/0-index`.
+Manager-Based event terms are the sole UniLab DR lifecycle. There is no task
+provider protocol and the environment does not carry a DR manager.
 
-## Lifecycle Classes
+## Lifecycle
 
-- Init lifecycle: changes model identity or geometry. These changes run during
-  env/backend initialization, materialization, or cache construction.
-- Reset lifecycle: changes state or parameters within the same model identity.
-  Providers dispatch a reset randomization payload through `ResetPlan`.
-- Interval lifecycle: applies perturbations between steps, such as push or body
-  force plans.
+- **Construction identity:** `env.fixed_model_variants` materializes a final
+  read-only assignment and attaches a UniSim `FixedVariantPlan` to `SceneCfg`.
+  Backends realize it before their first forward and before CUDA graph capture.
+- **Startup:** after manager construction, the backend materializes and event
+  terms sample one full-width per-environment table. They commit through the
+  same public `SimBackend.set_state(..., randomization=...)` boundary as reset
+  DR before read-plan binding, the first reset, or a step. The committed rows
+  become the local reset baseline, so later selected-row resets preserve
+  unwritten startup values. Startup is opt-in and exchanges continuous
+  distribution coverage for removing full-model derived-constant refreshes from
+  the steady-state reset path.
+- **Reset:** event terms write through Entity bindings into
+  `ResetStateTransaction`; the transaction calls
+  `SimBackend.set_state(..., randomization=...)` once.
+- **Interval:** event terms use backend-owned interval plans through the public
+  `SimBackend` contract.
 
-Hot paths must not parse XML/assets or probe backend private methods with
-`getattr` or `hasattr`.
+## Capability Boundary
 
-## Provider Minimum
+Backend differences are explicit capabilities, not task-side branches:
 
-A task that uses DR should define:
+- `DomainRandomizationCapabilities.supported_reset_terms`
+- `supported_interval_terms`
+- fixed-variant layouts
+- per-environment playback support
 
-1. A task-owned domain-randomization config dataclass.
-2. A `DomainRandomizationProvider`.
-3. Reset behavior returning `ResetPlan` state and randomization payloads.
-4. Interval behavior through `IntervalRandomizationPlan` when needed.
-5. Env construction that calls `self._init_domain_randomization(...)`.
+An unadvertised requested term fails closed with the backend and term named.
+Manager code never imports MuJoCo or mjbatch and never accesses a backend model
+or pool.
 
-Shared types live in `src/unilab/dr/types.py`, and manager behavior lives in
-`src/unilab/dr/manager.py`.
+## Reset Payload And Defaults
 
-## Backend Capability Boundary
+`ResetRandomizationPayload` is a curated NumPy plan whose first dimension is the
+selected row count. Supported terms include the body mass/COM/inertia family,
+gravity, geometry friction/size/solver parameters, joint damping/armature/friction,
+and actuator gains. Derived fields such as geometry bounds are backend-owned and
+are never independently caller-supplied.
 
-Backend support is explicit. A reset or interval item only counts as a unified
-DR item when three pieces exist together:
+During cold-path binding, `ResetStateTransaction` asks UniSim for
+`SimBackend.get_reset_term_default(term)`. The returned table is authoritative
+and has one of two layouts:
 
-1. `ResetRandomizationPayload` or `IntervalRandomizationPlan` has an explicit
-   field.
-2. The backend declares and implements the capability.
-3. The task config/provider samples and dispatches that field.
+- canonical model table, such as `(nbody,)` for `body_mass`;
+- per-environment fixed-variant table, such as `(num_envs, nbody)`.
 
-MuJoCo and Motrix differences stay in backend capability declarations,
-backend implementations, and owner YAMLs.
+For a selected reset subset, event terms use the corresponding per-env rows as
+their baseline. A write to a subset of model columns fills every unwritten
+column from that same env row before the transaction builds one dense payload.
+Missing capabilities, unsupported terms, non-floating tables, invalid tails, and
+per-env tables whose first dimension is not `num_envs` fail closed. This removes
+the former UniLab-side MuJoCo recompilation used to obtain inertia defaults.
 
-## MuJoCo BatchEnvPool Snapshot
+## Interval Terms
 
-Current MuJoCo reset randomization uses `BatchEnvPool.reset(...,
-randomization=...)` with a fixed field whitelist. Indexed reads and writes are
-available through `get_field_indexed(...)` and `set_field_indexed(...)`. This
-interface lives in the `mujoco-uni` package (`mujoco.batch_env`), not in this
-repository; the reset-term constants that map onto it are in
-`src/unilab/dr/types.py`.
+Interval plans are term-descriptor based: `IntervalRandomizationPlan.ops`
+carries `IntervalTermOp` entries from `unisim.dr.interval`. Builtin payload
+contracts are enforced by `IntervalTermOp.validate`;
+unknown backend-owned custom terms pass through to that backend's handler table.
+Ops and plans remain pickle-safe stdlib/NumPy data across spawn collectors.
 
-The supported reset fields and their per-env block shapes are below. The leading
-dimension is always `len(env_ids)`; the trailing block size is the field's full
-flat width in a single `mjModel`.
+## Evidence
 
-| Field | Per-env block shape |
-| --- | --- |
-| `body_mass` | `nbody` |
-| `body_ipos` | `3 * nbody` |
-| `body_iquat` | `4 * nbody` |
-| `body_inertia` | `3 * nbody` |
-| `dof_armature` | `nv` |
-| `gravity` | `3` |
-| `geom_friction` | `3 * ngeom` |
-| `kp` | `nu` |
-| `kd` | `nu` |
-
-Refresh behavior is fixed by the backend: `body_mass`, `body_ipos`,
-`body_iquat`, `body_inertia`, and `dof_armature` trigger an `mj_setConst`
-refresh after the write, while `gravity`, `geom_friction`, `kp`, and `kd` do
-not.
-
-Two caveats:
-
-- `geom_size` is not in `SUPPORTED_FIELDS`. Geometry size is expressed through
-  init-lifecycle model materialization (see `GeomSizeOverride` /
-  `ModelVariantSpec` in `src/unilab/dr/types.py`), not reset randomization.
-- `gravity` reset randomization requires a `mujoco-uni` build that ships it.
-  This repository pins `mujoco-uni==3.8.0`, whose `SUPPORTED_FIELDS` includes
-  `gravity`; older packages such as `3.6.0.post6` do not.
-
-## Motor Control Extension
-
-Motor-actuator tasks that do not map policy output directly to backend position
-actuators should keep conversion in the env owner layer. Register a pre-step
-callback through `SimBackend.set_pre_step_control(...)`; the backend calls it
-before physics substeps and refreshes sensors after stepping.
-
-Go2W is the current all-motor actuator example: its env owner combines leg
-position targets and wheel torque, while kp/kd randomization stays in the env
-owner cache rather than leaking MuJoCo position-actuator mechanics into shared
-payloads.
-
-## Evidence In Repo
-
-- DR types: `src/unilab/dr/types.py`
-- DR manager: `src/unilab/dr/manager.py`
-- Backend interface: `src/unilab/base/backend/base.py`
-- Example providers: `src/unilab/envs/locomotion/g1/joystick.py`,
-  `src/unilab/envs/motion_tracking/g1/tracking.py`,
-  `src/unilab/envs/manipulation/sharpa_inhand/rotation.py`
+- Manager lifecycle: `src/unilab/managers/event_manager.py`
+- Reset transaction: `src/unilab/base/reset_state.py`
+- Entity bindings: `src/unilab/base/entity.py`
+- Task-owned fixed variants: `src/unilab/base/variants.py`
+- Backend contract/capability types: `unisim.backend.base`, `unisim.dr.types`
+- ADR: {doc}`ADR-0010 Fixed Model Variant Ownership Boundary </adr/ADR-0010-fixed-model-variant-ownership-boundary>`

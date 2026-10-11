@@ -11,16 +11,10 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+from unisim.dr.types import IntervalRandomizationPlan, ResetRandomizationPayload
 
 from unilab.assets import ASSETS_ROOT_PATH
 from unilab.base.scene import SceneCfg
-from unilab.dr import (
-    GeomSizeOverride,
-    InitRandomizationPlan,
-    IntervalRandomizationPlan,
-    ModelVariantSpec,
-    ResetRandomizationPayload,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -30,13 +24,10 @@ def _xml(robot: str, scene: str = "scene_flat.xml") -> str:
 
 BASIC_ROBOTS = [
     pytest.param(dict(model_file=_xml("g1"), base_name="pelvis"), id="g1"),
-    pytest.param(dict(model_file=_xml("go1"), base_name="trunk"), id="go1"),
     pytest.param(dict(model_file=_xml("go2"), base_name="base"), id="go2"),
 ]
 
 _G1 = dict(model_file=_xml("g1"), base_name="pelvis")
-_ALLEGRO = dict(model_file=_xml("allegro_hand", "scene.xml"), base_name="palm")
-_SHARPA = dict(model_file=_xml("sharpa_wave", "scene.xml"), base_name="right_hand_C_MC")
 
 NUM_ENVS = 2
 SIM_DT = 0.005
@@ -82,15 +73,50 @@ def _mujoco_expected_dof_dims(model) -> tuple[int, int]:
     return model.nq, model.nv
 
 
-def _allegro_state() -> tuple[np.ndarray, np.ndarray]:
-    qpos = np.zeros((1, 23), dtype=np.float64)
-    qvel = np.zeros((1, 22), dtype=np.float64)
-    qpos[0, :16] = np.linspace(-0.2, 0.2, 16)
-    qpos[0, 16:19] = np.array([-0.01, 0.02, 0.16])
-    qpos[0, 19:23] = np.array([0.92387953, 0.0, 0.38268343, 0.0])
-    qvel[0, :16] = np.linspace(-0.15, 0.15, 16)
-    qvel[0, 16:22] = np.array([0.1, -0.2, 0.05, 0.3, -0.1, 0.2])
+# Base-motion state used by the get_body_*_vel_b semantic tests: a 30-degree
+# yawed base with a non-zero velocity. Free-joint convention (shared by the
+# backends' set_state): qvel[:3] is linear velocity in the world frame,
+# qvel[3:6] is angular velocity in the body-local frame.
+_BASE_YAW = np.deg2rad(30.0)
+_BASE_LIN_VEL_W = np.array([0.5, -0.2, 0.8])
+_BASE_ANG_VEL_B = np.array([0.3, -0.1, 0.2])
+
+
+def _tilted_motion_state(bkd) -> tuple[np.ndarray, np.ndarray]:
+    nq = bkd.get_dof_pos().shape[-1] + 7
+    nv = bkd.get_dof_vel().shape[-1] + 6
+    qpos = np.tile(_identity_qpos_mujoco(nq), (NUM_ENVS, 1))
+    qpos[:, 3] = np.cos(_BASE_YAW / 2)
+    qpos[:, 6] = np.sin(_BASE_YAW / 2)
+    qvel = np.zeros((NUM_ENVS, nv))
+    qvel[:, :3] = _BASE_LIN_VEL_W
+    qvel[:, 3:6] = _BASE_ANG_VEL_B
     return qpos, qvel
+
+
+def _yaw_world_to_body_rot() -> np.ndarray:
+    c, s = np.cos(_BASE_YAW), np.sin(_BASE_YAW)
+    return np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]])
+
+
+def _assert_root_vel_b_matches_world_vel_in_body_frame(bkd, root_id: int, atol: float) -> None:
+    """Root-body vel_b must be the world-frame velocity expressed in the body
+    frame (mjlab/Isaac-style analytical contract), not degenerate zero."""
+    qpos, qvel = _tilted_motion_state(bkd)
+    bkd.set_state(np.arange(NUM_ENVS), qpos, qvel)
+    ids = np.array([root_id])
+    rot_w2b = _yaw_world_to_body_rot()
+    np.testing.assert_allclose(
+        bkd.get_body_lin_vel_b(ids)[:, 0, :],
+        np.tile(rot_w2b @ _BASE_LIN_VEL_W, (NUM_ENVS, 1)),
+        atol=atol,
+    )
+    # qvel[3:6] is already body-local, so ang_vel_b must reproduce it exactly.
+    np.testing.assert_allclose(
+        bkd.get_body_ang_vel_b(ids)[:, 0, :],
+        np.tile(_BASE_ANG_VEL_B, (NUM_ENVS, 1)),
+        atol=atol,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +128,7 @@ def _allegro_state() -> tuple[np.ndarray, np.ndarray]:
 class TestMuJoCoBasic:
     @pytest.fixture(params=BASIC_ROBOTS)
     def bkd(self, request):
-        from unilab.base.backend.mujoco.backend import MuJoCoBackend
+        from unisim.backend.mujoco.backend import MuJoCoBackend
 
         p = request.param
         backend = MuJoCoBackend(
@@ -116,72 +142,6 @@ class TestMuJoCoBasic:
     def test_num_envs(self, bkd):
         assert bkd.num_envs == NUM_ENVS
 
-    def test_apply_init_randomization_sets_variants_before_materialization(self):
-        from unilab.base.backend.mujoco.backend import MuJoCoBackend
-
-        bkd = MuJoCoBackend(
-            SceneCfg(model_file=_SHARPA["model_file"]), 4, SIM_DT, base_name=_SHARPA["base_name"]
-        )
-        assert bkd._pool is None
-        mujoco = _mujoco_module()
-        geom_id = mujoco.mj_name2id(bkd.model, mujoco.mjtObj.mjOBJ_GEOM, "object")
-        base_size = np.asarray(bkd.model.geom_size[geom_id], dtype=np.float64).copy()
-
-        bkd.apply_init_randomization(
-            InitRandomizationPlan(
-                model_assignments=np.array([0, 1, 0, 1], dtype=np.int32),
-                model_variants=(
-                    ModelVariantSpec(
-                        geom_size_overrides=(GeomSizeOverride("object", tuple(base_size * 0.5)),)
-                    ),
-                    ModelVariantSpec(
-                        geom_size_overrides=(GeomSizeOverride("object", tuple(base_size * 0.75)),)
-                    ),
-                ),
-            )
-        )
-
-        assert bkd._pool is None
-        np.testing.assert_array_equal(
-            bkd._model_assignments,
-            np.array([0, 1, 0, 1], dtype=np.int32),
-        )
-        np.testing.assert_allclose(bkd._model_variants[0].geom_size[geom_id], base_size * 0.5)
-        np.testing.assert_allclose(bkd._model_variants[1].geom_size[geom_id], base_size * 0.75)
-
-        bkd.materialize()
-        assert bkd._pool is not None
-
-    def test_get_playback_model_returns_env_specific_variant(self):
-        from unilab.base.backend.mujoco.backend import MuJoCoBackend
-
-        bkd = MuJoCoBackend(
-            SceneCfg(model_file=_SHARPA["model_file"]), 4, SIM_DT, base_name=_SHARPA["base_name"]
-        )
-        mujoco = _mujoco_module()
-        geom_id = mujoco.mj_name2id(bkd.model, mujoco.mjtObj.mjOBJ_GEOM, "object")
-        base_size = np.asarray(bkd.model.geom_size[geom_id], dtype=np.float64).copy()
-
-        bkd.apply_init_randomization(
-            InitRandomizationPlan(
-                model_assignments=np.array([0, 1, 0, 1], dtype=np.int32),
-                model_variants=(
-                    ModelVariantSpec(
-                        geom_size_overrides=(GeomSizeOverride("object", tuple(base_size * 0.5)),)
-                    ),
-                    ModelVariantSpec(
-                        geom_size_overrides=(GeomSizeOverride("object", tuple(base_size * 0.75)),)
-                    ),
-                ),
-            )
-        )
-
-        model0 = bkd.get_playback_model(0)
-        model1 = bkd.get_playback_model(1)
-
-        np.testing.assert_allclose(model0.geom_size[geom_id], base_size * 0.5)
-        np.testing.assert_allclose(model1.geom_size[geom_id], base_size * 0.75)
-
     # simulation control
 
     def test_set_state_only_affects_target_envs(self, bkd):
@@ -193,7 +153,7 @@ class TestMuJoCoBasic:
 
     def test_set_state_randomization_only_affects_target_envs(self, bkd):
         pool = bkd._pool
-        original = [pool.get_field(i, "body_mass").copy() for i in range(NUM_ENVS)]
+        original = pool.expand("body_mass").copy()
         qpos = _identity_qpos_mujoco(bkd.model.nq)
         qvel = np.zeros((1, bkd.model.nv))
         base_body_id = bkd._base_body_id
@@ -202,8 +162,8 @@ class TestMuJoCoBasic:
 
         bkd.set_state(np.array([1]), qpos, qvel, randomization=randomization)
 
-        np.testing.assert_array_equal(pool.get_field(0, "body_mass"), original[0])
-        updated = pool.get_field(1, "body_mass")
+        np.testing.assert_array_equal(pool.expand("body_mass")[0], original[0])
+        updated = pool.expand("body_mass")[1]
         np.testing.assert_allclose(updated[:base_body_id], original[1][:base_body_id])
         np.testing.assert_allclose(updated[base_body_id], original[1][base_body_id] + delta[0])
         np.testing.assert_allclose(updated[base_body_id + 1 :], original[1][base_body_id + 1 :])
@@ -222,64 +182,33 @@ class TestMuJoCoBasic:
         np.testing.assert_allclose(called["force_range"], limit)
 
     def test_step_uses_xfrc_applied_for_interval_push(self, bkd, monkeypatch: pytest.MonkeyPatch):
-        mujoco = _mujoco_module()
         sampled = np.array([[0.5, -0.25, 0.1], [-0.1, 0.8, -0.4]], dtype=np.float64)
         limit = np.array([0.7, 0.3, 0.2], dtype=np.float64)
-        calls: list[dict[str, Any]] = []
 
         monkeypatch.setattr(np.random, "uniform", lambda low, high, size: sampled.copy())
-
-        def _fake_step(
-            initial_state,
-            *,
-            nstep,
-            control_spec=0,
-            control=None,
-            return_sensor=False,
-            **kwargs,
-        ):
-            calls.append(
-                {
-                    "nstep": nstep,
-                    "control_spec": control_spec,
-                    "control": None if control is None else np.array(control, copy=True),
-                }
-            )
-            state = np.array(initial_state, copy=True)
-            if return_sensor:
-                return state, np.array(bkd._sensor_data, copy=True)
-            return state
-
-        monkeypatch.setattr(bkd._pool, "step", _fake_step)
 
         bkd.apply_interval_randomization(IntervalRandomizationPlan(push_perturbation_limit=limit))
 
         ctrl = np.zeros((NUM_ENVS, bkd.model.nu), dtype=np.float64)
         bkd.step(ctrl, nsteps=2)
-        bkd.step(ctrl, nsteps=1)
 
         expected_xfrc = np.zeros((NUM_ENVS, 6 * bkd.model.nbody), dtype=np.float64)
         start = 6 * bkd._base_body_id
         expected_xfrc[:, start : start + 3] = sampled * limit[None, :]
-        expected_xfrc_traj = np.broadcast_to(
-            expected_xfrc[:, None, :],
-            (NUM_ENVS, 2, 6 * bkd.model.nbody),
-        )
-        expected_ctrl_traj = np.broadcast_to(ctrl[:, None, :], (NUM_ENVS, 2, bkd.model.nu))
 
-        assert len(calls) == 2
-        assert calls[0]["nstep"] == 2
-        assert calls[0]["control_spec"] & int(mujoco.mjtState.mjSTATE_CTRL)
-        assert calls[0]["control_spec"] & int(mujoco.mjtState.mjSTATE_XFRC_APPLIED)
-        np.testing.assert_allclose(calls[0]["control"][:, :, : bkd.model.nu], expected_ctrl_traj)
-        np.testing.assert_allclose(calls[0]["control"][:, :, bkd.model.nu :], expected_xfrc_traj)
+        # The staged wrench reached the persistent channel and survives the
+        # call; the pending staging buffer is cleared.
+        np.testing.assert_allclose(np.asarray(bkd._xfrc_view).reshape(NUM_ENVS, -1), expected_xfrc)
+        np.testing.assert_allclose(bkd._pending_xfrc_applied, 0.0)
 
-        assert calls[1]["nstep"] == 1
-        assert calls[1]["control_spec"] == int(mujoco.mjtState.mjSTATE_CTRL)
-        assert calls[1]["control"].shape == (NUM_ENVS, 1, bkd.model.nu)
+        # An idle second dispatch rewrites the channel absolutely with zeros,
+        # instead of leaving the previous wrench to decay on its own.
+        bkd.step(ctrl, nsteps=1)
+        np.testing.assert_allclose(np.asarray(bkd._xfrc_view).reshape(NUM_ENVS, -1), 0.0)
+        np.testing.assert_allclose(bkd._pending_xfrc_applied, 0.0)
 
     def test_interval_push_uses_configured_body(self, monkeypatch: pytest.MonkeyPatch):
-        from unilab.base.backend.mujoco.backend import MuJoCoBackend
+        from unisim.backend.mujoco.backend import MuJoCoBackend
 
         mujoco = _mujoco_module()
         bkd = MuJoCoBackend(
@@ -292,44 +221,22 @@ class TestMuJoCoBasic:
         bkd.materialize()
         sampled = np.array([[0.5, -0.25, 0.1], [-0.1, 0.8, -0.4]], dtype=np.float64)
         limit = np.array([0.7, 0.3, 0.2], dtype=np.float64)
-        calls: list[dict[str, Any]] = []
 
         monkeypatch.setattr(np.random, "uniform", lambda low, high, size: sampled.copy())
-
-        def _fake_step(
-            initial_state,
-            *,
-            nstep,
-            control_spec=0,
-            control=None,
-            return_sensor=False,
-            **kwargs,
-        ):
-            calls.append(
-                {
-                    "control_spec": control_spec,
-                    "control": None if control is None else np.array(control, copy=True),
-                }
-            )
-            state = np.array(initial_state, copy=True)
-            if return_sensor:
-                return state, np.array(bkd._sensor_data, copy=True)
-            return state
-
-        monkeypatch.setattr(bkd._pool, "step", _fake_step)
 
         bkd.apply_interval_randomization(IntervalRandomizationPlan(push_perturbation_limit=limit))
         bkd.step(np.zeros((NUM_ENVS, bkd.model.nu), dtype=np.float64))
 
         base_start = 6 * bkd._base_body_id
         push_start = 6 * mujoco.mj_name2id(bkd.model, mujoco.mjtObj.mjOBJ_BODY, "torso_link")
-        xfrc = calls[0]["control"][:, 0, bkd.model.nu :]
+        xfrc = np.asarray(bkd._xfrc_view).reshape(NUM_ENVS, -1)
         np.testing.assert_allclose(xfrc[:, push_start : push_start + 3], sampled * limit[None, :])
         np.testing.assert_allclose(xfrc[:, base_start : base_start + 3], 0.0)
+        np.testing.assert_allclose(bkd._pending_xfrc_applied, 0.0)
 
     def test_set_state_body_iquat_randomization_only_affects_target_envs(self, bkd):
         pool = bkd._pool
-        original = [pool.get_field(i, "body_iquat").copy() for i in range(NUM_ENVS)]
+        original = pool.expand("body_iquat").copy()
         qpos = _identity_qpos_mujoco(bkd.model.nq)
         qvel = np.zeros((1, bkd.model.nv))
         updated = original[1].reshape(bkd.model.nbody, 4).copy()
@@ -342,14 +249,12 @@ class TestMuJoCoBasic:
             randomization=ResetRandomizationPayload(body_iquat=updated[None, :, :]),
         )
 
-        np.testing.assert_array_equal(pool.get_field(0, "body_iquat"), original[0])
-        np.testing.assert_allclose(
-            pool.get_field(1, "body_iquat").reshape(bkd.model.nbody, 4), updated
-        )
+        np.testing.assert_array_equal(pool.expand("body_iquat")[0], original[0])
+        np.testing.assert_allclose(pool.expand("body_iquat")[1], updated)
 
     def test_set_state_gravity_randomization_only_affects_target_envs(self, bkd):
         pool = bkd._pool
-        original = [pool.get_field(i, "gravity").copy() for i in range(NUM_ENVS)]
+        original = pool.expand("gravity").copy()
         qpos = _identity_qpos_mujoco(bkd.model.nq)
         qvel = np.zeros((1, bkd.model.nv))
         updated = original[1].copy()
@@ -362,12 +267,12 @@ class TestMuJoCoBasic:
             randomization=ResetRandomizationPayload(gravity=updated[None, :]),
         )
 
-        np.testing.assert_array_equal(pool.get_field(0, "gravity"), original[0])
-        np.testing.assert_allclose(pool.get_field(1, "gravity"), updated)
+        np.testing.assert_array_equal(pool.expand("gravity")[0], original[0])
+        np.testing.assert_allclose(pool.expand("gravity")[1], updated)
 
     def test_set_state_body_inertia_randomization_only_affects_target_envs(self, bkd):
         pool = bkd._pool
-        original = [pool.get_field(i, "body_inertia").copy() for i in range(NUM_ENVS)]
+        original = pool.expand("body_inertia").copy()
         qpos = _identity_qpos_mujoco(bkd.model.nq)
         qvel = np.zeros((1, bkd.model.nv))
         updated = original[1].reshape(bkd.model.nbody, 3).copy()
@@ -380,14 +285,12 @@ class TestMuJoCoBasic:
             randomization=ResetRandomizationPayload(body_inertia=updated[None, :, :]),
         )
 
-        np.testing.assert_array_equal(pool.get_field(0, "body_inertia"), original[0])
-        np.testing.assert_allclose(
-            pool.get_field(1, "body_inertia").reshape(bkd.model.nbody, 3), updated
-        )
+        np.testing.assert_array_equal(pool.expand("body_inertia")[0], original[0])
+        np.testing.assert_allclose(pool.expand("body_inertia")[1], updated)
 
     def test_set_state_dof_armature_randomization_only_affects_target_envs(self, bkd):
         pool = bkd._pool
-        original = [pool.get_field(i, "dof_armature").copy() for i in range(NUM_ENVS)]
+        original = pool.expand("dof_armature").copy()
         qpos = _identity_qpos_mujoco(bkd.model.nq)
         qvel = np.zeros((1, bkd.model.nv))
         updated = original[1].copy()
@@ -400,17 +303,17 @@ class TestMuJoCoBasic:
             randomization=ResetRandomizationPayload(dof_armature=updated[None, :]),
         )
 
-        np.testing.assert_array_equal(pool.get_field(0, "dof_armature"), original[0])
-        np.testing.assert_allclose(pool.get_field(1, "dof_armature"), updated)
+        np.testing.assert_array_equal(pool.expand("dof_armature")[0], original[0])
+        np.testing.assert_allclose(pool.expand("dof_armature")[1], updated)
 
     def test_set_state_kp_kd_randomization_only_affects_target_envs(self, bkd):
         pool = bkd._pool
-        original_kp = [pool.get_field(i, "kp").copy() for i in range(NUM_ENVS)]
-        original_kd = [pool.get_field(i, "kd").copy() for i in range(NUM_ENVS)]
+        original_gain = pool.expand("actuator_gainprm").copy()
+        original_bias = pool.expand("actuator_biasprm").copy()
         qpos = _identity_qpos_mujoco(bkd.model.nq)
         qvel = np.zeros((1, bkd.model.nv))
-        new_kp = original_kp[1] + 1.25
-        new_kd = np.maximum(original_kd[1] + 0.25, 0.25)
+        new_kp = original_gain[1, :, 0] + 1.25
+        new_kd = np.maximum(-original_bias[1, :, 2] + 0.25, 0.25)
 
         bkd.set_state(
             np.array([1]),
@@ -419,10 +322,13 @@ class TestMuJoCoBasic:
             randomization=ResetRandomizationPayload(kp=new_kp[None, :], kd=new_kd[None, :]),
         )
 
-        np.testing.assert_array_equal(pool.get_field(0, "kp"), original_kp[0])
-        np.testing.assert_array_equal(pool.get_field(0, "kd"), original_kd[0])
-        np.testing.assert_allclose(pool.get_field(1, "kp"), new_kp)
-        np.testing.assert_allclose(pool.get_field(1, "kd"), new_kd)
+        gain = pool.expand("actuator_gainprm")
+        bias = pool.expand("actuator_biasprm")
+        np.testing.assert_array_equal(gain[0], original_gain[0])
+        np.testing.assert_array_equal(bias[0], original_bias[0])
+        np.testing.assert_allclose(gain[1, :, 0], new_kp)
+        np.testing.assert_allclose(-bias[1, :, 2], new_kd)
+        np.testing.assert_allclose(bias[1, :, 1], -new_kp)
 
     # base kinematics
 
@@ -460,7 +366,7 @@ class TestMuJoCoBasic:
 def test_mujoco_backend_discards_visual_assets():
     mujoco = _mujoco_module()
 
-    from unilab.base.backend.mujoco.backend import MuJoCoBackend
+    from unisim.backend.mujoco.backend import MuJoCoBackend
 
     model_file = _xml("go2")
     full = mujoco.MjModel.from_xml_path(model_file)
@@ -472,53 +378,6 @@ def test_mujoco_backend_discards_visual_assets():
     assert trimmed.model.nmat == 0
 
 
-@pytest.mark.slow
-def test_motrix_backend_fixed_base_set_state_matches_mujoco_for_hand_and_ball():
-    from unilab.base.backend.motrix.backend import MotrixBackend
-    from unilab.base.backend.mujoco.backend import MuJoCoBackend
-
-    pytest.importorskip("motrixsim")
-    mj = MuJoCoBackend(
-        SceneCfg(model_file=_ALLEGRO["model_file"]),
-        NUM_ENVS,
-        SIM_DT,
-        base_name=_ALLEGRO["base_name"],
-        add_body_sensors=True,
-    )
-    mj.materialize()
-    mx = MotrixBackend(
-        SceneCfg(model_file=_ALLEGRO["model_file"]),
-        NUM_ENVS,
-        SIM_DT,
-        base_name=_ALLEGRO["base_name"],
-        add_body_sensors=True,
-    )
-    qpos, qvel = _allegro_state()
-    env_idx = np.array([0])
-
-    mj.set_state(env_idx, qpos, qvel)
-    mx.set_state(env_idx, qpos, qvel)
-
-    np.testing.assert_allclose(mx.get_dof_pos()[0], qpos[0, :16], atol=1e-6)
-    np.testing.assert_allclose(mx.get_dof_vel()[0], qvel[0, :16], atol=1e-6)
-    np.testing.assert_allclose(np.asarray(mx.data.actuator_ctrls[0]), qpos[0, :16], atol=1e-6)
-    np.testing.assert_allclose(mx.get_base_pos(), mj.get_base_pos(), atol=2e-3)
-    np.testing.assert_allclose(np.abs(mx.get_base_quat()), np.abs(mj.get_base_quat()), atol=2e-3)
-
-    mj_ball_id = _mj_body_id(mj.model, "ball")
-    mx_ball_id = _mx_link_id(mx.model, "ball")
-    np.testing.assert_allclose(
-        mx.get_body_pos_w(np.array([mx_ball_id])),
-        mj.get_body_pos_w(np.array([mj_ball_id])),
-        atol=2e-3,
-    )
-    np.testing.assert_allclose(
-        mx.get_body_quat_w(np.array([mx_ball_id])),
-        mj.get_body_quat_w(np.array([mj_ball_id])),
-        atol=2e-3,
-    )
-
-
 # ---------------------------------------------------------------------------
 # MuJoCo — body sensors, G1 only
 # ---------------------------------------------------------------------------
@@ -528,7 +387,7 @@ def test_motrix_backend_fixed_base_set_state_matches_mujoco_for_hand_and_ball():
 class TestMuJoCoBodySensors:
     @pytest.fixture
     def bkd(self):
-        from unilab.base.backend.mujoco.backend import MuJoCoBackend
+        from unisim.backend.mujoco.backend import MuJoCoBackend
 
         backend = MuJoCoBackend(
             SceneCfg(model_file=_G1["model_file"]),
@@ -582,6 +441,12 @@ class TestMuJoCoBodySensors:
 
     def test_get_body_ang_vel_b_shape(self, bkd, body_ids):
         _shape(bkd.get_body_ang_vel_b(body_ids), NUM_ENVS, len(body_ids), 3)
+
+    def test_root_body_vel_b_matches_world_vel_in_body_frame(self, bkd):
+        mujoco = _mujoco_module()
+
+        root_id = int(mujoco.mj_name2id(bkd.model, mujoco.mjtObj.mjOBJ_BODY, _G1["base_name"]))
+        _assert_root_vel_b_matches_world_vel_in_body_frame(bkd, root_id, atol=1e-5)
 
     # sensors
 
@@ -643,7 +508,7 @@ class TestMotrixBasic:
     # dependent fixtures can share the same parameter value.
     @pytest.fixture(params=BASIC_ROBOTS)
     def _ctx(self, request):
-        from unilab.base.backend.motrix.backend import MotrixBackend
+        from unisim.backend.motrix.backend import MotrixBackend
 
         p = request.param
         bkd = MotrixBackend(
@@ -856,7 +721,7 @@ class TestMotrixBodySensors:
 
     @pytest.fixture
     def bkd(self):
-        from unilab.base.backend.motrix.backend import MotrixBackend
+        from unisim.backend.motrix.backend import MotrixBackend
 
         return MotrixBackend(
             SceneCfg(model_file=_G1["model_file"]),
@@ -886,6 +751,10 @@ class TestMotrixBodySensors:
 
     def test_get_body_ang_vel_b_shape(self, bkd, body_ids):
         _shape(bkd.get_body_ang_vel_b(body_ids), NUM_ENVS, len(body_ids), 3)
+
+    def test_root_body_vel_b_matches_world_vel_in_body_frame(self, bkd):
+        root_id = int(bkd.model.get_body_index(_G1["base_name"]))
+        _assert_root_vel_b_matches_world_vel_in_body_frame(bkd, root_id, atol=1e-4)
 
     # sensors
 
@@ -921,15 +790,15 @@ def _mx_link_id(mx_model, name: str) -> int:
 
 @pytest.mark.slow
 class TestCrossBackend:
-    """相同 set_state 后，MuJoCo 与 MotrixSim 所有基础接口数值必须一致。"""
+    """MuJoCo and MotrixSim base interfaces must agree after identical set_state."""
 
-    ATOL = 2e-3  # float64 vs float32 + 不同 qpos0 的积累误差
+    ATOL = 2e-3  # float64 vs float32 plus accumulated differences from qpos0.
 
     @pytest.fixture(params=BASIC_ROBOTS)
     def synced(self, request):
-        """创建并同步两后端初始状态，返回 (mj, mx, base_name)。"""
-        from unilab.base.backend.motrix.backend import MotrixBackend
-        from unilab.base.backend.mujoco.backend import MuJoCoBackend
+        """Create both backends, synchronize their initial state, and return them."""
+        from unisim.backend.motrix.backend import MotrixBackend
+        from unisim.backend.mujoco.backend import MuJoCoBackend
 
         pytest.importorskip("motrixsim")
         p = request.param
@@ -968,33 +837,17 @@ class TestCrossBackend:
         mj, mx, _ = synced
         np.testing.assert_allclose(mj.get_dof_vel(), mx.get_dof_vel(), atol=self.ATOL)
 
-    # --- after step ---
-
-    # def test_base_pos_after_step(self, synced):
-    #     mj, mx, _ = synced
-    #     ctrl = np.zeros((NUM_ENVS, mj.model.nu))
-    #     mj.step(ctrl, nsteps=5)
-    #     mx.step(ctrl, nsteps=5)
-    #     np.testing.assert_allclose(mj.get_base_pos(), mx.get_base_pos(), atol=self.ATOL)
-
-    # def test_dof_pos_after_step(self, synced):
-    #     mj, mx, _ = synced
-    #     ctrl = np.zeros((NUM_ENVS, mj.model.nu))
-    #     mj.step(ctrl, nsteps=5)
-    #     mx.step(ctrl, nsteps=5)
-    #     np.testing.assert_allclose(mj.get_dof_pos(), mx.get_dof_pos(), atol=self.ATOL)
-
 
 @pytest.mark.slow
 class TestCrossBackendBodySensors:
-    """body 传感器接口双后端对测（G1，add_body_sensors=True）。"""
+    """Cross-check body sensor contracts for G1 with add_body_sensors=True."""
 
     ATOL = 2e-3
 
     @pytest.fixture
     def synced(self):
-        from unilab.base.backend.motrix.backend import MotrixBackend
-        from unilab.base.backend.mujoco.backend import MuJoCoBackend
+        from unisim.backend.motrix.backend import MotrixBackend
+        from unisim.backend.mujoco.backend import MuJoCoBackend
 
         pytest.importorskip("motrixsim")
         mj = MuJoCoBackend(
@@ -1022,7 +875,7 @@ class TestCrossBackendBodySensors:
 
     @pytest.fixture
     def body_pairs(self, synced):
-        """选前 3 个 body（pelvis + 两个髋关节），分别返回 mujoco IDs 和 motrixsim link IDs。"""
+        """Return MuJoCo and MotrixSim IDs for the first three non-world bodies."""
         mujoco = _mujoco_module()
 
         mj, mx = synced
@@ -1110,6 +963,25 @@ class TestCrossBackendBodySensors:
             atol=self.ATOL,
         )
 
+    def test_body_vel_b_parity_under_base_motion(self, synced, body_pairs):
+        """vel_b parity must hold with non-zero base motion (root included)."""
+        mj, mx = synced
+        qpos, qvel = _tilted_motion_state(mj)
+        env_idx = np.arange(NUM_ENVS)
+        mj.set_state(env_idx, qpos, qvel)
+        mx.set_state(env_idx, qpos, qvel)
+        mj_ids, mx_ids = body_pairs
+        np.testing.assert_allclose(
+            mj.get_body_lin_vel_b(mj_ids),
+            mx.get_body_lin_vel_b(mx_ids),
+            atol=self.ATOL,
+        )
+        np.testing.assert_allclose(
+            mj.get_body_ang_vel_b(mj_ids),
+            mx.get_body_ang_vel_b(mx_ids),
+            atol=self.ATOL,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Unified model properties — MuJoCo
@@ -1120,7 +992,7 @@ class TestCrossBackendBodySensors:
 class TestMuJoCoModelProperties:
     @pytest.fixture(params=BASIC_ROBOTS)
     def bkd(self, request):
-        from unilab.base.backend.mujoco.backend import MuJoCoBackend
+        from unisim.backend.mujoco.backend import MuJoCoBackend
 
         p = request.param
         return MuJoCoBackend(
@@ -1193,7 +1065,7 @@ class TestMotrixModelProperties:
 
     @pytest.fixture(params=BASIC_ROBOTS)
     def _ctx(self, request):
-        from unilab.base.backend.motrix.backend import MotrixBackend
+        from unisim.backend.motrix.backend import MotrixBackend
 
         p = request.param
         bkd = MotrixBackend(
@@ -1237,7 +1109,10 @@ class TestMotrixModelProperties:
             bkd.get_body_ids(["nonexistent_body_xyz"])
 
     def test_get_joint_range(self, bkd):
-        assert bkd.get_joint_range() is None
+        jr = bkd.get_joint_range()
+        assert jr is not None
+        assert jr.shape == (bkd.num_dof_vel, 2)
+        assert np.all(jr[:, 0] <= jr[:, 1])
 
 
 # ---------------------------------------------------------------------------
@@ -1253,8 +1128,8 @@ class TestCrossBackendModelProperties:
 
     @pytest.fixture
     def backends(self):
-        from unilab.base.backend.motrix.backend import MotrixBackend
-        from unilab.base.backend.mujoco.backend import MuJoCoBackend
+        from unisim.backend.motrix.backend import MotrixBackend
+        from unisim.backend.mujoco.backend import MuJoCoBackend
 
         mj = MuJoCoBackend(
             SceneCfg(model_file=_G1["model_file"]), NUM_ENVS, SIM_DT, base_name=_G1["base_name"]

@@ -5,10 +5,8 @@ from __future__ import annotations
 import dataclasses
 import getpass
 import importlib
-import importlib.util
 import json
 import os
-import platform
 import socket
 import subprocess
 import time
@@ -17,6 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from omegaconf import OmegaConf
+
+from unilab.utils.device import get_device_info_dict
+from unilab.utils.sim2sim import extract_contract_snapshot
 
 
 def _cfg_get(cfg: Any, key: str, default: Any = None) -> Any:
@@ -42,6 +43,18 @@ def _load_wandb() -> Any | None:
         return None
 
 
+def _tb_proto_modules() -> tuple[Any, Any]:
+    """Import tensorboard's protobuf modules as ``Any``.
+
+    The generated modules define their messages through reflection, which
+    static checkers cannot see; returning them as ``Any`` keeps attribute
+    access clean without per-line suppressions.
+    """
+    from tensorboard.compat.proto import event_pb2, summary_pb2
+
+    return event_pb2, summary_pb2
+
+
 def _json_safe(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
@@ -58,41 +71,36 @@ def _json_safe(value: Any) -> Any:
         return str(value)
 
 
-def _fallback_device_info_dict() -> dict[str, str]:
-    return {
-        "platform": platform.platform(),
-        "chip": platform.processor() or "unknown",
-        "cpu_total_cores": str(os.cpu_count() or "unknown"),
-        "gpu_name": "unknown",
-        "memory": "unknown",
-    }
+def _copy_plain_training_state(state: Any) -> dict[str, Any]:
+    """Validate and detach versioned training progress at a checkpoint boundary.
 
+    This intentionally accepts only plain JSON-shaped values. It rejects tensors
+    and other owner objects before they can enter a checkpoint payload.
+    """
 
-def _benchmark_device_info_path() -> Path | None:
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / "benchmark" / "core" / "device_info.py"
-        if candidate.is_file():
-            return candidate
-    return None
+    def copy_value(value: Any) -> Any:
+        if value is None or type(value) in (str, bool, int):
+            return value
+        if type(value) is float:
+            if value != value or value in (float("inf"), float("-inf")):
+                raise ValueError("Training state numbers must be finite")
+            return value
+        if type(value) is not dict and type(value) is not list:
+            raise TypeError(
+                "Training state must contain only plain JSON dictionaries/lists/scalars"
+            )
+        if type(value) is dict:
+            if any(type(key) is not str for key in value):
+                raise TypeError("Training state dictionary keys must be strings")
+            return {key: copy_value(item) for key, item in value.items()}
+        return [copy_value(item) for item in value]
 
-
-def get_device_info_dict() -> dict[str, str]:
-    try:
-        module_path = _benchmark_device_info_path()
-        if module_path is None:
-            return _fallback_device_info_dict()
-        spec = importlib.util.spec_from_file_location(
-            "unilab_benchmark_device_info",
-            module_path,
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError(f"Unable to load device info module from {module_path}")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        getter = getattr(module, "get_device_info_dict")
-        return dict(getter())
-    except Exception:
-        return _fallback_device_info_dict()
+    if not isinstance(state, dict):
+        raise TypeError("Training state export must return a dictionary")
+    result = copy_value(state)
+    if not isinstance(result, dict):
+        raise TypeError("Training state export must return a dictionary")
+    return result
 
 
 def get_git_info(root_dir: str | Path) -> dict[str, Any]:
@@ -120,6 +128,49 @@ def get_git_info(root_dir: str | Path) -> dict[str, Any]:
         "branch": branch,
         "dirty": bool(status),
     }
+
+
+def _write_json(path: Path, payload: Any, *, trailing_newline: bool = False) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(payload, indent=2)
+    if trailing_newline:
+        text += "\n"
+    path.write_text(text, encoding="utf-8")
+
+
+def build_run_config_payload(
+    *,
+    run_metadata: dict[str, Any],
+    full_cfg: Any,
+    contract_snapshot: Any | None = None,
+) -> dict[str, Any]:
+    """Assemble the canonical ``{"run", "config", ...}`` run-config payload."""
+    payload: dict[str, Any] = {
+        "run": _json_safe(run_metadata),
+        "config": _json_safe(_plain_dict(full_cfg)),
+    }
+    if contract_snapshot is not None:
+        payload["contract_snapshot"] = _json_safe(contract_snapshot)
+    return payload
+
+
+def write_run_config_snapshot(
+    log_dir: str | Path,
+    *,
+    run_metadata: dict[str, Any],
+    full_cfg: Any,
+    filename: str = "run_config.json",
+    contract_snapshot: Any | None = None,
+    trailing_newline: bool = False,
+) -> dict[str, Any]:
+    """Write the run-config snapshot into ``log_dir`` and return the payload."""
+    payload = build_run_config_payload(
+        run_metadata=run_metadata,
+        full_cfg=full_cfg,
+        contract_snapshot=contract_snapshot,
+    )
+    _write_json(Path(log_dir) / filename, payload, trailing_newline=trailing_newline)
+    return payload
 
 
 def build_wandb_run_name(algo_name: str, task_name: str, log_dir: str | Path | None) -> str:
@@ -255,11 +306,12 @@ class ExperimentTracker:
                 seed_payload = {"effective_seed": self.seed_info}
             metadata.update(seed_payload)
 
-        payload = {
-            "run": _json_safe(metadata),
-            "config": _json_safe(_plain_dict(self.full_cfg)),
-        }
-        self._write_json(self.log_dir / "run_config.json", payload)
+        payload = write_run_config_snapshot(
+            self.log_dir,
+            run_metadata=metadata,
+            full_cfg=self.full_cfg,
+            contract_snapshot=extract_contract_snapshot(self.full_cfg),
+        )
 
         if not self.enabled:
             return
@@ -353,8 +405,129 @@ class ExperimentTracker:
 
     @staticmethod
     def _write_json(path: Path, payload: Any) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _write_json(path, payload)
+
+
+def patch_rsl_rl_action_std_logging(runner: Any) -> None:
+    """Log the current distribution's public standard deviation, including state dependence."""
+    original_log = runner.logger.log
+
+    def _safe_log(self: Any, *args: Any, **kwargs: Any) -> Any:
+        distribution = runner.alg.get_policy().distribution
+        kwargs["action_std"] = distribution.std.detach().clone()
+        return original_log(*args, **kwargs)
+
+    runner.logger.log = _safe_log.__get__(runner.logger, type(runner.logger))
+
+
+class _BatchedScalarWriter:
+    """Buffer rsl-rl's per-tag ``add_scalar`` calls and emit one event per step.
+
+    TensorBoard's writer thread performs one open/write/close per record, which
+    saturates its async queue (depth 10) and blocks the training loop when the
+    log directory lives on a network filesystem. Batching one iteration's
+    scalars into a single ``Event`` keeps it to one record per step group.
+    """
+
+    def __init__(self, writer: Any) -> None:
+        self._writer = writer
+        self._pending: list[tuple[str, float]] = []
+        self._pending_step: int | None = None
+
+    def add_scalar(self, tag: str, value: Any, step: Any = None, *args: Any, **kwargs: Any) -> None:
+        try:
+            scalar = float(value)
+        except (TypeError, ValueError):
+            self._flush()
+            self._writer.add_scalar(tag, value, step, *args, **kwargs)
+            return
+        step_key = int(step) if step is not None else 0
+        if self._pending and step_key != self._pending_step:
+            self._flush()
+        self._pending_step = step_key
+        self._pending.append((tag, scalar))
+
+    def _flush(self) -> None:
+        if not self._pending:
+            return
+        event_pb2, summary_pb2 = _tb_proto_modules()
+        event = event_pb2.Event(
+            wall_time=time.time(),
+            step=self._pending_step or 0,
+            summary=summary_pb2.Summary(
+                value=[
+                    summary_pb2.Summary.Value(tag=tag, simple_value=value)
+                    for tag, value in self._pending
+                ]
+            ),
+        )
+        self._writer.file_writer.add_event(event)
+        self._pending = []
+        self._pending_step = None
+
+    def flush(self) -> None:
+        self._flush()
+        self._writer.flush()
+
+    def close(self) -> None:
+        self._flush()
+        self._writer.close()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._writer, name)
+
+
+class _SwallowScalarWriter:
+    """Drop ``add_scalar`` writes while staying truthy for rsl-rl's console log."""
+
+    def __init__(self, writer: Any) -> None:
+        self._writer = writer
+
+    def add_scalar(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._writer, name)
+
+
+def patch_rsl_rl_tensorboard_logging(runner: Any, log_interval: int = 1) -> None:
+    """Batch and optionally throttle rsl-rl's TensorBoard scalar writes.
+
+    Wraps ``runner.logger.writer`` so each step's ~15-30 ``add_scalar`` calls
+    become a single event record, and gates backend writes to every
+    ``log_interval`` iterations (console output and episode bookkeeping are
+    unaffected; the final iteration is always logged). No-op for non-TB
+    backends and when no writer exists.
+    """
+    logger = getattr(runner, "logger", None)
+    writer = getattr(logger, "writer", None)
+    if logger is None or writer is None:
+        return
+    if getattr(logger, "logger_type", "tensorboard") != "tensorboard":
+        return
+    if isinstance(writer, _BatchedScalarWriter):
+        return
+
+    batched = _BatchedScalarWriter(writer)
+    logger.writer = batched
+
+    interval = max(1, int(log_interval))
+    if interval <= 1:
+        return
+
+    swallow = _SwallowScalarWriter(batched)
+    original_log = logger.log
+
+    def _gated_log(self: Any, it: int, *args: Any, **kwargs: Any) -> Any:
+        total_it = args[1] if len(args) > 1 else int(kwargs.get("total_it", 0))
+        due = it % interval == 0 or it >= total_it
+        logger.writer = batched if due else swallow
+        try:
+            return original_log(it, *args, **kwargs)
+        finally:
+            logger.writer = batched
+
+    logger.log = _gated_log.__get__(logger, type(logger))
 
 
 def patch_rsl_rl_wandb_writer() -> None:
@@ -464,7 +637,7 @@ def patch_rsl_rl_wandb_writer() -> None:
 
 
 def patch_rsl_rl_resume_state() -> None:
-    """Persist + restore ``Logger.tot_time`` / ``tot_timesteps`` across resume.
+    """Persist + restore UniLab progress through rsl-rl checkpoints.
 
     Without this patch, rsl-rl's ``Logger.__init__`` writes ``tot_time = 0`` and
     ``tot_timesteps = 0`` and ``OnPolicyRunner.load`` never refreshes them, so the
@@ -473,8 +646,15 @@ def patch_rsl_rl_resume_state() -> None:
     every resumed run and visually overlap the original segment. See issue #441.
 
     The patch wraps ``OnPolicyRunner.save`` / ``OnPolicyRunner.load`` to round-trip
-    a ``unilab_logger_state`` key in the saved dict. Legacy checkpoints (without
-    the key) load unchanged.
+    plain progress in the saved dict:
+
+    - ``unilab_logger_state``: ``Logger.tot_time`` / ``tot_timesteps``;
+    - ``unilab_env_training_state``: the wrapped TorchEnv's versioned training
+      state, if it publishes ``export_training_state``.
+
+    Legacy checkpoints (without either key) load unchanged. Environment state is
+    plain versioned JSON data; no Torch tensor, backend, environment, or manager
+    object is serialized through this path.
     """
     try:
         from rsl_rl.runners.on_policy_runner import OnPolicyRunner
@@ -494,6 +674,12 @@ def patch_rsl_rl_resume_state() -> None:
             "tot_time": float(getattr(self.logger, "tot_time", 0.0)),
             "tot_timesteps": int(getattr(self.logger, "tot_timesteps", 0)),
         }
+        env = getattr(self, "env", None)
+        export_env_training_state = getattr(env, "export_training_state", None)
+        if callable(export_env_training_state):
+            saved_dict["unilab_env_training_state"] = _copy_plain_training_state(
+                export_env_training_state()
+            )
         torch.save(saved_dict, path)
         self.logger.save_model(path, self.current_learning_iteration)
 
@@ -512,6 +698,16 @@ def patch_rsl_rl_resume_state() -> None:
         if state is not None:
             self.logger.tot_time = float(state.get("tot_time", 0.0))
             self.logger.tot_timesteps = int(state.get("tot_timesteps", 0))
+        env_state = loaded_dict.get("unilab_env_training_state")
+        if env_state is not None:
+            env = getattr(self, "env", None)
+            import_training_state = getattr(env, "import_training_state", None)
+            if not callable(import_training_state):
+                raise TypeError(
+                    "Checkpoint contains unilab_env_training_state, but the active "
+                    "environment does not implement import_training_state"
+                )
+            import_training_state(_copy_plain_training_state(env_state))
         return loaded_dict["infos"]
 
     OnPolicyRunner.save = _patched_save  # type: ignore[assignment]

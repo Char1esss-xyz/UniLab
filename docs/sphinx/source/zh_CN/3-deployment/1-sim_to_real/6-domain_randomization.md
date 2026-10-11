@@ -1,6 +1,6 @@
 # 面向真机迁移的域随机化
 
-本页是域随机化的部署检查清单。关于**契约**层（一个 DR provider 必须实现什么），见
+本页是域随机化的部署检查清单。关于**契约**层（Manager-Based event term 与 backend 必须实现什么），见
 {doc}`../../4-developer_guide/2-contracts/4-dr_contract`。
 
 ## 随机化什么，按优先级排序
@@ -40,40 +40,27 @@
 
 ## UniLab 如何组织 DR
 
-使用 DR 的任务通过环境初始化路径挂接一个 provider：
+Manager-Based 任务在 owner YAML 的 `env.events` 中声明 reset 与 interval
+随机化，由 manager 生命周期执行。
 
-```python
-from unilab.envs.locomotion.common.dr_provider import LocomotionDRProvider
-
-class MyTaskEnv(NpEnv):
-    def __init__(self, cfg):
-        super().__init__(cfg)
-        self._init_domain_randomization(LocomotionDRProvider(cfg.domain_rand))
-```
-
-管理器位于 `src/unilab/dr/manager.py`；provider 位于其环境 owner 附近，并遵循
-{doc}`../../4-developer_guide/2-contracts/4-dr_contract` 中的契约。
+legacy 任务级 provider 协议已移除。能力边界见
+{doc}`../../4-developer_guide/2-contracts/4-dr_contract`。
 
 ## 配方：起始范围
 
-把所选的 owner YAML 作为权威来源。例如，
-`conf/ppo/task/go2_joystick_rough/mujoco.yaml` 启用了基座质量、质心、kp/kd 以及推力
-随机化；`conf/ppo/task/sharpa_inhand/mujoco.yaml` 配置了 PD 增益、摩擦、质心、质量、
-关节噪声与接触噪声字段。
+以所选 owner YAML 为准。以下是一个 PD 增益片段；绝对增益范围应与机器人的
+控制参数一起评估。
 
 ```yaml
-# conf/ppo/task/go2_joystick_rough/mujoco.yaml
 env:
-  domain_rand:
-    randomize_base_mass: true
-    added_mass_range: [-1.0, 3.0]
-    random_com: true
-    randomize_kp: true
-    kp_multiplier_range: [0.5, 2.0]
-    randomize_kd: true
-    kd_multiplier_range: [0.5, 2.0]
-    push_robots: true
-    push_interval: 625
+  events:
+    pd_gains:
+      func: unilab.envs.mdp.pd_gains
+      mode: reset
+      params:
+        kp_range: [17.5, 70.0]
+        kd_range: [0.25, 1.0]
+        operation: abs
 ```
 
 ## 课程：随技能逐步加大 DR
@@ -86,7 +73,7 @@ env:
 训练之后，在配置中扫动 DR 范围的同时，对照同一后端 owner YAML 回放检查点：
 
 ```bash
-uv run eval --algo ppo --task go2_joystick_flat --sim motrix --load-run -1
+uv run eval --algo ppo --task go2_joystick_flat --sim mujoco --load-run -1
 ```
 
 为每个扫动点记录奖励分量与任务成功指标。一次陡降或奖励分量的不连续，就是 DR 范围

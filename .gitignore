@@ -36,6 +36,7 @@ htmlcov/
 .vscode/
 .idea/
 .kiro/
+.history/
 
 # Project specific
 logs/
@@ -46,7 +47,6 @@ run_summary.json
 .tmp/
 *.log
 .DS_Store
-.ipynb_checkpoints/
 *.bak
 *.backup
 *.old
@@ -55,19 +55,33 @@ run_summary.json
 *.temp
 *.tmp
 *~
+src/unilab/assets/checkpoints/
 
-benchmark/outputs/
-src/unilab/algos/torch/rsl_rl
+scripts/benchmark/outputs/
 
 third-party
 temp/
 agent/
+memory/
+tmp/
+issues/
+issue2/
+docs/superpowers/
 
 # Motion assets (downloaded from HF at runtime)
 src/unilab/assets/motions/g1/*.npz
 src/unilab/assets/motions/g1/*.csv
+src/unilab/assets/motions/g1/**/*.npz
+src/unilab/assets/motions/g1/**/*.csv
 src/unilab/assets/motions/g1/flip
 src/unilab/assets/motions/g1/flip_npz
+
+# Robot mesh assets (downloaded from HF at runtime)
+src/unilab/assets/bots/
+src/unilab/assets/robots/g1/assets/
+src/unilab/assets/robots/g1/textures/
+src/unilab/assets/robots/go2/assets/
+src/unilab/assets/robots/sharpa_wave/meshes/
 
 # Grasp cache assets (downloaded from HF at runtime)
 src/unilab/assets/caches/*.npy
@@ -89,3 +103,23 @@ src/unilab/assets/checkpoints/**/*.onnx
 
 # Backend temp XML emitted next to robot.xml (motrix/mujoco scene materialization)
 src/unilab/assets/robots/**/tmp*.xml
+
+# Optional local Drake native extension build output
+src/unilab/base/backend/drake/native/*.so
+
+# Local OMX workflow state
+.omx/
+
+# Training artifacts (curves, videos, screenshots)
+val/
+
+# Agent working directory (not committed)
+.sisyphus/
+
+# Internal planning docs (not for upstream)
+G1_23DOF_INIT.md
+G1_23DOF_PR_CHECKLIST.md
+APPO_HARDWARE_TIMING_ANALYSIS.md
+
+# Training log artifacts (checkpoints, ONNX exports)
+log/

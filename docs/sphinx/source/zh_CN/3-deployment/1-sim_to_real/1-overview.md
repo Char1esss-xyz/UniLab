@@ -5,8 +5,7 @@
 ## "仿真到真机"在 UniLab 中的含义
 
 一个可部署的 UniLab 策略，是导出的策略加上所选任务 owner 使用的那套精确的观测与
-动作契约。G1 WBT 辅助路径将其物化为 `policy.onnx`、`deploy_config.yaml` 以及一个
-运动二进制文件；其他机器人需要一个等价的硬件侧运行时，它需要：
+动作契约。UniLab 提供训练侧与 ONNX 导出；每种机器人都需要一个硬件侧运行时，它需要：
 
 1. 读取传感器 → 组装出策略在仿真中看到的**同一个观测向量**。
 2. 通过一个支持所导出计算图的运行时来运行 `policy.onnx`。
@@ -32,12 +31,12 @@ flowchart LR
 | 阶段 | UniLab 产物 | 页面 |
 |---|---|---|
 | 训练 | 任务 owner YAML + 训练脚本 | {doc}`../../2-user_guide/1-training/1-cli_reference` |
-| 课程 + DR | `unilab.dr` + 任务侧 provider | {doc}`6-domain_randomization` |
+| 课程 + DR | Manager-Based event term | {doc}`6-domain_randomization` |
 | 跨后端健全性检查 | `--task <task> --sim <other_backend>` | {doc}`../2-sim_to_sim/1-backend_swap` |
 | ONNX 导出 | 训练回放脚本 + 部署辅助工具 | {doc}`5-onnx_runtime` |
 | 延迟 / 观测滞后 | 任务配置开关与部署侧日志 | {doc}`8-latency_budget` |
 | 安全层 | 硬件侧钳制 / 回退 | {doc}`7-safety_layers` |
-| 机器人上机 | 机器人专属指南 | {doc}`2-g1_whole_body`、{doc}`3-go2_locomotion`、{doc}`4-allegro_inhand` |
+| 机器人上机 | 机器人专属指南 | {doc}`2-g1_whole_body`、{doc}`3-go2_locomotion` |
 
 ## 开始之前你应当具备的条件
 
@@ -60,9 +59,9 @@ flowchart LR
 
 - **观测漂移。** 仿真与部署运行时之间的传感器预处理不同（单位、坐标系、滤波截止频率）。
   记录第一段部署侧观测窗口，并与用同一份 owner YAML 构建的仿真回合作对比。
-- **动作延迟。** 一些任务配置通过 `control_config.simulate_action_latency` 暴露单步
-  延迟的动作执行。测量部署回路，并在硬件运行前让训练 owner 匹配该契约。见
-  {doc}`8-latency_budget`。
+- **动作延迟。** 一些 task owner 通过 control config 或 Manager-Based action term
+  暴露单步延迟的动作执行。测量部署回路，并在硬件运行前让训练 owner 匹配该契约。
+  见 {doc}`8-latency_budget`。
 - **摩擦 / 阻尼不匹配。** 尤其对于手内操作。在 DR 中扫动摩擦；通过
   {doc}`../2-sim_to_sim/3-contact_and_friction_alignment` 交叉核对。
 - **复位瞬态。** 仿真复位到一个稳定姿态；部署则从一个控制器状态开始。安全层必须在
@@ -84,14 +83,7 @@ flowchart LR
 :link: 3-go2_locomotion
 :link-type: doc
 
-Go2 与 Go2W 上的摇杆 + 崎岖地形策略。
-:::
-
-:::{grid-item-card} ✋ Allegro 手内操作
-:link: 4-allegro_inhand
-:link-type: doc
-
-灵巧的方块重定向、无触觉部署、抓取生成器。
+Go2 上的摇杆平地策略。
 :::
 
 ::::

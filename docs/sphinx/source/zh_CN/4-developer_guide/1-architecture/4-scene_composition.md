@@ -40,7 +40,7 @@ materializer。
 
 ## Backend 分发
 
-`src/unilab/base/backend/__init__.py` 中的 `create_backend(...)` 按 backend 类型
+`src/unilab/base/backend_factory.py` 中的 `create_backend(...)` 按 backend 类型
 路由，并对 `SceneCfg` 应用以下规则：
 
 1. 静态 `SceneCfg(model_file=...)` 且无 terrain：加载完整静态场景（存在
@@ -53,7 +53,7 @@ materializer。
 
 ## MuJoCo Materializer 流水线
 
-对于程序化地形，MuJoCo backend 调用 `src/unilab/base/backend/mujoco/xml.py` 中的
+对于程序化地形，MuJoCo backend 调用 `unisim.backend.mujoco.xml` 中的
 `materialize_mujoco_hfield_attached_scene(...)`。冷路径步骤为：
 
 1. `TerrainGenerator(terrain_cfg).write_png(...)` 生成与 backend 无关的高度场
@@ -94,15 +94,14 @@ materializer。
 - 探测 backend 私有的场景方法，而不使用明确的契约。
 - 在 env 构造完成后重新生成地形。
 
-## Go2 崎岖地形证据
+## 地形契约证据
 
-当前面向用户的程序化地形路径是 Go2 崎岖地形：
+核心仓库保留 terrain contract 与 materialization 测试，但不再持有
+production rough-terrain 任务：
 
-- Env owner：`src/unilab/envs/locomotion/go2/rough.py`
-- 地形生成器：`src/unilab/terrains/terrain_generator.py`
-- MuJoCo materializer：`src/unilab/base/backend/mujoco/xml.py`
-- Motrix materializer：`src/unilab/base/backend/motrix/scene.py`
-- Owner YAML：`conf/ppo/task/go2_joystick_rough/mujoco.yaml`、
-  `conf/ppo/task/go2_joystick_rough/motrix.yaml`
+- 地形生成器：`unisim.terrain.generator`
+- MuJoCo materializer：`unisim.backend.mujoco.xml`
+- Motrix materializer：`unisim.backend.motrix.scene`
+- 契约覆盖：`tests/utils/test_xml_utils.py`
 
 用户使用说明见 {doc}`../../2-user_guide/6-terrain/1-procedural`。

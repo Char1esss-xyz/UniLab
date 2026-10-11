@@ -18,13 +18,13 @@ cd UniLab
 
 ```bash
 # Linux CUDA 或 macOS
-make setup-motrix
+make setup
 
 # 不安装 shell 自动补全：
-# uv sync --extra motrix
+# uv sync --extra mujoco --extra uni_rl
 
 # 如果未安装 make：
-# uv sync --extra motrix && uv run --no-sync unilab-complete install
+# uv sync --extra mujoco --extra uni_rl && uv run --no-sync unilab-complete install
 
 # Linux AMD / ROCm
 # make sync-rocm
@@ -33,17 +33,18 @@ make setup-motrix
 # make sync-xpu
 ```
 
-## 演示
+## 第一次成功
 
-演示回放（首次运行会从 Hugging Face 拉取预训练检查点）：
+在修改任务配置前，先运行一个预训练策略（首次运行会从 Hugging Face 拉取检查点和 asset）：
 
 ```bash
 uv run demo dance
 ```
 
-可用的 demo 名称：`teaser`、`dance`、`wallflip`、`boxtracking`、`locomani`、`inhandgrasp`。
+可用的 demo 名称为 `teaser` 和 `dance`。运行 `uv run demo --help` 查看 device
+和 refresh 选项。
 
-中国大陆用户：运动、场景和 demo 检查点在首次运行时从 Hugging Face 拉取。如果
+中国大陆用户：运动、场景、机器人网格和 demo 检查点在首次运行时从 Hugging Face 拉取。如果
 `huggingface.co` 无法访问，请在运行训练、评估或 demo 命令前切到社区镜像：
 
 ```bash
@@ -53,12 +54,12 @@ export HF_ENDPOINT=https://hf-mirror.com
 ## 训练与评估
 
 ```bash
-uv run train --algo ppo --task go2_joystick_flat --sim motrix
+uv run train --algo ppo --task go2_joystick_flat --sim mujoco
 
-uv run eval --algo ppo --task go2_joystick_flat --sim motrix --load-run -1
+uv run eval --algo ppo --task go2_joystick_flat --sim mujoco --load-run -1
 
 # 面向 Linux/服务器运行的 Motrix 无头（headless）视频导出
-uv run eval --algo ppo --task go2_joystick_flat --sim motrix \
+uv run eval --algo ppo --task go2_joystick_flat --sim mujoco \
   --load-run -1 --render-mode record
 ```
 
@@ -74,7 +75,7 @@ uv run eval --algo ppo --task go2_joystick_flat --sim motrix \
 对于 CI 风格的本地检查，保持相同的 CLI 路由，并在各标志之后追加 Hydra 覆盖项（override）：
 
 ```bash
-uv run train --algo ppo --task go2_joystick_flat --sim motrix \
+uv run train --algo ppo --task go2_joystick_flat --sim mujoco \
   algo.max_iterations=1 \
   algo.num_envs=16 \
   training.no_play=true

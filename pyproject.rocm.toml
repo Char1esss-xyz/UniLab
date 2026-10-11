@@ -1,20 +1,32 @@
 [build-system]
-requires = ["uv_build>=0.11.3,<0.12"]
+requires = ["uv_build>=0.12.1,<0.13"]
 build-backend = "uv_build"
 
 [project]
 name = "unilab"
-version = "0.1.0"
+version = "1.3.4"
 description = "Universal Lab for Robot Learning"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
+authors = [{ name = "UniLab Authors" }]
+keywords = ["robot-learning", "reinforcement-learning", "mujoco", "simulation"]
+classifiers = [
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "numpy",
-    "torch==2.11.0",
-    "triton-rocm==3.6.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "mujoco-uni==3.8.0rc2",
+    "unisim-core>=1.7.15",
+    "prettytable>=3.10",
+    "torch==2.14.0",
+    "triton-rocm==3.8.0 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "gymnasium",
     "imageio",
     "etils",
@@ -24,50 +36,55 @@ dependencies = [
     "packaging",
     "mediapy",
     "tensorboard",
-    "setuptools<70",
+    "setuptools",
     "rich",
     "tqdm",
     "typing-extensions",
-    "mlx ; sys_platform == 'darwin'",
     "lark>=1.3.1",
     "wandb",
-    "notebook>=7.5.5",
-    "onnxruntime>=1.24.3",
+    "onnxruntime<1.20 ; python_version < '3.11'",
+    "onnxruntime>=1.20 ; python_version >= '3.11'",
+    "huggingface_hub>=0.25",
+    "ninja ; sys_platform == 'linux'",
+    "imageio-ffmpeg>=0.6.0",
+    "viser>=1.0.26",
+    "trimesh>=3.21.7",
 ]
 
 [project.scripts]
 train = "unilab.cli:train_main"
 eval = "unilab.cli:eval_main"
 demo = "unilab.cli:demo_main"
-unilab-viz-nan = "unilab.tools.viz_nan:main"
-unilab-export-scene = "unilab.tools.export_scene:main"
+unilab-complete = "unilab.cli_completion:main"
+unilab-viz-nan = "unilab.utils.nan_viz:main"
+unilab-render-teaser = "unilab.visualization.teaser:main"
+unilab-pull-assets = "unilab.assets.pull:main"
+uni-cumps = "unilab.training.cuda_mps_cli:main"
 
 [project.optional-dependencies]
-motrix = ["motrixsim-core==0.8.1.dev104665"]
-viser = ["viser>=1.0.26", "trimesh>=3.21.7"]
+drake = [
+    "drake-uni==0.1.0",
+]
+# mjbatch is built and version-checked against mujoco==3.11.0; switching
+# MuJoCo versions requires an mjbatch rebuild.
+mujoco = [
+    "mujoco~=3.11.0",
+    "mjbatch-uni~=0.2.5",
+]
+motrix = ["unisim-core[motrix]>=1.7.15"]
+uni_rl = ["unilab-rl==1.4.11"]
 
 [dependency-groups]
-dev = ["pytest", "pytest-cov", "ruff", "mypy", "pyright>=1.1.408"]
+# Dev/CI exercises the APPO/off-policy/multi-GPU paths, so the optional
+# unilab-rl runtime stays installed in the dev environment.
+dev = ["pytest", "pytest-cov", "ruff", "mypy", "pyright>=1.1.408", "unilab-rl==1.4.11"]
 
-# ========== ROCm 索引配置 ==========
 [[tool.uv.index]]
 name = "pytorch-rocm72"
 url = "https://download.pytorch.org/whl/rocm7.2"
 explicit = true
 
-[[tool.uv.index]]
-name = "motphys-pypi"
-url = "https://pypi.motphys.com/simple/"
-explicit = true
-
-[[tool.uv.index]]
-name = "test-pypi"
-url = "https://test.pypi.org/simple/"
-explicit = true
-
 [tool.uv.sources]
-motrixsim-core = { index = "motphys-pypi" }
-mujoco-uni = { index = "test-pypi" }
 torch = [
     { index = "pytorch-rocm72", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
 ]
@@ -114,9 +131,6 @@ warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
 no_site_packages = true
-exclude = [
-    "src/unilab/algos/torch/rsl_rl/",
-]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -127,7 +141,6 @@ addopts = "--tb=short -m 'not slow'"
 
 [tool.coverage.run]
 source = ["unilab"]
-omit = ["*/rsl_rl/*"]
 
 [tool.coverage.report]
 exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]
@@ -138,14 +151,8 @@ venvPath = "."
 venv = ".venv"
 include = ["src/unilab"]
 exclude = [
-    "src/unilab/algos/torch/rsl_rl/",
-    "src/unilab/algos/mlx/",
-    "src/unilab/algos/torch/common/ane_*",
-    "src/unilab/base/backend/",
-    "src/unilab/envs/",
-    "src/unilab/terrains/",
-    "src/unilab/training/monitoring.py",
-    "src/unilab/visualization/",
+    "src/unilab/envs/",                     # lazy optional `mujoco` import; not installed in the pyright env
+    "src/unilab/visualization/",            # direct mujoco C bindings; not installed in the pyright env
 ]
 reportMissingImports = "warning"
 reportMissingModuleSource = "none"

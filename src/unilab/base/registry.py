@@ -1,50 +1,102 @@
 import dataclasses
 import importlib
 import logging
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from importlib.metadata import entry_points
 from typing import (
     Any,
     Callable,
     Dict,
+    Literal,
     Optional,
-    Type,
+    Protocol,
     TypeVar,
-    cast,
-    get_args,
-    get_origin,
-    get_type_hints,
 )
 
-from .base import ABEnv, EnvCfg
+from .base import EnvCfg
+from .config_materialization import apply_cfg_overrides
+from .config_overrides import (
+    CONFIG_MAPPING_POLICY_KEY,
+    MANAGER_TERM_MAPPING_POLICY,
+)
+from .torch_env import TorchEnv
 
-TEnvCfg = TypeVar("TEnvCfg", bound=EnvCfg)
-_DEFAULT_SIM_BACKEND_ORDER: tuple[str, ...] = ("mujoco", "motrix")
+EnvCfgFactory = Callable[[], EnvCfg]
+TEnvCfgFactory = TypeVar("TEnvCfgFactory", bound=EnvCfgFactory)
+
+
+class EnvFactory(Protocol):
+    """Construct an environment for one materialized config and backend."""
+
+    def __call__(
+        self,
+        cfg: Any,
+        *,
+        num_envs: int = 1,
+        backend_type: str = "mujoco",
+    ) -> Any: ...
+
+
+TEnvFactory = TypeVar("TEnvFactory", bound=EnvFactory)
+RewardOverrideField = Literal["reward_config", "rewards"]
+_TENSOR_MANAGER_SUPPORTED_SIM_BACKENDS = (
+    "mujoco",
+    "mjwarp",
+    "genesis",
+    "newton",
+    "motrix",
+    "superdex",
+    "drake",
+)
+_SHELVED_SIM_BACKENDS = (
+    "isaacgym",
+    "isaacsim",
+)
+_SUPPORTED_SIM_BACKENDS = _TENSOR_MANAGER_SUPPORTED_SIM_BACKENDS + _SHELVED_SIM_BACKENDS
+# Drake is an explicit owner-selected CPU host bridge during its scoped
+# reintroduction; never use it as an implicit fallback backend.
+_DEFAULT_SIM_BACKEND_ORDER: tuple[str, ...] = tuple(
+    backend for backend in _TENSOR_MANAGER_SUPPORTED_SIM_BACKENDS if backend != "drake"
+)
+_TENSOR_MANAGER_BACKEND_SCOPE_ERROR = (
+    "Simulation backend '{backend}' is temporarily out of the tensor-only "
+    "Manager runtime scope. Active backends: "
+    f"{', '.join(_TENSOR_MANAGER_SUPPORTED_SIM_BACKENDS)}. Re-enabling it requires "
+    "capability, parity, and support-matrix evidence (issue #1811)."
+)
 _REGISTRY_MODULES_ATTR = "__unilab_registry_modules__"
-_DEFAULT_REGISTRY_PACKAGES = (
-    "unilab.envs.locomotion",
-    "unilab.envs.manipulation",
-    "unilab.envs.motion_tracking",
-)
+_DEFAULT_REGISTRY_PACKAGES = ("unilab.tasks",)
+# Environment variable used to extend ensure_registries() with extra packages.
+# Mainly intended for test setups that need to ship a fixture-only registry into
+# spawn subprocesses (which do not inherit pytest conftest state).
+_EXTRA_REGISTRY_PACKAGES_ENV = "UNILAB_EXTRA_REGISTRY_PACKAGES"
+# Entry-point group through which third-party task packages self-register.
+# A package declares e.g. ``[project.entry-points."unilab.tasks"]`` with
+# ``microduck = "microduck_rl_unilab.tasks"``; the value is the importable
+# package name, consumed exactly like a default/env-var package (it must
+# declare ``__unilab_registry_modules__``).
+_REGISTRY_ENTRY_POINT_GROUP = "unilab.tasks"
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class EnvMeta:
-    env_cfg_cls: Type[EnvCfg]
-    env_cls_dict: Dict[str, Type[ABEnv]] = field(default_factory=dict)
+    env_cfg_factory: EnvCfgFactory
+    env_factory_dict: Dict[str, EnvFactory] = field(default_factory=dict)
 
     def available_sim_backend(self) -> Optional[str]:
         """Return the explicit default simulation backend for this environment."""
         for backend in _DEFAULT_SIM_BACKEND_ORDER:
-            if backend in self.env_cls_dict:
+            if backend in self.env_factory_dict:
                 return backend
-        return next(iter(self.env_cls_dict), None)
+        return next(iter(self.env_factory_dict), None)
 
     def support_sim_backend(self, sim_backend: str) -> bool:
         """Check if the environment supports a specific simulation backend."""
-        return sim_backend in self.env_cls_dict
+        return sim_backend in self.env_factory_dict
 
 
 _envs: Dict[str, EnvMeta] = {}
@@ -55,36 +107,71 @@ def contains(name: str) -> bool:
     return name in _envs
 
 
-def register_env_config(name: str, env_cfg_cls: Type[EnvCfg]):
-    """Register an environment configuration class with a name."""
+def _config_factory_name(factory: EnvCfgFactory) -> str:
+    return str(getattr(factory, "__qualname__", type(factory).__qualname__))
+
+
+def _env_factory_name(factory: EnvFactory) -> str:
+    return str(getattr(factory, "__qualname__", type(factory).__qualname__))
+
+
+def register_env_config(name: str, env_cfg_factory: EnvCfgFactory) -> None:
+    """Register a zero-argument environment configuration factory."""
     if name in _envs.keys():
         raise ValueError(f"Environment '{name}' is already registered.")
-    _envs[name] = EnvMeta(env_cfg_cls=env_cfg_cls)
+    if not callable(env_cfg_factory):
+        raise TypeError(
+            f"Environment '{name}' config factory must be callable, got "
+            f"{type(env_cfg_factory).__name__}"
+        )
+    _envs[name] = EnvMeta(env_cfg_factory=env_cfg_factory)
 
 
-def envcfg(name: str) -> Callable[[Type[TEnvCfg]], Type[TEnvCfg]]:
+def envcfg(name: str) -> Callable[[TEnvCfgFactory], TEnvCfgFactory]:
     """
-    Decorator to register an environment configuration class with a name.
+    Decorator to register an environment configuration class or factory.
 
     Usage:
-        @register_env_config_decorator("my-env")
+        @envcfg("my-env")
         @dataclass
         class MyEnvCfg(EnvCfg):
             ...
+
+        @envcfg("my-manager-env")
+        def make_my_env_cfg() -> EnvCfg:
+            ...
     """
 
-    def decorator(cls: Type[TEnvCfg]) -> Type[TEnvCfg]:
-        register_env_config(name, cls)
-        return cls
+    def decorator(factory: TEnvCfgFactory) -> TEnvCfgFactory:
+        register_env_config(name, factory)
+        return factory
 
     return decorator
 
 
-def register_env(name: str, env_cls: Type[ABEnv], sim_backend: str):
-    """Register an environment class with a name and simulation backend."""
-    if sim_backend not in ["mujoco", "motrix"]:
+def materialize_env_config(name: str) -> EnvCfg:
+    """Construct one config instance from the registered cold-path factory."""
+    if name not in _envs:
+        raise ValueError(f"Environment '{name}' is not registered.")
+
+    factory = _envs[name].env_cfg_factory
+    env_cfg = factory()
+    if not isinstance(env_cfg, EnvCfg):
+        raise TypeError(
+            f"Environment '{name}' config factory '{_config_factory_name(factory)}' returned "
+            f"{type(env_cfg).__name__}, expected an EnvCfg instance"
+        )
+    return env_cfg
+
+
+def register_env(name: str, env_factory: TEnvFactory, sim_backend: str) -> TEnvFactory:
+    """Register and return an environment class or function factory."""
+    if sim_backend in _SHELVED_SIM_BACKENDS:
+        raise ValueError(_TENSOR_MANAGER_BACKEND_SCOPE_ERROR.format(backend=sim_backend))
+    if sim_backend not in _SUPPORTED_SIM_BACKENDS:
         raise ValueError(
-            f"Unsupported simulation backend: {sim_backend}. Only 'mujoco' and 'motrix' are supported."
+            f"Unsupported simulation backend: {sim_backend}. "
+            f"Supported backends: {', '.join(_SUPPORTED_SIM_BACKENDS)}."
         )
 
     if name not in _envs:
@@ -92,27 +179,37 @@ def register_env(name: str, env_cls: Type[ABEnv], sim_backend: str):
             f"Environment '{name}' is not registered. Please register the config first."
         )
 
-    if sim_backend in _envs[name].env_cls_dict:
+    if not callable(env_factory):
+        raise TypeError(
+            f"Environment '{name}' backend '{sim_backend}' factory must be callable, got "
+            f"{type(env_factory).__name__}"
+        )
+
+    if sim_backend in _envs[name].env_factory_dict:
         raise ValueError(
             f"Environment '{name}' with sim backend '{sim_backend}' is already registered."
         )
 
-    _envs[name].env_cls_dict[sim_backend] = env_cls
+    _envs[name].env_factory_dict[sim_backend] = env_factory
+    return env_factory
 
 
-def env(name: str, sim_backend: str) -> Callable[[Type[ABEnv]], Type[ABEnv]]:
+def env(name: str, sim_backend: str) -> Callable[[TEnvFactory], TEnvFactory]:
     """
-    Decorator to register an environment class with a name and simulation backend.
+    Decorator to register an environment class or function factory.
 
     Usage:
-        @register_env_decorator("my-env", "np")
+        @env("my-env", "mujoco")
         class MyEnv(ABEnv):
+            ...
+
+        @env("my-manager-env", "mujoco")
+        def make_my_env(cfg, num_envs=1, backend_type="mujoco"):
             ...
     """
 
-    def decorator(cls: Type[ABEnv]) -> Type[ABEnv]:
-        register_env(name, cls, sim_backend)
-        return cls
+    def decorator(factory: TEnvFactory) -> TEnvFactory:
+        return register_env(name, factory, sim_backend)
 
     return decorator
 
@@ -129,67 +226,41 @@ def find_available_sim_backend(env_name: str) -> str:
     return backend
 
 
-def _resolve_dataclass_type(type_hint: Any) -> Optional[Type[Any]]:
-    """Strip Optional/Union and return the underlying dataclass type, or None."""
-    if type_hint is None:
-        return None
-    origin = get_origin(type_hint)
-    if origin is not None:
-        args = get_args(type_hint)
-        type_hint = next((arg for arg in args if arg is not type(None)), None)
-    if (
-        type_hint is not None
-        and dataclasses.is_dataclass(type_hint)
-        and isinstance(type_hint, type)
-    ):
-        return cast(Type[Any], type_hint)
-    return None
+def resolve_reward_override_field(env_name: str) -> RewardOverrideField:
+    """Resolve the Hydra root reward target declared by an env config owner.
 
-
-def _construct_dataclass_from_dict(target_type: Type[Any], values: Dict[str, Any]) -> Any:
-    try:
-        target_obj = target_type()
-    except TypeError:
-        return target_type(**values)
-    apply_cfg_overrides(target_obj, values)
-    return target_obj
-
-
-def apply_cfg_overrides(target_obj: Any, overrides: Dict[str, Any]) -> None:
-    """Apply a (possibly nested) dict of overrides to ``target_obj`` in place.
-
-    Behavior:
-      - For each ``key, value`` in ``overrides``, ``target_obj.key`` must exist
-        (otherwise ``ValueError``).
-      - If ``value`` is a dict and ``target_obj.key`` is already a dataclass
-        instance, recurse into it (deep merge — preserves fields not present
-        in ``value``). This is what lets Hydra-style partial overrides like
-        ``env.scene.terrain.generator.num_rows=4`` keep ``sub_terrains`` and other
-        defaults intact.
-      - If ``value`` is a dict and ``target_obj.key`` is currently ``None``,
-        instantiate the field's annotated dataclass type from the dict
-        (full-construction path).
-      - Otherwise ``setattr`` the value directly (scalar / list / non-dataclass).
+    Legacy configs own a ``reward_config`` field. Manager-Based configs opt in
+    through the explicit manager-term mapping metadata on ``rewards``. The
+    registry resolves this on the config class without constructing an env or
+    backend so training adapters do not branch on task names.
     """
-    try:
-        type_hints = get_type_hints(type(target_obj))
-    except Exception:
-        type_hints = {}
+    if env_name not in _envs:
+        raise ValueError(f"Environment '{env_name}' is not registered.")
 
-    for key, value in overrides.items():
-        if not hasattr(target_obj, key):
-            raise ValueError(f"Config class '{type(target_obj).__name__}' has no attribute '{key}'")
-        existing = getattr(target_obj, key)
-        if isinstance(value, dict):
-            if dataclasses.is_dataclass(existing) and not isinstance(existing, type):
-                apply_cfg_overrides(existing, value)
-                continue
-            if existing is None:
-                target_type = _resolve_dataclass_type(type_hints.get(key))
-                if target_type is not None:
-                    setattr(target_obj, key, _construct_dataclass_from_dict(target_type, value))
-                    continue
-        setattr(target_obj, key, value)
+    config = materialize_env_config(env_name)
+    config_fields = {config_field.name: config_field for config_field in dataclasses.fields(config)}
+    rewards_field = config_fields.get("rewards")
+    has_manager_rewards = (
+        rewards_field is not None
+        and rewards_field.metadata.get(CONFIG_MAPPING_POLICY_KEY) == MANAGER_TERM_MAPPING_POLICY
+    )
+    has_legacy_rewards = "reward_config" in config_fields
+    config_owner = type(config).__name__
+
+    if has_manager_rewards and has_legacy_rewards:
+        raise ValueError(
+            f"Environment '{env_name}' config owner '{config_owner}' declares both "
+            "Manager-Based 'rewards' and legacy 'reward_config' targets"
+        )
+    if has_manager_rewards:
+        return "rewards"
+    if has_legacy_rewards:
+        return "reward_config"
+    raise ValueError(
+        f"Environment '{env_name}' config owner '{config_owner}' declares no "
+        "supported Hydra root reward target; expected legacy 'reward_config' or an "
+        "explicitly marked Manager-Based 'rewards' field"
+    )
 
 
 def make(
@@ -197,14 +268,14 @@ def make(
     sim_backend: Optional[str] = None,
     env_cfg_override: Optional[Dict[str, Any]] = None,
     num_envs: int = 1,
-) -> ABEnv:
+) -> Any:
     """
     Create an environment instance by name.
 
     Args:
         name: Environment name
-        sim_backend: Simulation backend ("mujoco" or "motrix"). If None, uses the
-            explicit default backend order: "mujoco", then "motrix".
+        sim_backend: Simulation backend. If None, uses the
+            explicit tensor-manager backend order: "mujoco", "mjwarp", "genesis", "newton".
         num_envs: Number of environments to create
 
     Returns:
@@ -216,7 +287,7 @@ def make(
     meta: EnvMeta = _envs[name]
 
     # Create environment config
-    env_cfg = meta.env_cfg_cls()
+    env_cfg = materialize_env_config(name)
     if env_cfg_override is not None:
         apply_cfg_overrides(env_cfg, env_cfg_override)
 
@@ -235,8 +306,14 @@ def make(
         )
 
     # Create environment instance
-    env_cls_any: Any = meta.env_cls_dict[sim_backend]
-    env: ABEnv = env_cls_any(env_cfg, num_envs=num_envs, backend_type=sim_backend)
+    factory = meta.env_factory_dict[sim_backend]
+    env = factory(env_cfg, num_envs=num_envs, backend_type=sim_backend)
+    if not isinstance(env, TorchEnv):
+        raise TypeError(
+            f"Environment '{name}' backend '{sim_backend}' factory "
+            f"'{_env_factory_name(factory)}' returned {type(env).__name__}, "
+            "expected a TorchEnv instance"
+        )
     return env
 
 
@@ -245,8 +322,8 @@ def list_registered_envs() -> Dict[str, Dict[str, Any]]:
     result = {}
     for name, meta in _envs.items():
         result[name] = {
-            "config_class": meta.env_cfg_cls.__name__,
-            "available_backends": list(meta.env_cls_dict.keys()),
+            "config_factory": _config_factory_name(meta.env_cfg_factory),
+            "available_backends": list(meta.env_factory_dict.keys()),
         }
     return result
 
@@ -258,8 +335,35 @@ def ensure_registries(
     fail_on_error: bool = True,
 ) -> None:
     """Import env registry bootstrap modules."""
-    package_names = list(packages) if packages is not None else list(_DEFAULT_REGISTRY_PACKAGES)
+    package_names: list[str] = (
+        list(packages) if packages is not None else list(_DEFAULT_REGISTRY_PACKAGES)
+    )
     optional = set(optional_packages) if optional_packages else set()
+
+    # Allow extending the default registry packages via env var. This is the
+    # only seam that lets a pytest conftest inject test-only envs (e.g.
+    # DummyFlatTest) into spawn-based collector subprocesses, which start as
+    # fresh interpreters and therefore never execute conftest.py.
+    extra_env = os.environ.get(_EXTRA_REGISTRY_PACKAGES_ENV, "").strip()
+    if extra_env:
+        for extra in extra_env.split(","):
+            extra = extra.strip()
+            if extra and extra not in package_names:
+                package_names.append(extra)
+                # Treat env-var-provided packages as optional: a missing import
+                # must never break a production training run that happens to
+                # have the env var leaked from a parent shell.
+                optional.add(extra)
+
+    # Third-party task packages discovered through the "unilab.tasks"
+    # entry-point group. Entry-point metadata lives in site-packages, so
+    # spawn-based collector subprocesses (fresh interpreters re-running
+    # ensure_registries) discover the same packages without any env-var
+    # forwarding. Unlike env-var packages, an installed entry point is a
+    # deliberate installation choice, so import failures stay strict.
+    for ep in entry_points(group=_REGISTRY_ENTRY_POINT_GROUP):
+        if ep.value and ep.value not in package_names:
+            package_names.append(ep.value)
 
     for package_name in package_names:
         is_optional = package_name in optional

@@ -2,6 +2,8 @@
 
 Training in UniLab is config-first. Use the package CLI for day-to-day runs and
 the script entrypoints when debugging the underlying Hydra composition.
+Off-policy SAC and FlashSAC runs use one learner device per training
+process.
 
 ::::{grid} 1 1 2 2
 :gutter: 3
@@ -24,6 +26,12 @@ Owner YAML layout, backend selection, and safe override examples.
 TensorBoard, W&B, run metadata, and trace options.
 :::
 
+:::{grid-item-card} Tensor runtime
+:link: 4-tensor_runtime
+:link-type: doc
+Bounded off-policy inference, metric, replay-ingress, and learner settings.
+:::
+
 :::{grid-item-card} Resume and checkpoints
 :link: 5-resume_and_checkpoints
 :link-type: doc
@@ -36,10 +44,10 @@ How `algo.load_run`, checkpoint files, and replay commands fit together.
 Run UniLab inside the checked-in Linux NVIDIA image workflow.
 :::
 
-:::{grid-item-card} Multi-GPU
-:link: 4-multi_gpu
+:::{grid-item-card} Tensor runtime production
+:link: 7-tensor_runtime_production
 :link-type: doc
-Current off-policy multi-GPU knobs and their config boundary.
+Reproduce and operate the scoped single-GPU G1 FlashSAC/MJWarp long soak.
 :::
 
 ::::
@@ -66,7 +74,8 @@ Day-to-day runs should use the unified CLI. Reach for the low-level
 1-cli_reference
 2-hydra_config
 3-logging
-4-multi_gpu
+4-tensor_runtime
 5-resume_and_checkpoints
 6-docker
+7-tensor_runtime_production
 ```

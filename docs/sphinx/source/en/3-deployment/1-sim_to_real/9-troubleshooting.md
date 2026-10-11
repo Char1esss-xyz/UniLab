@@ -7,6 +7,7 @@ sideways, start here.
 
 | Likely cause | Check | Fix |
 |---|---|---|
+| State estimator velocity bias | Log `base_lin_vel` vs ground truth (motion capture) | Tune the state estimator |
 | PD gains too high vs trained | Compare driver Kp/Kd against owner YAML | Match training values; or retrain with realistic Kp/Kd DR |
 | Action latency too low in training | Sweep `torque_delay_ms` in DR | Retrain with measured-latency × 1.5 |
 | Velocity noise too low | Compare encoder σ in sim vs hardware | Increase `joint_vel_noise_std` in DR |
@@ -15,7 +16,6 @@ sideways, start here.
 
 | Likely cause | Check | Fix |
 |---|---|---|
-| State estimator velocity bias | Log `base_lin_vel` vs ground truth (motion capture) | Tune KF or switch to HIM-PPO |
 | IMU bias not calibrated | Robot static, check `gyro_bias` | Run 30-second calibration before policy start |
 | Foot contact misclassified | Check contact event timestamps | Hysteresis on contact force threshold |
 
@@ -24,23 +24,16 @@ sideways, start here.
 Almost always one of:
 
 1. **Joint order swapped.** Inspect `policy.onnx` input width and the joint
-   order in your motor driver. Use `unilab-export-scene` to dump the
-   training joint order.
+   order in your motor driver against the training scene XML
+   (`src/unilab/assets/robots/<robot>/scene_flat.xml`).
 2. **Action scale unit mismatch.** Policy outputs unscaled values; the
-   driver expects rad, but you fed it normalized [-1, 1]. Apply
-   the `action_scale` / default-angle convention from `deploy_config.yaml`
-   before sending targets to the driver.
-3. **Observation layout mismatch.** Compare `deploy_config.yaml` `obs_layout`
-   against the training owner and validate it with `scripts/deploy/sim_prototype.py`
-   before running on hardware.
-
-## Cube drops in Allegro / Sharpa inhand
-
-| Likely cause | Check | Fix |
-|---|---|---|
-| Friction mismatch | Real cube vs sim μ | Sweep friction DR wider, retrain |
-| Grasp distribution mismatch | Log operator grip poses | Augment grasp generator |
-| Pose estimator latency | Measure vision pipeline ms | Add observation lag DR |
+   driver expects rad, but you fed it normalized [-1, 1]. Apply the
+   `env.actions.joint_pos.scale` / default-angle convention from the training
+   owner YAML before sending targets to the driver, reproducing the owner's
+   resolved per-actuator scale exactly.
+3. **Observation layout mismatch.** Compare what your hardware loop assembles
+   against the owner's `env.observations.actor.terms` — term order first, then
+   per-term history ordering.
 
 ## Policy succeeds in MuJoCo but fails in Motrix (or vice versa)
 
@@ -55,7 +48,7 @@ investigation tomorrow takes 30 minutes instead of 4 hours:
 
 - Full hardware trace (`obs / action / wall_clock` for the entire run).
 - Sim-side YAML used to train: `runs/<run>/config.yaml`.
-- `policy.onnx` and, for the G1 WBT path, `deploy_config.yaml`.
+- `policy.onnx` and the exact task owner YAML path it was trained from.
 - One sim rollout video using **the same** seed: `eval --seed <same>
   --render-mode record`.
 - A `git diff` between the run's commit and `main` if any.

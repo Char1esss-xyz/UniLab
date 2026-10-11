@@ -21,7 +21,7 @@ Bootstrap 导入、env 注册与运行时构造。
 :::{grid-item-card} Env 契约
 :link: 2-contracts/1-env_contract
 :link-type: doc
-`NpEnvState`、reset/step 形状、observation 分组与 wrapper 预期。
+`TorchEnvState`、reset/step 形状、observation 分组与 wrapper 预期。
 :::
 
 :::{grid-item-card} Backend 契约
@@ -39,7 +39,13 @@ Hydra owner YAML 身份与后端选择规则。
 :::{grid-item-card} 域随机化契约
 :link: 2-contracts/4-dr_contract
 :link-type: doc
-DR provider 的 init、reset、interval 与后端能力边界。
+Manager-Based construction、reset、interval 与后端能力边界。
+:::
+
+:::{grid-item-card} Tensor runtime 生产化
+:link: 8-tensor_runtime_production
+:link-type: doc
+契约所有权、schema 策略、benchmark 验收与 release transition。
 :::
 
 ::::
@@ -93,5 +99,6 @@ DR provider 的 init、reset、interval 与后端能力边界。
 5-contributing_workflow
 6-agent_quick_reference
 7-motion_assets
-8-motrix_contact_sensor
+8-tensor_runtime_production
+9-sim2sim_contract_status
 ```

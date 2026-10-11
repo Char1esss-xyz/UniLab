@@ -2,6 +2,7 @@
 
 UniLab 中的训练以配置为先（config-first）。日常运行使用软件包 CLI，调试底层
 Hydra 组合时再使用脚本入口。
+off-policy SAC 与 FlashSAC 每个训练进程只使用一个 learner device。
 
 ::::{grid} 1 1 2 2
 :gutter: 3
@@ -24,6 +25,12 @@ owner YAML 布局、后端选择以及安全的 override 示例。
 TensorBoard、W&B、运行元数据以及 trace 选项。
 :::
 
+:::{grid-item-card} Tensor runtime
+:link: 4-tensor_runtime
+:link-type: doc
+有边界的 off-policy inference、metric、replay ingress 与 learner 设置。
+:::
+
 :::{grid-item-card} 续训与检查点
 :link: 5-resume_and_checkpoints
 :link-type: doc
@@ -36,10 +43,10 @@ TensorBoard、W&B、运行元数据以及 trace 选项。
 在仓库内置的 Linux NVIDIA 镜像工作流中运行 UniLab。
 :::
 
-:::{grid-item-card} 多 GPU
-:link: 4-multi_gpu
+:::{grid-item-card} Tensor runtime 生产指南
+:link: 7-tensor_runtime_production
 :link-type: doc
-当前 off-policy 的多 GPU 旋钮及其配置边界。
+复现并运维 scoped 单 GPU G1 FlashSAC/MJWarp 长 soak。
 :::
 
 ::::
@@ -66,7 +73,8 @@ TensorBoard、W&B、运行元数据以及 trace 选项。
 1-cli_reference
 2-hydra_config
 3-logging
-4-multi_gpu
+4-tensor_runtime
 5-resume_and_checkpoints
 6-docker
+7-tensor_runtime_production
 ```

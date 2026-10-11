@@ -9,20 +9,22 @@ UniLab 是一个 contract 驱动的机器人学习基础设施仓库。其核心
 
 ```text
 CPU physics backend -> collector / IPC -> learner
-MuJoCo or Motrix      shared memory       torch or mlx
+MuJoCo or Motrix      shared memory       torch
 ```
 
-PPO 与 MLX PPO 是同步的单进程路径。APPO 与 off-policy 算法则使用异步 runner、
-共享缓冲区，以及位于 `src/unilab/ipc/` 与 `src/unilab/algos/` 下的权重同步原语。
+PPO 是同步路径：默认单进程，也可在单机上按一卡一进程运行 RSL-RL 数据并行；
+每个 rank 独立持有 env/rollout，RSL-RL 在每个 mini-batch 后平均梯度。APPO 与
+off-policy 算法则使用异步 runner、共享缓冲区，以及位于 `uni_rl.ipc` (unilab-rl repo) 与
+`uni_rl` (unilab-rl repo) 下的权重同步原语。
 
 ## 分层边界
 
 | 层 | 路径 | 拥有 |
 | --- | --- | --- |
-| Backend | `src/unilab/base/backend/` | `SimBackend`、物理状态、可选能力 |
-| Env | `src/unilab/envs/`、`src/unilab/base/np_env.py` | MDP 语义、观测、奖励、reset |
-| Config 与 registry | `conf/`、`src/unilab/base/registry.py`、`src/unilab/structured_configs.py` | Schema、owner YAML、env/backend 注册 |
-| 算法与 IPC | `src/unilab/algos/`、`src/unilab/ipc/` | Learner、runner、buffer、权重同步 |
+| Backend | `unisim.backend` | `SimBackend`、物理状态、可选能力 |
+| Env | `src/unilab/envs/`、`src/unilab/base/torch_env.py` | MDP 语义、观测、奖励、reset |
+| Config 与 registry | `src/unilab/conf/`、`src/unilab/base/registry.py`、`src/unilab/structured_configs.py` | Schema、owner YAML、env/backend 注册 |
+| 算法与 IPC | `uni_rl` (unilab-rl repo)、`uni_rl.ipc` (unilab-rl repo) | Learner、runner、buffer、权重同步 |
 | Scripts | `scripts/`、`src/unilab/cli.py` | 轻量装配与 CLI 路由 |
 
 ## 设计规则
@@ -38,8 +40,9 @@ PPO 与 MLX PPO 是同步的单进程路径。APPO 与 off-policy 算法则使�
 - 如果共享的 env 代码需要某个 backend 操作，先将其加入 `SimBackend`，再使用。
 - 使用证据等级的表述。例如 `Registered`、`Configured`、`Tested`、`Benchmarked`
   或 `Recommended`；没有仓库内证据就不要声称稳定支持。
-- 上浮可复用原语。通用逻辑应放在 `src/unilab/base/` 或 `src/unilab/utils/`，
-  不要在多个 workflow 中复制粘贴。
+- 上浮可复用原语。通用逻辑放在其 owner package，或放在共享基础设施
+  `src/unilab/base/`；不要在多个 workflow 中复制粘贴。新的 owner 逻辑不放进
+  过渡期的 `src/unilab/utils/`。
 - 在最接近风险的边界处进行验证：Hydra 改动用 config 测试，观测/reset 改动用
   env 测试，runner 改动用 IPC 测试。
 
@@ -51,13 +54,13 @@ PPO 与 MLX PPO 是同步的单进程路径。APPO 与 off-policy 算法则使�
 | --- | --- |
 | 仅文档 | `uv run pytest tests/scripts/test_check_docs.py -q`，并逐条对照仓库手动核对 support claim |
 | Hydra / task / reward 配置 | `make test`（`tests/config/`、`tests/scripts/`） |
-| Env contract / 观测 | `make test`（`tests/base/test_np_env.py` 与 env 测试）加 1 iteration smoke run |
+| Env contract / 观测 | `make test`（`tests/base/test_torch_env.py` 与 env 测试）加 1 iteration smoke run |
 | Runner / IPC | `make test`；必要时补 `make test-slow` |
 | Backend 路径 | 对应 backend 的 smoke run，必要时补 slow test |
 | 训练入口 | 相关测试加 1 iteration smoke run |
 
-快速路径用 `make test`；提 PR 前用 `make test-all`（`make check` 加
-`make test-cov`）。
+快速路径用 `make test`；提 PR 前用 `make test-all`（`make check`、
+`make test-cov` 与 `make test-benchmark-smoke`）。
 
 ## 评审清单
 
@@ -69,14 +72,14 @@ PPO 与 MLX PPO 是同步的单进程路径。APPO 与 off-policy 算法则使�
 
 ## 关键文件
 
-- `scripts/train_rsl_rl.py`
-- `scripts/train_mlx_ppo.py`
-- `scripts/train_appo.py`
-- `scripts/train_offpolicy.py`
-- `src/unilab/base/np_env.py`
-- `src/unilab/base/backend/base.py`
+- `src/unilab/scripts/train_rsl_rl.py`
+- `src/unilab/scripts/train_appo.py`
+- `src/unilab/scripts/train_sac.py`
+- `src/unilab/scripts/train_flashsac.py`
+- `src/unilab/base/torch_env.py`
+- `unisim.backend.base`
 - `src/unilab/base/registry.py`
-- `src/unilab/ipc/async_runner.py`
+- `uni_rl.ipc.async_runner` (unilab-rl repo)
 - `src/unilab/training/run.py`
 
 ## 相关 ADR

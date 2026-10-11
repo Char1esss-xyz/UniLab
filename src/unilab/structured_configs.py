@@ -32,17 +32,17 @@ class SACAlgoParams:
 @dataclass
 class SACConfig(BaseConfig):
     algo: str = "sac"
-    algo_log_name: str = "fast_sac"
+    algo_log_name: str = "sac"
     runtime_impl: Optional[str] = None
     runtime_resolver: Optional[str] = None
     seed: int = 1
     num_envs: int = 4096
+    # Learner batch size for one SAC update.
     batch_size: int = 8192
     replay_buffer_n: int = 512
     updates_per_step: int = 4
     learning_starts: int = 1
     policy_frequency: int = 4
-    env_steps_per_sync: int = 1
     max_iterations: int = 500
     save_interval: int = 500
     gamma: float = 0.97
@@ -52,53 +52,10 @@ class SACConfig(BaseConfig):
     actor_hidden_dim: int = 512
     critic_hidden_dim: int = 768
     num_atoms: int = 101
-    obs_normalization: bool = True
+    obs_normalization: bool = False
     use_layer_norm: bool = True
-    use_symmetry: bool = False
     actor: dict[str, Any] = field(default_factory=dict)
     algo_params: SACAlgoParams = field(default_factory=SACAlgoParams)
-
-
-# ── Off-policy: TD3 ──────────────────────────────────────────────────────────
-
-
-@dataclass
-class TD3AlgoParams:
-    weight_decay: float = 0.1
-    v_min: float = -10.0
-    v_max: float = 10.0
-    init_scale: float = 0.01
-    log_std_min: float = -0.9
-    log_std_max: float = 0.0
-    policy_noise: float = 0.2
-    noise_clip: float = 0.5
-    use_cdq: bool = True
-
-
-@dataclass
-class TD3Config(BaseConfig):
-    algo: str = "td3"
-    algo_log_name: str = "fast_td3"
-    seed: int = 1
-    num_envs: int = 4096
-    batch_size: int = 8192
-    replay_buffer_n: int = 1000
-    updates_per_step: int = 4
-    learning_starts: int = 1
-    policy_frequency: int = 2
-    env_steps_per_sync: int = 1
-    max_iterations: int = 5000
-    save_interval: int = 500
-    gamma: float = 0.97
-    tau: float = 0.1
-    actor_lr: float = 3e-4
-    critic_lr: float = 3e-4
-    actor_hidden_dim: int = 256
-    critic_hidden_dim: int = 512
-    num_atoms: int = 101
-    obs_normalization: bool = True
-    use_layer_norm: bool = False
-    algo_params: TD3AlgoParams = field(default_factory=TD3AlgoParams)
 
 
 # ── Off-policy: FlashSAC ─────────────────────────────────────────────────────
@@ -126,6 +83,8 @@ class FlashSACAlgoParams:
     n_step: int = 1
     amp_dtype: str = "auto"
     use_compile: bool = True
+    compile_full_objectives: bool = True
+    use_whole_cycle_cuda_graph: bool = True
 
 
 @dataclass
@@ -139,7 +98,6 @@ class FlashSACConfig(BaseConfig):
     updates_per_step: int = 2
     learning_starts: int = 98
     policy_frequency: int = 2
-    env_steps_per_sync: int = 1
     max_iterations: int = 5000
     save_interval: int = 1000
     gamma: float = 0.97
@@ -222,17 +180,32 @@ class APPOConfig(BaseConfig):
 
 
 @dataclass
-class PPOPolicyConfig:
-    init_noise_std: float = 1.0
-    actor_hidden_dims: list = field(default_factory=lambda: [512, 256, 128])
-    critic_hidden_dims: list = field(default_factory=lambda: [512, 256, 128])
+class PPODistributionConfig:
+    class_name: str = "rsl_rl.modules.distribution.GaussianDistribution"
+    init_std: float = 1.0
+    std_type: str = "scalar"
+
+
+@dataclass
+class PPOActorConfig:
+    class_name: str = "rsl_rl.models.MLPModel"
+    hidden_dims: list = field(default_factory=lambda: [512, 256, 128])
     activation: str = "elu"
-    class_name: str = "ActorCritic"
+    obs_normalization: bool = False
+    distribution_cfg: PPODistributionConfig = field(default_factory=PPODistributionConfig)
+
+
+@dataclass
+class PPOCriticConfig:
+    class_name: str = "rsl_rl.models.MLPModel"
+    hidden_dims: list = field(default_factory=lambda: [512, 256, 128])
+    activation: str = "elu"
+    obs_normalization: bool = False
 
 
 @dataclass
 class PPOAlgorithmConfig:
-    class_name: str = "unilab.algos.torch.rsl_rl_ppo:FinalObservationAwarePPO"
+    class_name: str = "rsl_rl.algorithms:PPO"
     value_loss_coef: float = 1.0
     use_clipped_value_loss: bool = True
     clip_param: float = 0.2
@@ -244,19 +217,7 @@ class PPOAlgorithmConfig:
     gamma: float = 0.99
     lam: float = 0.95
     desired_kl: float = 0.01
-    target_kl_stop: Optional[float] = None
     max_grad_norm: float = 1.0
-    adaptive_kl_beta: float = 0.9
-    adaptive_lr_growth: float = 1.1
-    adaptive_lr_decay: float = 1.2
-    adaptive_lr_update_interval: int = 5
-    metrics_interval: int = 8
-    finite_check_interval: int = 8
-    enable_compile: bool = True
-    warmup_strict_iters: int = 10
-    warmup_metrics_interval: int = 2
-    warmup_finite_check_interval: int = 2
-    disable_finite_checks: bool = True
 
 
 @dataclass
@@ -268,14 +229,13 @@ class PPOConfig(BaseConfig):
     num_steps_per_env: int = 24
     max_iterations: int = 101
     save_interval: int = 100
-    empirical_normalization: bool = False
-    runner_class_name: str = "OnPolicyRunner"
-    obs_groups: dict = field(default_factory=lambda: {"default": ["policy"]})
+    obs_groups: dict = field(default_factory=lambda: {"actor": ["policy"]})
     experiment_name: str = "test"
     run_name: str = ""
     resume: bool = False
     load_run: str = "-1"
     checkpoint: int = -1
     resume_path: Optional[str] = None
-    policy: PPOPolicyConfig = field(default_factory=PPOPolicyConfig)
+    actor: PPOActorConfig = field(default_factory=PPOActorConfig)
+    critic: PPOCriticConfig = field(default_factory=PPOCriticConfig)
     algorithm: PPOAlgorithmConfig = field(default_factory=PPOAlgorithmConfig)

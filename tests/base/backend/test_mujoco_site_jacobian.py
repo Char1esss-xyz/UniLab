@@ -2,23 +2,25 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 pytest.importorskip("mujoco", reason="mujoco not installed")
 
 try:
-    from mujoco.batch_env import BatchEnvPool  # noqa: F401
+    import mjbatch  # noqa: F401
+    from unisim.backend.mujoco.backend import MuJoCoBackend
 except Exception:
     pytest.skip(
-        "mujoco.batch_env not available (platform/libstdc++ issue)", allow_module_level=True
+        "mjbatch/unisim MuJoCo backend not available (platform/build issue)",
+        allow_module_level=True,
     )
 
-from unilab.assets import ASSETS_ROOT_PATH
-from unilab.base.backend.mujoco.backend import MuJoCoBackend
 from unilab.base.scene import SceneCfg
 
-MODEL_FILE = str(ASSETS_ROOT_PATH / "robots" / "go2_arm" / "scene_flat.xml")
+MODEL_FILE = str(Path(__file__).resolve().parents[2] / "fixtures/free_chain.xml")
 NUM_ENVS = 4
 ARM_JOINT_NAMES = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
 EE_SITE_NAME = "endpoint"
@@ -60,7 +62,7 @@ def test_get_joint_dof_pos_indices(backend):
     indices = backend.get_joint_dof_pos_indices(list(ARM_JOINT_NAMES))
     assert indices.shape == (6,)
     assert indices.dtype == np.int32
-    # 所有索引在合法 dof_pos 范围内
+    # All indices must stay within the valid dof_pos range.
     assert np.all(indices >= 0)
     assert np.all(indices < backend._num_dof_pos)
 
@@ -70,6 +72,18 @@ def test_get_joint_dof_vel_indices(backend):
     dof_indices = backend.get_joint_dof_indices(list(ARM_JOINT_NAMES))
     # vel_indices = dof_indices - root_qvel_dim
     assert np.all(vel_indices == dof_indices - backend._root_qvel_dim)
+
+
+def test_get_site_jacobian_rejects_invalid_site_id_before_native_call(backend):
+    dof_indices = backend.get_joint_dof_indices(list(ARM_JOINT_NAMES))
+    with pytest.raises(ValueError, match="Invalid site_id"):
+        backend.get_site_jacobian_w(int(backend._model.nsite), dof_indices)
+
+
+def test_get_site_jacobian_rejects_invalid_dof_indices_before_native_call(backend):
+    site_id = int(backend.get_site_ids([EE_SITE_NAME])[0])
+    with pytest.raises(ValueError, match="dof_indices"):
+        backend.get_site_jacobian_w(site_id, np.array([backend.nv], dtype=np.int32))
 
 
 @pytest.mark.slow
@@ -85,7 +99,7 @@ def test_get_site_jacobian_shape(backend):
 
 @pytest.mark.slow
 def test_get_site_jacobian_matches_serial(backend):
-    """并行结果与串行逐 env 计算一致（差值 < 1e-6）。"""
+    """Parallel results must match serial per-env computation within 1e-6."""
     import mujoco
 
     site_ids = backend.get_site_ids([EE_SITE_NAME])
@@ -94,15 +108,17 @@ def test_get_site_jacobian_matches_serial(backend):
 
     jacp_par, jacr_par = backend.get_site_jacobian_w(site_id, dof_indices)
 
-    # 串行参考
+    # Serial reference built from the backend's state accessors (the mjbatch
+    # executor keeps canonical state in bound per-field views, not FULLPHYSICS
+    # rows, and has no per-env model variants).
+    model = backend._model
     jacp_ser = np.zeros((NUM_ENVS, 3, 6), dtype=np.float64)
     jacr_ser = np.zeros((NUM_ENVS, 3, 6), dtype=np.float64)
     for env_idx in range(NUM_ENVS):
-        variant_idx = int(backend._model_assignments[env_idx])
-        model = backend._model_variants[variant_idx]
         data = mujoco.MjData(model)
-        state = np.asarray(backend._physics_state[env_idx], dtype=np.float64)
-        mujoco.mj_setState(model, data, state, int(mujoco.mjtState.mjSTATE_FULLPHYSICS))
+        data.time = float(backend._time_view[env_idx])
+        data.qpos[:] = backend._qpos_view[env_idx]
+        data.qvel[:] = backend._qvel_view[env_idx]
         mujoco.mj_forward(model, data)
         jacp_full = np.zeros((3, model.nv), dtype=np.float64)
         jacr_full = np.zeros((3, model.nv), dtype=np.float64)

@@ -4,12 +4,20 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from unisim.backend.base import SimBackend
 
-from unilab.base.backend.base import SimBackend
+
+def _contract_backend(fn=None):
+    """A minimal owner object exposing the pre-step-control contract methods."""
+    backend = SimpleNamespace(_pre_step_control_fn=fn)
+    backend._convert_pre_step_control = lambda ctrl: SimBackend._convert_pre_step_control(
+        backend, ctrl
+    )
+    return backend
 
 
 def test_pre_step_control_default_noop() -> None:
-    backend = SimpleNamespace(_pre_step_control_fn=None)
+    backend = _contract_backend()
     ctrl = np.zeros((2, 3), dtype=np.float32)
 
     out = SimBackend._apply_pre_step_control(backend, ctrl)  # type: ignore[arg-type]
@@ -18,7 +26,7 @@ def test_pre_step_control_default_noop() -> None:
 
 
 def test_pre_step_control_applies_registered_converter() -> None:
-    backend = SimpleNamespace(_pre_step_control_fn=None)
+    backend = _contract_backend()
     ctrl = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
 
     SimBackend.set_pre_step_control(  # type: ignore[arg-type]
@@ -35,63 +43,128 @@ def test_pre_step_control_applies_registered_converter() -> None:
 
 
 def test_pre_step_control_rejects_shape_mismatch() -> None:
-    backend = SimpleNamespace(_pre_step_control_fn=lambda current_backend, ctrl: ctrl[:, :1])
+    backend = _contract_backend(lambda current_backend, ctrl: ctrl[:, :1])
     ctrl = np.zeros((2, 3), dtype=np.float32)
 
     with pytest.raises(ValueError, match="pre-step control must return shape"):
         SimBackend._apply_pre_step_control(backend, ctrl)  # type: ignore[arg-type]
 
 
-class _FakeMuJoCoPool:
-    def __init__(self) -> None:
+class _FakeMjBatch:
+    """Minimal mjbatch ``Batch`` stand-in for the step-with-callback protocol.
+
+    Emulates the documented mjbatch semantics the adapter relies on: the
+    callback runs on the calling thread before every substep as
+    ``callback(k, state, ctrl)``, one dispatch per ``step()`` call, and an
+    end-of-call copy-out that leaves the bound qpos/qvel views at the final
+    state and sensordata one substep behind (matching ``mj_step``). Each
+    substep adds 1.0 to every state row.
+    """
+
+    def __init__(self, nq: int = 1, nv: int = 1, nu: int = 2, nbody: int = 1) -> None:
+        self.num_sims = 1
+        self._nq, self._nv = nq, nv
+        self.nact = 0
+        self.qpos_slice = slice(0, nq)
+        self.qvel_slice = slice(nq, nq + nv)
+        self.act_slice = slice(nq + nv, nq + nv)
+        self._state = np.zeros((1, nq + nv))
+        self._bufs: dict[str, np.ndarray] = {
+            "qpos": np.zeros((1, nq)),
+            "qvel": np.zeros((1, nv)),
+            "act": np.zeros((1, 0)),
+            "ctrl": np.zeros((1, nu)),
+            "xfrc_applied": np.zeros((1, 6 * nbody)),
+            "sensordata": np.zeros((1, 1)),
+        }
         self.step_calls: list[dict] = []
-        self.forward_calls: list[np.ndarray] = []
+        self.callback_controls: list[np.ndarray] = []
+        self.callback_channels: list[np.ndarray] = []
+
+    def bind(self, name: str, dtype=None) -> np.ndarray:
+        return self._bufs[name]
 
     def step(
         self,
-        state,
+        ids=None,
+        nstep: int = 1,
+        history=None,
         *,
-        nstep,
-        control,
-        control_spec,
-        return_sensor=False,
-        post_step_forward_sensor=False,
-    ):
+        callback=None,
+        substep_sensor_copyout=None,
+    ) -> None:
         self.step_calls.append(
             {
                 "nstep": nstep,
-                "control": np.array(control, copy=True),
-                "control_spec": control_spec,
-                "return_sensor": return_sensor,
-                "post_step_forward_sensor": post_step_forward_sensor,
+                "callback": callback,
+                "substep_sensor_copyout": substep_sensor_copyout,
             }
         )
-        state_out = np.asarray(state) + 1.0
-        if return_sensor:
-            return state_out, state_out[:, :1]
-        return state_out
+        state = self._state
+        ctrl_buf = self._bufs["ctrl"]
+        for k in range(nstep):
+            if callback is not None:
+                if substep_sensor_copyout is None:
+                    callback(k, state, ctrl_buf)
+                else:
+                    start, stop = substep_sensor_copyout
+                    callback(k, state, ctrl_buf, self._bufs["sensordata"][:, start:stop])
+                self.callback_controls.append(ctrl_buf.copy())
+                # The persistent wrench channel as the substep's physics
+                # sees it: composed after the callback, before integration.
+                self.callback_channels.append(self._bufs["xfrc_applied"].copy())
+            state += 1.0
+        # End-of-call copy-out of the bound input/derived fields.
+        self._bufs["qpos"][:] = state[:, self.qpos_slice]
+        self._bufs["qvel"][:] = state[:, self.qvel_slice]
+        self._bufs["sensordata"][:] = state[:, :1] - 1.0  # one substep behind
 
-    def forward(self, state):
-        state_np = np.asarray(state)
-        self.forward_calls.append(state_np.copy())
-        return state_np[:, :1]
 
-
-def _fake_mujoco_backend(pre_step_control_fn=None, post_step_forward_sensor=False):
+def _fake_mujoco_backend(pre_step_control_fn=None):
+    pytest.importorskip(
+        "mjbatch",
+        reason="mjbatch native batch engine not available",
+    )
+    pytest.importorskip(
+        "unisim.backend.mujoco.backend",
+        reason="unisim-core MuJoCo adapter (mjbatch build) not available",
+    )
     try:
-        from unilab.base.backend.mujoco.backend import MuJoCoBackend
+        from unisim.backend.mujoco.backend import MuJoCoBackend
     except Exception as exc:
         pytest.skip(f"MuJoCo backend import unavailable: {exc}")
 
+    pool = _FakeMjBatch()
     backend = object.__new__(MuJoCoBackend)
+    backend._entity_layout = None
+    backend._tracked_body_state_dirty = np.zeros(1, dtype=np.bool_)
+    backend._tracked_sensor_slices = {}
+    backend._refresh_pre_step_body_state = True
     backend._pre_step_control_fn = pre_step_control_fn
+    backend._tracked_sensor_copyout_range = None
+    backend._tracked_sensor_slices = ()
+    backend._tracked_body_state_dirty = np.zeros(1, dtype=bool)
+    # Matches the 1.4.3 constructor default; the pre-step-control tests pin the
+    # refreshing behavior the flag gates.
+    backend._refresh_pre_step_body_state = True
     backend._num_envs = 1
     backend._np_dtype = np.float32
-    backend._physics_state = np.zeros((1, 1), dtype=np.float32)
-    backend._sensor_data = np.zeros((1, 1), dtype=np.float32)
-    backend._pending_xfrc_applied = np.zeros((1, 0), dtype=np.float64)
-    backend._post_step_forward_sensor = post_step_forward_sensor
-    backend._pool = _FakeMuJoCoPool()
+    backend.nq = pool._nq
+    backend.nv = pool._nv
+    backend.nact = pool.nact
+    backend._root_qpos_dim = 7
+    backend._root_qvel_dim = 6
+    backend._state_layout = SimpleNamespace(
+        qpos=pool.qpos_slice, qvel=pool.qvel_slice, act=pool.act_slice
+    )
+    backend._qpos_view = pool.bind("qpos", np.float64)
+    backend._qvel_view = pool.bind("qvel", np.float64)
+    backend._act_view = pool.bind("act", np.float64)
+    backend._ctrl_view = pool.bind("ctrl", np.float64)
+    backend._xfrc_view = pool.bind("xfrc_applied")
+    backend._sensor_data = pool.bind("sensordata", np.float64)
+    backend._pending_xfrc_applied = np.zeros((1, 6), dtype=np.float64)
+    backend._pool = pool
     return backend
 
 
@@ -99,54 +172,106 @@ def test_mujoco_step_without_pre_step_control_keeps_batched_nsteps() -> None:
     backend = _fake_mujoco_backend()
     ctrl = np.array([[0.5, -0.5]], dtype=np.float32)
 
-    backend.step(ctrl, nsteps=3)
+    result = backend.step(ctrl, nsteps=3)
 
-    assert len(backend._pool.step_calls) == 1
-    assert backend._pool.step_calls[0]["nstep"] == 3
-    assert backend._pool.step_calls[0]["return_sensor"] is True
-    assert backend._pool.step_calls[0]["post_step_forward_sensor"] is False
-    assert backend._pool.forward_calls == []
-    expected_control = np.broadcast_to(ctrl[:, None, :], (1, 3, ctrl.shape[-1]))
-    np.testing.assert_allclose(backend._pool.step_calls[0]["control"], expected_control)
-    np.testing.assert_allclose(backend._physics_state, [[1.0]])
-    np.testing.assert_allclose(backend._sensor_data, [[1.0]])
-
-
-def test_mujoco_step_honors_post_step_forward_sensor_flag() -> None:
-    backend = _fake_mujoco_backend(post_step_forward_sensor=True)
-    ctrl = np.array([[0.5, -0.5]], dtype=np.float32)
-
-    backend.step(ctrl, nsteps=3)
-
-    assert backend._pool.step_calls[0]["return_sensor"] is True
-    assert backend._pool.step_calls[0]["post_step_forward_sensor"] is True
+    pool = backend._pool
+    assert len(pool.step_calls) == 1
+    call = pool.step_calls[0]
+    assert call["nstep"] == 3
+    assert call["callback"] is None
+    np.testing.assert_allclose(backend._ctrl_view, ctrl)
+    # Nothing staged: the persistent xfrc channel is written with zeros.
+    np.testing.assert_allclose(backend._xfrc_view.reshape(1, -1), [[0.0] * 6])
+    np.testing.assert_allclose(backend._pending_xfrc_applied, [[0.0] * 6])
+    np.testing.assert_allclose(backend._qpos_view, [[3.0]])
+    assert set(result["timing"]) == {"set_ctrl_ms", "physics_ms", "refresh_cache_ms"}
 
 
-def test_mujoco_step_with_pre_step_control_recomputes_each_physics_step() -> None:
+def test_mujoco_step_with_pre_step_control_uses_single_dispatch_callback() -> None:
+    seen_qpos: list[np.ndarray] = []
     seen_sensors: list[np.ndarray] = []
 
-    backend = _fake_mujoco_backend(post_step_forward_sensor=True)
+    backend = _fake_mujoco_backend()
 
     def hook(current_backend, owner_ctrl: np.ndarray) -> np.ndarray:
+        seen_qpos.append(current_backend._qpos_view.copy())
         seen_sensors.append(current_backend._sensor_data.copy())
-        return owner_ctrl + len(seen_sensors)
+        return owner_ctrl + len(seen_qpos)
 
     backend.set_pre_step_control(hook)
     ctrl = np.array([[0.5, -0.5]], dtype=np.float32)
 
-    backend.step(ctrl, nsteps=3)
+    result = backend.step(ctrl, nsteps=3)
 
-    assert len(backend._pool.step_calls) == 3
-    assert [call["nstep"] for call in backend._pool.step_calls] == [1, 1, 1]
-    assert all(call["return_sensor"] is True for call in backend._pool.step_calls)
-    assert all(call["post_step_forward_sensor"] is True for call in backend._pool.step_calls)
-    assert backend._pool.forward_calls == []
-    np.testing.assert_allclose(seen_sensors, [[[0.0]], [[1.0]], [[2.0]]])
-    np.testing.assert_allclose(backend._pool.step_calls[0]["control"], (ctrl + 1)[:, None, :])
-    np.testing.assert_allclose(backend._pool.step_calls[1]["control"], (ctrl + 2)[:, None, :])
-    np.testing.assert_allclose(backend._pool.step_calls[2]["control"], (ctrl + 3)[:, None, :])
-    np.testing.assert_allclose(backend._physics_state, [[3.0]])
-    np.testing.assert_allclose(backend._sensor_data, [[3.0]])
+    pool = backend._pool
+    assert len(pool.step_calls) == 1
+    call = pool.step_calls[0]
+    assert call["nstep"] == 3
+    assert call["callback"] is not None
+    # k=0 refreshes nothing (the bound views already hold the pre-call state);
+    # k>0 receives the state after substep k-1.
+    np.testing.assert_allclose(seen_qpos, [[[0.0]], [[1.0]], [[2.0]]])
+    # The slim callback protocol carries no sensordata argument, so the hook
+    # never sees a sensor refresh; the bound sensordata view only catches up
+    # via the end-of-call copy-out.
+    np.testing.assert_allclose(seen_sensors, [[[0.0]], [[0.0]], [[0.0]]])
+    assert len(pool.callback_controls) == 3
+    np.testing.assert_allclose(pool.callback_controls[0], ctrl + 1)
+    np.testing.assert_allclose(pool.callback_controls[1], ctrl + 2)
+    np.testing.assert_allclose(pool.callback_controls[2], ctrl + 3)
+    assert pool.callback_controls[0].dtype == np.float64
+    np.testing.assert_allclose(backend._qpos_view, [[3.0]])
+    np.testing.assert_allclose(backend._sensor_data, [[2.0]])  # one substep behind
+    assert set(result["timing"]) == {"set_ctrl_ms", "physics_ms", "refresh_cache_ms"}
+
+
+def test_mujoco_step_writes_xfrc_absolutely_and_clears_pending() -> None:
+    backend = _fake_mujoco_backend()
+    backend._pending_xfrc_applied = np.full((1, 6), 7.0, dtype=np.float64)
+    ctrl = np.array([[0.5, -0.5]], dtype=np.float32)
+
+    backend.step(ctrl, nsteps=2)
+
+    pool = backend._pool
+    assert len(pool.step_calls) == 1
+    # The staged wrench reached the persistent channel and survives the call;
+    # the pending staging buffer is cleared.
+    np.testing.assert_allclose(backend._xfrc_view.reshape(1, -1), [[7.0] * 6])
+    np.testing.assert_allclose(backend._pending_xfrc_applied, [[0.0] * 6])
+
+    # An idle second dispatch must overwrite the channel with zeros, not leave
+    # the previous wrench to decay on its own.
+    backend.step(ctrl, nsteps=1)
+
+    assert len(pool.step_calls) == 2
+    np.testing.assert_allclose(backend._xfrc_view.reshape(1, -1), [[0.0] * 6])
+    np.testing.assert_allclose(backend._pending_xfrc_applied, [[0.0] * 6])
+
+
+def test_mujoco_step_with_pre_step_control_applies_staged_xfrc_each_substep() -> None:
+    backend = _fake_mujoco_backend()
+    backend._pending_xfrc_applied = np.full((1, 6), 7.0, dtype=np.float64)
+
+    backend.set_pre_step_control(lambda current_backend, owner_ctrl: owner_ctrl + 1.0)
+    ctrl = np.array([[0.5, -0.5]], dtype=np.float32)
+
+    backend.step(ctrl, nsteps=2)
+
+    pool = backend._pool
+    assert len(pool.step_calls) == 1
+    # The staged wrench is recomposed onto the persistent channel before every
+    # substep; each recorded channel is the wrench that substep's physics
+    # actually consumed.
+    assert len(pool.callback_controls) == 2
+    for cb_control in pool.callback_controls:
+        np.testing.assert_allclose(cb_control, [[1.5, 0.5]])
+    assert len(pool.callback_channels) == 2
+    for channel in pool.callback_channels:
+        np.testing.assert_allclose(channel.reshape(1, -1), [[7.0] * 6])
+    # The call finishes by clearing the persistent channel and the staging
+    # buffer so nothing leaks into the next control step.
+    np.testing.assert_allclose(backend._xfrc_view.reshape(1, -1), [[0.0] * 6])
+    np.testing.assert_allclose(backend._pending_xfrc_applied, [[0.0] * 6])
 
 
 class _FakeMotrixModel:
@@ -164,15 +289,18 @@ class _FakeMotrixModel:
 
 
 def _fake_motrix_backend(pre_step_control_fn=None):
-    from unilab.base.backend.motrix.backend import MotrixBackend
+    from unisim.backend.motrix.backend import MotrixBackend
 
     backend = object.__new__(MotrixBackend)
+    backend._portable_mode = False
     backend._pre_step_control_fn = pre_step_control_fn
     backend._model = _FakeMotrixModel()
     backend._data = SimpleNamespace(
         actuator_ctrls=np.zeros((1, 2), dtype=np.float32),
         sensor_value=0.0,
     )
+    backend._sim_dt = 0.002
+    backend._time_view = np.zeros((1,), dtype=np.float32)
     backend._refresh_link_pose_cache = lambda: None
     return backend
 
@@ -197,7 +325,7 @@ def test_motrix_step_with_pre_step_control_uses_single_step_loop() -> None:
 
 
 def test_motrix_native_video_capture_uses_headless_system_camera(monkeypatch) -> None:
-    import unilab.base.backend.motrix.backend as mod
+    import unisim.backend.motrix.backend as mod
 
     captured: dict[str, object] = {}
 
@@ -258,6 +386,7 @@ def test_motrix_native_video_capture_uses_headless_system_camera(monkeypatch) ->
     monkeypatch.setattr(mod, "RenderSettings", FakeRenderSettings, raising=False)
 
     backend = object.__new__(mod.MotrixBackend)
+    backend._portable_mode = False
     backend._model = FakeModel()
     backend._data = object()
     backend._num_envs = 3
@@ -303,7 +432,7 @@ def test_motrix_native_video_capture_uses_headless_system_camera(monkeypatch) ->
 
 
 def test_motrix_native_video_capture_defaults_camera_lookat_to_grid_center(monkeypatch) -> None:
-    import unilab.base.backend.motrix.backend as mod
+    import unisim.backend.motrix.backend as mod
 
     captured: dict[str, object] = {}
 
@@ -343,6 +472,7 @@ def test_motrix_native_video_capture_defaults_camera_lookat_to_grid_center(monke
     monkeypatch.setattr(mod, "RenderSettings", FakeRenderSettings, raising=False)
 
     backend = object.__new__(mod.MotrixBackend)
+    backend._portable_mode = False
     backend._model = FakeModel()
     backend._num_envs = 4
     backend._render_app = None
@@ -367,7 +497,7 @@ def test_motrix_native_video_capture_defaults_camera_lookat_to_grid_center(monke
 
 
 def test_motrix_native_video_capture_tracks_primary_env_base(monkeypatch) -> None:
-    import unilab.base.backend.motrix.backend as mod
+    import unisim.backend.motrix.backend as mod
 
     captured: dict[str, object] = {"set_views": []}
     base_positions = np.array(
@@ -436,6 +566,7 @@ def test_motrix_native_video_capture_tracks_primary_env_base(monkeypatch) -> Non
     monkeypatch.setattr(mod, "RenderSettings", FakeRenderSettings, raising=False)
 
     backend = object.__new__(mod.MotrixBackend)
+    backend._portable_mode = False
     backend._model = FakeModel()
     backend._data = object()
     backend._num_envs = 3
@@ -483,7 +614,7 @@ def test_motrix_native_video_capture_tracks_primary_env_base(monkeypatch) -> Non
 
 
 def test_motrix_interactive_renderer_applies_camera_kwargs(monkeypatch) -> None:
-    import unilab.base.backend.motrix.backend as mod
+    import unisim.backend.motrix.backend as mod
 
     captured: dict[str, object] = {}
 
@@ -527,6 +658,7 @@ def test_motrix_interactive_renderer_applies_camera_kwargs(monkeypatch) -> None:
     monkeypatch.setattr(mod, "RenderSettings", FakeRenderSettings, raising=False)
 
     backend = object.__new__(mod.MotrixBackend)
+    backend._portable_mode = False
     backend._model = FakeModel()
     backend._num_envs = 1
     backend._render_app = None
@@ -555,7 +687,7 @@ def test_motrix_interactive_renderer_applies_camera_kwargs(monkeypatch) -> None:
 
 
 def test_motrix_renderer_zero_offset_mode(monkeypatch) -> None:
-    import unilab.base.backend.motrix.backend as mod
+    import unisim.backend.motrix.backend as mod
 
     captured: dict[str, object] = {}
 
@@ -582,6 +714,7 @@ def test_motrix_renderer_zero_offset_mode(monkeypatch) -> None:
     monkeypatch.setattr(mod, "RenderSettings", FakeRenderSettings, raising=False)
 
     backend = object.__new__(mod.MotrixBackend)
+    backend._portable_mode = False
     backend._model = FakeModel()
     backend._num_envs = 4
     backend._render_app = None

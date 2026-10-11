@@ -1,8 +1,8 @@
 # docs/sphinx Agent Guide
 
 这个文件规范 agent 在 `docs/sphinx/` 下撰写和修改文档内容的行为。仓库顶层
-`AGENTS.md` / `CLAUDE.md` 仍然优先适用于代码、配置、测试和 PR 流程；本文件只补充
-Sphinx 文档写作规则。
+`AGENTS.md` 适用于此目录；本文件在其基础上补充 Sphinx 文档写作规则。同目录或更深
+目录的 instruction file 可覆盖两者。
 
 ## Ground Truth
 
@@ -90,7 +90,7 @@ language-independent absolute path.
 ## Core Principles
 
 1. **Evidence only**: only document facts that can be verified in `src/`,
-   `conf/`, `tests/`, `scripts/`, ADRs, or generated support data.
+   `src/unilab/conf/`, `tests/`, `scripts/`, ADRs, or generated support data.
 2. **Code is the source of truth**: names, signatures, defaults, Hydra keys, and
    commands follow the repository, not memory.
 3. **Owner layer first**: scripts assemble; contracts live in backend, env,
@@ -106,7 +106,7 @@ language-independent absolute path.
 7. **Use canonical commands**: user-facing examples use the top-level CLI:
    `uv run train --algo <algo> --task <task> --sim <backend>`,
    `uv run eval ...`, or `uv run demo`. Script paths such as
-   `scripts/train_rsl_rl.py` may be named as implementation evidence, but they
+   `src/unilab/scripts/train_rsl_rl.py` may be named as implementation evidence, but they
    are not the primary command shape for docs readers.
 
 ## Before Writing
@@ -116,11 +116,11 @@ language-independent absolute path.
 3. Search first with `rg` / `rg --files`; update an existing page instead of
    creating a duplicate.
 4. Gather evidence near the claim:
-   - algorithms and tasks: `conf/`, `scripts/train_*.py`, `src/unilab/algos/`
-   - env contract: `src/unilab/base/np_env.py`, `src/unilab/training/rsl_rl.py`
-   - backend contract: `src/unilab/base/backend/base.py`
+   - algorithms and tasks: `src/unilab/conf/`, `src/unilab/scripts/train_*.py`, `uni_rl`
+   - env contract: `src/unilab/base/torch_env.py`, `uni_rl.env_contract`
+   - backend contract: `unisim.backend.base`
    - registry: `src/unilab/base/registry.py`
-   - runner/IPC: `src/unilab/ipc/`, `src/unilab/training/run.py`
+   - runner/IPC: `uni_rl.ipc.async_runner`, `src/unilab/training/run.py`
    - architecture: ADRs and `development-standard.md`
 5. Check the other language for a related topic, but do not force path mirroring
    or mass renames.
@@ -146,7 +146,7 @@ language-independent absolute path.
 | Same-language doc link | MyST `{doc}` relative path, such as `{doc}`algorithms/ppo`` |
 | Shared ADR or root-level page | Absolute `{doc}` path, such as `{doc}`/adr/ADR-0003-task-owner-and-config-compose-contract`` |
 | Cross-language canonical link | Absolute `{doc}` path, such as `{doc}`/zh_CN/4-developer_guide/0-index`` |
-| Source/config/test path in prose | Backticks: `src/unilab/base/np_env.py` |
+| Source/config/test path in prose | Backticks: `src/unilab/base/torch_env.py` |
 | GitHub source link | Full GitHub URL to an existing file when a clickable source link is needed |
 
 Avoid old paths such as `docs/users/`, `docs/developers/`, and
@@ -241,7 +241,7 @@ rules instead of treating the change as docs-only.
 
 Before reporting success, confirm:
 
-- all cited `src/`, `conf/`, `tests/`, and `scripts/` paths exist;
+- all cited `src/`, `src/unilab/conf/`, `tests/`, and `scripts/` paths exist;
 - English pages in scope have no manual navigation block;
 - root, `en/0-index.md`, and `zh_CN/0-index.md` remain included in toctrees;
 - any warnings from Sphinx are understood and not introduced by the current edit.

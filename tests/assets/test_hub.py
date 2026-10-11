@@ -9,7 +9,11 @@ import numpy as np
 import pytest
 
 from unilab.assets import ASSETS_ROOT_PATH
-from unilab.assets.hub import resolve_grasp_cache_files, resolve_motion_files, resolve_scene_dir
+from unilab.assets.hub import (
+    resolve_motion_files,
+    resolve_robot_asset_dir,
+    resolve_scene_dir,
+)
 
 # ---------------------------------------------------------------------------
 # Local-path fast path
@@ -63,7 +67,7 @@ def test_resolve_calls_hf_hub_download_for_missing_file():
     missing = ASSETS_ROOT_PATH / "motions" / "g1" / "__test_nonexistent__.npz"
     assert not missing.exists()
 
-    expected_relative = str(missing.relative_to(ASSETS_ROOT_PATH))
+    expected_relative = missing.relative_to(ASSETS_ROOT_PATH).as_posix()
 
     fake_download = MagicMock(return_value=str(missing))
     fake_module = MagicMock()
@@ -104,57 +108,30 @@ def test_resolve_relative_path_falls_back_to_hf():
     )
 
 
-# ---------------------------------------------------------------------------
-# Grasp cache resolve — local fast path
-# ---------------------------------------------------------------------------
-
-
-def test_resolve_grasp_cache_returns_existing_path(tmp_path: Path):
-    npy = tmp_path / "cache.npy"
-    np.save(npy, np.array([1.0]))
-    assert resolve_grasp_cache_files(str(npy)) == str(npy)
-
-
-def test_resolve_grasp_cache_returns_list_for_list_input(tmp_path: Path):
-    a = tmp_path / "a.npy"
-    b = tmp_path / "b.npy"
-    np.save(a, np.array([1.0]))
-    np.save(b, np.array([2.0]))
-    result = resolve_grasp_cache_files([str(a), str(b)])
-    assert result == [str(a), str(b)]
-
-
-# ---------------------------------------------------------------------------
-# Grasp cache resolve — HF download path (mocked)
-# ---------------------------------------------------------------------------
-
-
-def test_resolve_grasp_cache_calls_hf_download_with_caches_repo():
-    """Grasp cache resolver should use the unilab-caches repo, not unilab-motions."""
-    missing = ASSETS_ROOT_PATH / "caches" / "__test_nonexistent__.npy"
+def test_resolve_absolute_windows_path_uses_posix_hf_filename():
+    missing = ASSETS_ROOT_PATH / "motions" / "g1" / "__test_nonexistent_windows_abs__.npz"
     assert not missing.exists()
 
-    expected_relative = str(missing.relative_to(ASSETS_ROOT_PATH))
+    expected_relative = missing.relative_to(ASSETS_ROOT_PATH).as_posix()
 
     fake_download = MagicMock(return_value=str(missing))
     fake_module = MagicMock()
     fake_module.hf_hub_download = fake_download
 
     with patch.dict("sys.modules", {"huggingface_hub": fake_module}):
-        result = resolve_grasp_cache_files(str(missing))
+        result = resolve_motion_files(str(missing))
 
     assert result == str(missing)
     fake_download.assert_called_once_with(
-        repo_id="unilabsim/unilab-caches",
+        repo_id="unilabsim/unilab-motions",
         filename=expected_relative,
         repo_type="dataset",
         local_dir=str(ASSETS_ROOT_PATH),
     )
 
 
-def test_resolve_grasp_cache_relative_path_uses_caches_repo():
-    """A relative path triggers HF download with the caches repo."""
-    rel = "caches/__test_nonexistent_rel__.npy"
+def test_resolve_relative_windows_path_uses_posix_hf_filename():
+    rel = r"motions\g1\__test_nonexistent_windows_rel__.npz"
     local = ASSETS_ROOT_PATH / rel
     assert not local.exists()
 
@@ -163,12 +140,12 @@ def test_resolve_grasp_cache_relative_path_uses_caches_repo():
     fake_module.hf_hub_download = fake_download
 
     with patch.dict("sys.modules", {"huggingface_hub": fake_module}):
-        result = resolve_grasp_cache_files(rel)
+        result = resolve_motion_files(rel)
 
     assert result == str(local)
     fake_download.assert_called_once_with(
-        repo_id="unilabsim/unilab-caches",
-        filename=rel,
+        repo_id="unilabsim/unilab-motions",
+        filename="motions/g1/__test_nonexistent_windows_rel__.npz",
         repo_type="dataset",
         local_dir=str(ASSETS_ROOT_PATH),
     )
@@ -210,6 +187,23 @@ def test_resolve_scene_dir_calls_snapshot_download_when_missing(tmp_path: Path):
     )
 
 
+def test_resolve_scene_dir_windows_path_uses_posix_hf_pattern(tmp_path: Path):
+    fake_snapshot = MagicMock(return_value=str(tmp_path))
+    fake_module = MagicMock()
+    fake_module.snapshot_download = fake_snapshot
+
+    with patch("unilab.assets.hub.ASSETS_ROOT_PATH", tmp_path):
+        with patch.dict("sys.modules", {"huggingface_hub": fake_module}):
+            resolve_scene_dir(r"scenes\teaser")
+
+    fake_snapshot.assert_called_once_with(
+        repo_id="unilabsim/unilab-scenes",
+        repo_type="dataset",
+        allow_patterns="scenes/teaser/**",
+        local_dir=str(tmp_path),
+    )
+
+
 def test_resolve_scene_dir_raises_import_error_when_hf_hub_missing(tmp_path: Path):
     """When the scene directory is missing and huggingface_hub is not
     installed, a clear ImportError is raised."""
@@ -217,3 +211,141 @@ def test_resolve_scene_dir_raises_import_error_when_hf_hub_missing(tmp_path: Pat
         with patch.dict("sys.modules", {"huggingface_hub": None}):
             with pytest.raises(ImportError, match="huggingface_hub"):
                 resolve_scene_dir("scenes/teaser")
+
+
+def test_resolve_robot_asset_dir_can_disable_snapshot_progress(tmp_path: Path):
+    fake_snapshot = MagicMock(return_value=str(tmp_path))
+    fake_module = MagicMock()
+    fake_module.snapshot_download = fake_snapshot
+
+    with patch("unilab.assets.hub.ASSETS_ROOT_PATH", tmp_path):
+        with patch.dict("sys.modules", {"huggingface_hub": fake_module}):
+            resolve_robot_asset_dir("robots/g1/assets", marker="head_link.STL", show_progress=False)
+
+    fake_snapshot.assert_called_once()
+    kwargs = fake_snapshot.call_args.kwargs
+    assert kwargs["repo_id"] == "unilabsim/unilab-robots"
+    assert kwargs["repo_type"] == "dataset"
+    assert kwargs["allow_patterns"] == "robots/g1/assets/**"
+    assert kwargs["local_dir"] == str(tmp_path)
+    tqdm_class = kwargs["tqdm_class"]
+    progress = tqdm_class(range(1))
+    try:
+        assert progress.disable is True
+    finally:
+        progress.close()
+
+
+# ---------------------------------------------------------------------------
+# Robot asset registry + scene-path resolution
+# ---------------------------------------------------------------------------
+
+
+def test_robot_asset_specs_cover_hf_hosted_robots():
+    """Every robot whose binary assets live on HF is registered exactly once."""
+    from unilab.assets.hub import ROBOT_ASSET_SPECS
+
+    expected = {
+        "g1",
+        "go2",
+    }
+    assert set(ROBOT_ASSET_SPECS) == expected
+    for robot, specs in ROBOT_ASSET_SPECS.items():
+        assert specs, robot
+        for directory, marker, pattern, label in specs:
+            assert directory.startswith("robots/")
+            assert marker and pattern and label
+
+
+def test_ensure_robot_assets_resolves_registered_robot(monkeypatch: pytest.MonkeyPatch):
+    from unilab.assets import hub
+
+    calls: list[tuple[str, str]] = []
+
+    def fake_resolve(directory: str, *, marker: str) -> Path:
+        calls.append((directory, marker))
+        return Path(directory)
+
+    monkeypatch.setattr(hub, "resolve_robot_asset_dir", fake_resolve)
+
+    hub.ensure_robot_assets_for_paths(["src/unilab/assets/robots/g1/scene_flat.xml", None, ""])
+
+    assert calls == [
+        ("robots/g1/assets", "head_link.STL"),
+        ("robots/g1/textures", "floor.png"),
+    ]
+
+
+def test_ensure_robot_assets_handles_absolute_and_windows_paths(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from unilab.assets import hub
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        hub,
+        "resolve_robot_asset_dir",
+        lambda directory, *, marker: calls.append((directory, marker)) or Path(directory),
+    )
+
+    hub.ensure_robot_assets_for_paths(
+        [
+            "/home/user/project/src/unilab/assets/robots/go2/go2.xml",
+            r"src\unilab\assets\robots\g1\g1.xml",
+        ]
+    )
+
+    assert calls == [
+        ("robots/go2/assets", "base_0.obj"),
+        ("robots/g1/assets", "head_link.STL"),
+        ("robots/g1/textures", "floor.png"),
+    ]
+
+
+def test_ensure_robot_assets_ignores_unknown_robots(monkeypatch: pytest.MonkeyPatch):
+    from unilab.assets import hub
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        hub,
+        "resolve_robot_asset_dir",
+        lambda directory, *, marker: calls.append((directory, marker)) or Path(directory),
+    )
+
+    hub.ensure_robot_assets_for_paths(
+        [
+            "src/unilab/assets/robots/t800/scene_flat.xml",
+            "src/unilab/assets/objects/cube.xml",
+            "some/other/scene.xml",
+        ]
+    )
+
+    assert calls == []
+
+
+def test_create_backend_resolves_robot_assets_before_dispatch(monkeypatch: pytest.MonkeyPatch):
+    """create_backend must ensure HF-hosted robot assets before loading XML."""
+    import unilab.base.backend_factory as backend_pkg
+    from unilab.base.scene import SceneCfg
+
+    seen: list[list[str | None]] = []
+
+    def fake_ensure(paths):
+        seen.append(list(paths))
+
+    monkeypatch.setattr(backend_pkg, "ensure_robot_assets_for_paths", fake_ensure)
+
+    scene = SceneCfg(
+        model_file="src/unilab/assets/robots/g1/scene_flat.xml",
+        fragment_files=["src/unilab/assets/robots/g1/locomotion_task.xml"],
+    )
+    with pytest.raises(ValueError, match="unknown UniSim backend"):
+        backend_pkg.create_backend("__bogus__", scene, 1, 0.02)
+
+    assert seen == [
+        [
+            "src/unilab/assets/robots/g1/scene_flat.xml",
+            None,
+            "src/unilab/assets/robots/g1/locomotion_task.xml",
+        ]
+    ]

@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from omegaconf import OmegaConf
-
 from tests.scripts import doc_checks
+from tests.scripts.doc_checks import find_docs
 
 
 def test_documentation_files_match_current_repo_contracts():
@@ -15,34 +14,20 @@ def test_documentation_files_match_current_repo_contracts():
     assert warnings == []
 
 
-def test_sharpa_domain_randomization_doc_matches_owner_config():
-    root = Path(__file__).resolve().parents[2]
-    doc_path = (
-        root
-        / "docs"
-        / "sphinx"
-        / "source"
-        / "zh_CN"
-        / "2-user_guide"
-        / "5-domain_randomization"
-        / "0-index.md"
-    )
-    content = doc_path.read_text(encoding="utf-8")
+def test_find_docs_ignores_generated_benchmark_outputs(tmp_path):
+    generated = tmp_path / "scripts" / "benchmark" / "outputs" / "env_step" / "result.md"
+    generated.parent.mkdir(parents=True)
+    generated.write_text("_num_envs=2, num_steps=3\n", encoding="utf-8")
 
-    owner_cfg = OmegaConf.load(root / "conf" / "ppo" / "task" / "sharpa_inhand" / "mujoco.yaml")
-
-    assert "Sharpa" in content
-    assert "`geom_size`" in content
-    if float(owner_cfg.env.domain_rand.force_scale) > 0.0:
-        assert "`gravity`" in content
+    assert find_docs(tmp_path) == []
 
 
 def test_check_training_entrypoint_semantics_flags_issue_204_patterns():
     root = Path(__file__).resolve().parents[2]
     doc_path = root / "README.md"
     content = """
-uv run scripts/train_rsl_rl.py task=go1_joystick_flat
-uv run scripts/train_rsl_rl.py task=go1_joystick_flat/mujoco training.load_run=2026-01-01
+uv run scripts/train_rsl_rl.py task=go2_joystick_flat
+uv run scripts/train_rsl_rl.py task=go2_joystick_flat/mujoco training.load_run=2026-01-01
 Training logs are saved to logs/rsl_rl_train/MyTask/.
 """
 
@@ -50,15 +35,15 @@ Training logs are saved to logs/rsl_rl_train/MyTask/.
 
     assert any("training.load_run" in error for error in errors)
     assert any("logs/rsl_rl_train/" in error for error in errors)
-    assert any("task=go1_joystick_flat" in error for error in errors)
+    assert any("task=go2_joystick_flat" in error for error in errors)
 
 
 def test_check_training_entrypoint_semantics_accepts_current_patterns():
     root = Path(__file__).resolve().parents[2]
     doc_path = root / "README.md"
     content = """
-uv run scripts/train_rsl_rl.py task=go1_joystick_flat/mujoco algo.load_run=2026-01-01
-uv run scripts/train_offpolicy.py algo=sac task=sac/g1_walk_flat/mujoco
+uv run scripts/train_rsl_rl.py task=go2_joystick_flat/mujoco algo.load_run=2026-01-01
+uv run scripts/train_sac.py task=g1_walk_flat/mujoco
 Logs live under logs/<algo.algo_log_name>/<task>/.
 """
 
@@ -80,7 +65,7 @@ def test_check_hydra_keys_ignores_non_command_fenced_blocks():
 ```
 
 ```bash
-uv run scripts/train_rsl_rl.py missing_key=true task=go1_joystick_flat/mujoco
+uv run scripts/train_rsl_rl.py missing_key=true task=go2_joystick_flat/mujoco
 ```
 """
 
@@ -104,10 +89,10 @@ def test_collect_doc_errors_scans_issue_templates_for_hydra_semantics(tmp_path):
     issue_template = tmp_path / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml"
     issue_template.parent.mkdir(parents=True)
     issue_template.write_text(
-        "placeholder: |\n  uv run scripts/train_offpolicy.py algo=sac task=g1_walk_flat ...\n",
+        "placeholder: |\n  uv run scripts/train_sac.py task=g1_walk_flat ...\n",
         encoding="utf-8",
     )
-    script_path = tmp_path / "scripts" / "train_offpolicy.py"
+    script_path = tmp_path / "scripts" / "train_sac.py"
     script_path.parent.mkdir(parents=True)
     script_path.write_text("", encoding="utf-8")
 
@@ -120,7 +105,7 @@ def test_collect_doc_errors_scans_issue_templates_for_script_paths(tmp_path):
     issue_template = tmp_path / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml"
     issue_template.parent.mkdir(parents=True)
     issue_template.write_text(
-        "placeholder: |\n  uv run scripts/missing_entrypoint.py task=go1_joystick_flat/mujoco\n",
+        "placeholder: |\n  uv run scripts/missing_entrypoint.py task=go2_joystick_flat/mujoco\n",
         encoding="utf-8",
     )
 
@@ -132,7 +117,7 @@ def test_collect_doc_errors_scans_issue_templates_for_script_paths(tmp_path):
 def test_collect_doc_errors_flags_unclosed_markdown_fence(tmp_path):
     readme = tmp_path / "README.md"
     readme.write_text(
-        "```bash\nuv run scripts/train_rsl_rl.py task=go1_joystick_flat/mujoco\n", encoding="utf-8"
+        "```bash\nuv run scripts/train_rsl_rl.py task=go2_joystick_flat/mujoco\n", encoding="utf-8"
     )
 
     errors = doc_checks.collect_doc_errors(tmp_path)
@@ -143,7 +128,7 @@ def test_collect_doc_errors_flags_unclosed_markdown_fence(tmp_path):
 def test_collect_doc_errors_flags_python_script_invocation(tmp_path):
     readme = tmp_path / "README.md"
     readme.write_text(
-        "```bash\nuv run python scripts/train_rsl_rl.py task=go1_joystick_flat/mujoco\n```\n",
+        "```bash\nuv run python scripts/train_rsl_rl.py task=go2_joystick_flat/mujoco\n```\n",
         encoding="utf-8",
     )
     script_path = tmp_path / "scripts" / "train_rsl_rl.py"

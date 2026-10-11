@@ -2,24 +2,32 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pytest
+import torch
+from unisim.backend.base import CameraCfg
+
+# CPU-bound on the single-core CI runner; kept in the slow lane (make test-slow).
+pytestmark = pytest.mark.slow
 
 _SCRIPTS_DIR = Path(__file__).parent.parent.parent / "scripts"
+_PACKAGE_SCRIPTS_DIR = Path(__file__).parent.parent.parent / "src" / "unilab" / "scripts"
 
 
 def _load_script(name: str) -> Any:
-    path = _SCRIPTS_DIR / f"{name}.py"
+    for base in (_PACKAGE_SCRIPTS_DIR, _SCRIPTS_DIR):
+        path = base / f"{name}.py"
+        if path.is_file():
+            break
+    else:
+        raise FileNotFoundError(f"No script named {name}.py in packaged or top-level scripts")
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     return mod
-
-
-def test_legacy_visualization_env_entrypoint_is_removed():
-    assert not (_SCRIPTS_DIR / "visualization_env.py").exists()
 
 
 def test_visualize_task_env_keeps_canonical_defaults():
@@ -38,7 +46,7 @@ def test_visualize_task_env_parses_explicit_args():
     args = mod._parse_args(
         [
             "--task",
-            "Go2JoystickRough",
+            "G1WalkFlat",
             "--backend",
             "motrix",
             "--num_envs",
@@ -46,7 +54,7 @@ def test_visualize_task_env_parses_explicit_args():
         ]
     )
 
-    assert args.task == "Go2JoystickRough"
+    assert args.task == "G1WalkFlat"
     assert args.backend == "motrix"
     assert args.num_envs == 8
 
@@ -62,14 +70,13 @@ def test_motrix_camera_kwargs_focuses_single_terrain_spawn():
     class FakeEnv:
         _spawn = FakeSpawn()
 
-    camera_kwargs = mod._motrix_camera_kwargs(FakeEnv(), 1)
+    camera_cfg = mod._motrix_camera_kwargs(FakeEnv(), 1)
 
-    assert camera_kwargs == {
-        "cam_lookat": [10.0, 20.0, 0.75],
-        "cam_distance": 4.0,
-        "cam_elevation": -25.0,
-        "cam_azimuth": 135.0,
-    }
+    assert isinstance(camera_cfg, CameraCfg)
+    assert list(camera_cfg.cam_lookat) == [10.0, 20.0, 0.75]
+    assert camera_cfg.cam_distance == 4.0
+    assert camera_cfg.cam_elevation == -25.0
+    assert camera_cfg.cam_azimuth == 135.0
 
 
 def test_motrix_camera_kwargs_frames_multiple_terrain_spawns():
@@ -91,12 +98,13 @@ def test_motrix_camera_kwargs_frames_multiple_terrain_spawns():
     class FakeEnv:
         _spawn = FakeSpawn()
 
-    camera_kwargs = mod._motrix_camera_kwargs(FakeEnv(), 4)
+    camera_cfg = mod._motrix_camera_kwargs(FakeEnv(), 4)
 
-    assert camera_kwargs["cam_lookat"] == [0.0, -4.0, 0.5]
-    assert camera_kwargs["cam_distance"] > 4.0
-    assert camera_kwargs["cam_elevation"] == -25.0
-    assert camera_kwargs["cam_azimuth"] == 135.0
+    assert isinstance(camera_cfg, CameraCfg)
+    assert list(camera_cfg.cam_lookat) == [0.0, -4.0, 0.5]
+    assert camera_cfg.cam_distance > 4.0
+    assert camera_cfg.cam_elevation == -25.0
+    assert camera_cfg.cam_azimuth == 135.0
 
 
 def test_mujoco_visual_xml_paths_prefer_backend_visual_scene(tmp_path: Path):
@@ -120,10 +128,21 @@ def test_mujoco_visual_xml_paths_prefer_backend_visual_scene(tmp_path: Path):
     assert robot == robot_xml
 
 
-def _keyboard_env(with_commands: bool = True) -> Any:
+def _keyboard_env(
+    with_commands: bool = True,
+    *,
+    env_cls_name: str = "Env",
+    cfg_cls_name: str = "Cfg",
+    module: str = "tests.fake_env",
+    obs_contains_command: bool = False,
+) -> Any:
     info: dict[str, Any] = (
-        {"commands": np.zeros((1, 3), dtype=np.float32)} if with_commands else {"steps": 0}
+        {"commands": torch.tensor([[0.37, -0.23, 0.19]], dtype=torch.float32)}
+        if with_commands
+        else {"steps": 0}
     )
+    if obs_contains_command:
+        info["commands"] = torch.tensor([[0.37, -0.23, 0.19]], dtype=torch.float32)
     commands_cfg = (
         type(
             "Cmds",
@@ -137,9 +156,20 @@ def _keyboard_env(with_commands: bool = True) -> Any:
         if with_commands
         else None
     )
-    cfg = type("Cfg", (), {"commands": commands_cfg})()
-    state = type("State", (), {"info": info})()
-    return type("Env", (), {"state": state, "cfg": cfg})()
+    cfg_type = type(cfg_cls_name, (), {"__module__": module})
+    cfg = cfg_type()
+    cfg.commands = commands_cfg
+    obs = (
+        {"obs": torch.tensor([[1.0, 0.37, -0.23, 0.19, 2.0]], dtype=torch.float32)}
+        if obs_contains_command
+        else {"obs": torch.tensor([[1.0, 2.0, 3.0]], dtype=torch.float32)}
+    )
+    state = type("State", (), {"info": info, "obs": obs})()
+    env_type = type(env_cls_name, (), {"__module__": module})
+    env = env_type()
+    env.state = state
+    env.cfg = cfg
+    return env
 
 
 def test_build_keyboard_commander_disabled_when_flag_off():
@@ -171,6 +201,33 @@ def test_build_keyboard_commander_makes_keyboard_authoritative():
     assert env.cfg.commands.heading_command is False
     assert env.cfg.commands.resampling_time == 0.0
     assert env.state.info["commands"].tolist() == [[0.0, 0.0, 0.0]]
+
+
+def test_velocity_arrows_require_velocity_command_task_and_policy_obs():
+    mod = _load_script("play_interactive")
+
+    joystick_env = _keyboard_env(
+        env_cls_name="Go2WalkTask",
+        cfg_cls_name="Go2JoystickCfg",
+        module="unilab.tasks.locomotion.go2.joystick",
+        obs_contains_command=True,
+    )
+    custom_env = _keyboard_env(
+        env_cls_name="CustomTaskEnv",
+        cfg_cls_name="CustomTaskCfg",
+        module="custom_tasks.example",
+        obs_contains_command=True,
+    )
+    missing_obs_command_env = _keyboard_env(
+        env_cls_name="Go2WalkTask",
+        cfg_cls_name="Go2JoystickCfg",
+        module="unilab.tasks.locomotion.go2.joystick",
+        obs_contains_command=False,
+    )
+
+    assert mod._should_render_velocity_arrows(joystick_env) is True
+    assert mod._should_render_velocity_arrows(custom_env) is False
+    assert mod._should_render_velocity_arrows(missing_obs_command_env) is False
 
 
 def test_handle_command_key_maps_drive_style_keys():
@@ -224,11 +281,9 @@ def test_play_interactive_viewer_model_uses_shared_render_playback_resolver(
         fake_resolve_render_play_model_files,
     )
 
-    class FakeBackend:
-        scene_visual_model_file = str(visual_xml)
-
     class FakeEnv:
-        _backend = FakeBackend()
+        def get_scene_visual_model_file(self) -> str:
+            return str(visual_xml)
 
     env = FakeEnv()
     model = mod._load_viewer_model(env, use_env_visual_model=False)
@@ -239,3 +294,69 @@ def test_play_interactive_viewer_model_uses_shared_render_playback_resolver(
     assert resolved["env"] is env
     assert resolved["num_envs"] == 1
     assert Path(resolved["tmp_dir"]).name.startswith("unilab-interactive-viewer-")
+
+
+def test_play_interactive_binds_mjwarp_process_device_before_session(monkeypatch):
+    mod = _load_script("play_interactive")
+    bound: list[tuple[str, str, int | None]] = []
+    monkeypatch.setattr(
+        mod,
+        "configure_backend_process_device",
+        lambda backend_type, device, backend_device_id=None: bound.append(
+            (backend_type, device, backend_device_id)
+        ),
+    )
+    monkeypatch.setattr(mod, "_select_playback_device", lambda cfg: "cuda:0")
+    monkeypatch.setattr(mod, "available_backends_for_task", lambda task: ["mjwarp"])
+
+    def _stop_before_session(**kwargs):
+        raise RuntimeError("stop-before-session")
+
+    monkeypatch.setattr(mod, "create_rsl_rl_playback_session", _stop_before_session)
+
+    args = SimpleNamespace(
+        algo="ppo",
+        task="g1_walk_flat",
+        sim="mjwarp",
+        load_run="-1",
+        checkpoint=None,
+        action_mode="policy",
+        policy_obs_mode="actor",
+    )
+    with pytest.raises(RuntimeError, match="stop-before-session"):
+        mod.play_interactive(args, None)
+
+    assert bound == [("mjwarp", "cuda:0", None)]
+
+
+def test_play_interactive_device_binding_is_noop_for_mujoco(monkeypatch):
+    mod = _load_script("play_interactive")
+    bound: list[tuple[str, str, int | None]] = []
+    monkeypatch.setattr(
+        mod,
+        "configure_backend_process_device",
+        lambda backend_type, device, backend_device_id=None: bound.append(
+            (backend_type, device, backend_device_id)
+        ),
+    )
+    monkeypatch.setattr(mod, "_select_playback_device", lambda cfg: "cuda:0")
+    monkeypatch.setattr(mod, "available_backends_for_task", lambda task: ["mujoco"])
+
+    def _stop_before_session(**kwargs):
+        raise RuntimeError("stop-before-session")
+
+    monkeypatch.setattr(mod, "create_rsl_rl_playback_session", _stop_before_session)
+
+    args = SimpleNamespace(
+        algo="ppo",
+        task="g1_walk_flat",
+        sim="mujoco",
+        load_run="-1",
+        checkpoint=None,
+        action_mode="policy",
+        policy_obs_mode="actor",
+    )
+    with pytest.raises(RuntimeError, match="stop-before-session"):
+        mod.play_interactive(args, None)
+
+    assert bound == [("mujoco", "cuda:0", None)]

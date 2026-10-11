@@ -1,9 +1,7 @@
 """Tests for env config completeness and env instantiation.
 
-Config-attribute tests (non-slow) verify that config dataclasses expose every
-attribute accessed by their paired env class, WITHOUT running a simulation.
-
-Slow tests actually call registry.make() and run reset + step.
+The whole module is marked slow: Hydra composition and ``registry.make()``
+over every owner are CPU-bound and too slow for the single-core CI runner.
 """
 
 from __future__ import annotations
@@ -12,25 +10,105 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
 import pytest
+import torch
 
 from unilab.base.registry import ensure_registries
+
+# CPU-bound on the single-core CI runner; kept in the slow lane (make test-slow).
+pytestmark = pytest.mark.slow
 
 
 def _require_mujoco_runtime() -> None:
     pytest.importorskip("mujoco", reason="mujoco not installed")
-    try:
-        from mujoco.batch_env import BatchEnvPool as _  # noqa: F401
-    except Exception:
-        pytest.skip("mujoco.batch_env not available (platform/libstdc++ issue)")
+    pytest.importorskip("mjbatch", reason="mjbatch not installed")
+    pytest.importorskip(
+        "unisim.backend.mujoco.backend",
+        reason="unisim-core MuJoCo adapter (mjbatch build) not available",
+    )
+
+
+def _require_mjwarp_runtime() -> None:
+    if sys.platform == "darwin":
+        pytest.skip("mjwarp is a CUDA-only backend; macOS has no supported CUDA runtime")
+    from unisim.backend.mjwarp.dependencies import load_mjwarp_dependencies
+
+    dependencies = load_mjwarp_dependencies()
+    if not bool(dependencies.warp.get_device().is_cuda):
+        pytest.fail("mjwarp runtime tests require an active CUDA Warp device")
+
+
+def _require_genesis_runtime() -> None:
+    from unisim.backend.genesis.dependencies import genesis_dependencies_available
+
+    if not genesis_dependencies_available():
+        pytest.skip("genesis requires the genesis-world extra")
+    if not torch.cuda.is_available():
+        pytest.skip("genesis runtime tests require a CUDA device")
+
+
+def _require_newton_runtime() -> None:
+    if sys.platform == "darwin":
+        pytest.skip("newton is a CUDA-only backend; macOS has no supported CUDA runtime")
+    pytest.importorskip("newton", reason="newton requires the newton extra")
+    from unisim.backend.newton.dependencies import load_newton_dependencies
+
+    dependencies = load_newton_dependencies()
+    if not bool(dependencies.warp.get_device().is_cuda):
+        pytest.skip("newton runtime tests require an active CUDA Warp device")
+
+
+def _require_motrix_runtime() -> None:
+    pytest.importorskip("motrixsim", reason="motrixsim not installed")
+
+
+def _g1_manager_override(
+    task: str = "g1_walk_flat", backend: str = "mujoco", config_group: str = "ppo"
+) -> dict[str, Any]:
+    from hydra import compose, initialize_config_dir
+
+    from unilab.base.config_adapter import BackendAdapter
+
+    repo_root = Path(__file__).parents[2]
+    with initialize_config_dir(
+        config_dir=str(repo_root / "src" / "unilab" / "conf" / config_group), version_base="1.3"
+    ):
+        cfg = compose("config", overrides=[f"task={task}/{backend}"])
+    return BackendAdapter(
+        cfg, root_dir=repo_root, algo_name=config_group
+    ).build_task_env_cfg_override()
+
+
+def _motion_manager_override(
+    task: str,
+    backend: str,
+    *,
+    config_root: str = "ppo",
+) -> tuple[str, dict[str, Any]]:
+    from hydra import compose, initialize_config_dir
+    from hydra.core.global_hydra import GlobalHydra
+
+    from unilab.base.config_adapter import BackendAdapter
+
+    repo_root = Path(__file__).parents[2]
+    GlobalHydra.instance().clear()
+    with initialize_config_dir(
+        config_dir=str(repo_root / "src" / "unilab" / "conf" / config_root), version_base="1.3"
+    ):
+        overrides = [f"task={task}/{backend}"]
+        cfg = compose("config", overrides=overrides)
+    return str(cfg.training.task_name), BackendAdapter(
+        cfg,
+        root_dir=repo_root,
+        algo_name=config_root,
+    ).build_task_env_cfg_override()
 
 
 # ---------------------------------------------------------------------------
-# Non-slow: config attribute completeness (no env.step(), no MuJoCo sim)
+# Config attribute completeness (no env.step(), no MuJoCo sim)
 # ---------------------------------------------------------------------------
 
 
@@ -50,22 +128,14 @@ def test_registry_bootstrap_and_config_imports_do_not_require_mujoco():
         builtins.__import__ = blocked_import
 
         from unilab.base import registry
-        from unilab.base.backend import create_backend
-        from unilab.envs.manipulation.allegro_inhand.rotation import AllegroRotationCfg
-        from unilab.envs.motion_tracking.g1.tracking import (
-            G1MotionTrackingCfg,
-            G1MotionTrackingDeployEnvCfg,
-        )
+        from unilab.base.backend_factory import create_backend
         from unilab.base.registry import ensure_registries
 
         ensure_registries()
         assert callable(create_backend)
         assert registry.contains("G1MotionTracking")
-        assert registry.contains("G1MotionTrackingDeploy")
-        assert registry.contains("AllegroInhandRotation")
-        G1MotionTrackingCfg()
-        G1MotionTrackingDeployEnvCfg()
-        AllegroRotationCfg()
+        metadata = registry.list_registered_envs()
+        assert metadata["G1MotionTracking"]["config_factory"] == "ManagerBasedRlEnvCfg"
         """
     )
 
@@ -78,216 +148,6 @@ def test_registry_bootstrap_and_config_imports_do_not_require_mujoco():
     )
 
     assert result.returncode == 0, result.stderr or result.stdout
-
-
-def test_g1_walk_env_cfg_obs_groups_spec():
-    """G1WalkEnv must declare obs_groups_spec with actor and critic groups."""
-    from unilab.envs.locomotion.g1.joystick import G1WalkEnvCfg, G1WalkLegacyRewardConfig
-
-    cfg = G1WalkEnvCfg()
-    assert not hasattr(cfg, "obs_config"), "obs_config should have been removed"
-
-    reward_cfg = G1WalkLegacyRewardConfig(
-        scales={"feet_phase": 1.0},
-        tracking_sigma=0.25,
-        gait_frequency=1.5,
-        feet_phase_swing_height=0.09,
-        feet_phase_tracking_sigma=0.008,
-        base_height_target=0.765,
-        min_forward_speed_for_gait_reward=0.05,
-        min_base_height=0.5,
-        max_tilt_deg=35.0,
-    )
-    assert reward_cfg.min_forward_speed_for_gait_reward == pytest.approx(0.05)
-
-
-def test_g1_walk_flat_cfg_no_obs_config():
-    """G1WalkFlatCfg should no longer have obs_config after dict obs refactor."""
-    from unilab.envs.locomotion.g1.joystick import G1WalkFlatCfg
-
-    cfg = G1WalkFlatCfg()
-    assert not hasattr(cfg, "obs_config"), (
-        "obs_config should have been removed in the dict obs refactor"
-    )
-
-
-def test_g1_walk_flat_cfg_has_domain_rand_for_motrix():
-    from unilab.envs.locomotion.g1.joystick import G1WalkFlatCfg
-
-    cfg = G1WalkFlatCfg()
-    assert hasattr(cfg, "domain_rand")
-    assert hasattr(cfg, "gait_phase_init_mode")
-    assert hasattr(cfg, "reset_base_qvel_limit")
-    assert cfg.domain_rand.randomize_base_mass is False
-    assert cfg.domain_rand.random_com is False
-    assert cfg.domain_rand.randomize_gravity is False
-    assert cfg.domain_rand.push_robots is False
-
-
-def test_g1_walk_flat_cfg_defaults_match_walk_profile():
-    from unilab.envs.locomotion.g1.joystick import G1WalkFlatCfg
-
-    cfg = G1WalkFlatCfg()
-    assert not hasattr(cfg, "obs_profile")
-    assert cfg.curriculum.enabled is True
-
-
-def test_g1_walk_tasks_register_to_algorithm_agnostic_env_base():
-    from unilab.base import registry
-    from unilab.envs.locomotion.g1.joystick import G1WalkEnv, G1WalkRewardConfig
-
-    env = cast(
-        Any,
-        registry.make(
-            "G1WalkFlat",
-            num_envs=1,
-            sim_backend="mujoco",
-            env_cfg_override={
-                "reward_config": G1WalkRewardConfig(
-                    scales={"tracking_lin_vel": 2.0, "alive": 10.0},
-                    tracking_sigma=0.25,
-                    base_height_target=0.754,
-                    min_base_height=0.3,
-                    max_tilt_deg=65.0,
-                    gait_frequency=1.5,
-                    feet_phase_swing_height=0.09,
-                    feet_phase_tracking_sigma=0.04,
-                    close_feet_threshold=0.15,
-                    pose_weights=[0.01] * 29,
-                )
-            },
-        ),
-    )
-    try:
-        assert env.__class__ is G1WalkEnv
-    finally:
-        env.close()
-
-
-def test_g1_walk_flat_observation_construction_is_hardcoded_for_legacy_and_walk_modes():
-    from unilab.envs.locomotion.g1.joystick import G1WalkEnv
-
-    class NoiseCfg:
-        level = 0.0
-        scale_gyro = 0.0
-        scale_gravity = 0.0
-        scale_joint_angle = 0.0
-        scale_joint_vel = 0.0
-        scale_linvel = 0.0
-
-    def compute_obs(curriculum_enabled: bool) -> dict[str, np.ndarray]:
-        env = cast(Any, object.__new__(G1WalkEnv))
-        env._num_envs = 1
-        env.default_angles = np.array([[0.5, -0.5]], dtype=np.float32)
-        env._cfg = type(
-            "Cfg",
-            (),
-            {
-                "noise_config": NoiseCfg(),
-                "curriculum": type("Curriculum", (), {"enabled": curriculum_enabled})(),
-            },
-        )()
-        env._obs_noise = lambda data, scale: data + 100.0
-        info = {
-            "commands": np.array([[0.7, 0.0, 0.2]], dtype=np.float32),
-            "current_actions": np.array([[0.1, -0.2]], dtype=np.float32),
-            "gait_phase": np.array([[0.3, 3.4]], dtype=np.float32),
-        }
-        return cast(
-            dict[str, np.ndarray],
-            env._compute_obs(
-                info,
-                linvel=np.array([[1.0, 2.0, 3.0]], dtype=np.float32),
-                gyro=np.array([[4.0, 5.0, 6.0]], dtype=np.float32),
-                gravity=np.array([[0.1, 0.2, 0.9]], dtype=np.float32),
-                dof_pos=np.array([[0.6, -0.3]], dtype=np.float32),
-                dof_vel=np.array([[7.0, 8.0]], dtype=np.float32),
-            ),
-        )
-
-    legacy = compute_obs(curriculum_enabled=False)
-    walk = compute_obs(curriculum_enabled=True)
-
-    np.testing.assert_allclose(legacy["obs"][:, :3], [[104.0, 105.0, 106.0]])
-    np.testing.assert_allclose(legacy["obs"][:, 8:10], [[107.0, 108.0]])
-    np.testing.assert_allclose(legacy["critic"][:, :3], [[4.0, 5.0, 6.0]])
-    np.testing.assert_allclose(legacy["critic"][:, 17:20], [[1.0, 2.0, 3.0]])
-
-    np.testing.assert_allclose(walk["obs"][:, :3], [[26.0, 26.25, 26.5]])
-    np.testing.assert_allclose(walk["obs"][:, 8:10], [[5.35, 5.4]])
-    np.testing.assert_allclose(walk["critic"][:, :3], [[1.0, 1.25, 1.5]])
-    np.testing.assert_allclose(walk["critic"][:, 8:10], [[0.35, 0.4]])
-    np.testing.assert_allclose(walk["critic"][:, 17:20], [[2.0, 4.0, 6.0]])
-
-
-def test_g1_walk_env_obs_groups_spec_dims():
-    """obs_groups_spec total dim must match what _compute_obs actually produces.
-
-    G1WalkEnv._compute_obs outputs (G1 has 29 DoF):
-        actor: gyro(3) + gravity(3) + diff(29) + dof_vel(29)
-            + last_actions(29) + command(3) + gait_phase(2) = 98
-        critic: actor(98) + linvel(3) = 101
-    """
-    from unilab.envs.locomotion.g1.joystick import G1WalkEnv
-
-    # obs_groups_spec is a @property; access via descriptor protocol
-    spec = G1WalkEnv.obs_groups_spec.fget(None)  # type: ignore[union-attr]
-    assert spec is not None
-    assert spec["obs"] == 98
-    assert spec["critic"] == 101
-
-
-def test_g1_walk_env_reward_dispatch_restores_motrix_terms():
-    from unilab.envs.locomotion.g1.joystick import G1WalkEnv
-
-    env = cast(Any, object.__new__(G1WalkEnv))
-    env._reward_fns = {}
-
-    env._init_reward_functions()
-
-    assert "penalty_feet_ori" in env._reward_fns
-    assert "feet_phase_contrast" in env._reward_fns
-    assert "feet_phase_contact" in env._reward_fns
-    assert "feet_double_stance" in env._reward_fns
-
-
-def test_g1_walk_env_feet_phase_reward_is_gated_by_forward_speed():
-    from unilab.envs.locomotion.common.rewards import RewardContext
-    from unilab.envs.locomotion.g1.joystick import G1WalkEnv
-
-    class FakeBackend:
-        def get_sensor_data(self, name: str) -> np.ndarray:
-            if name == "left_foot_pos":
-                return np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=np.float32)
-            if name == "right_foot_pos":
-                return np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=np.float32)
-            raise KeyError(name)
-
-    env = cast(Any, object.__new__(G1WalkEnv))
-    env._backend = FakeBackend()
-    env._num_envs = 2
-    env._reward_cfg = type(
-        "RewardCfg",
-        (),
-        {
-            "feet_phase_swing_height": 0.09,
-            "feet_phase_tracking_sigma": 0.008,
-            "min_forward_speed_for_gait_reward": 0.05,
-        },
-    )()
-
-    ctx = RewardContext(
-        info={"gait_phase": np.zeros((2, 2), dtype=np.float32), "commands": np.zeros((2, 3))},
-        linvel=np.array([[0.01, 0.0, 0.0], [0.10, 0.0, 0.0]], dtype=np.float32),
-        gyro=np.zeros((2, 3), dtype=np.float32),
-        dof_pos=np.zeros((2, 29), dtype=np.float32),
-        num_envs=2,
-    )
-
-    reward = env._reward_feet_phase(ctx)
-
-    assert reward[0] == pytest.approx(0.0)
-    assert reward[1] > 0.0
 
 
 def test_g1_walk_flat_assets_define_contact_sensors_for_gait_rewards():
@@ -353,1316 +213,18 @@ def test_g1_sphere_hand_assets_align_with_current_g1_sensor_names():
         assert name in model_text
 
 
-def test_g1_box_tracking_scene_compiles_with_pelvis_imu_sensor_names():
-    mujoco = pytest.importorskip("mujoco")
-
-    repo_root = Path(__file__).parents[2]
-    scene_xml = (
-        repo_root / "src" / "unilab" / "assets" / "robots" / "g1" / "scene_flat_with_largebox.xml"
-    )
-
-    model = mujoco.MjModel.from_xml_path(str(scene_xml))
-
-    for sensor_name in (
-        "pelvis_local_linvel",
-        "pelvis_gyro",
-        "pelvis_acceleration",
-        "pelvis_upvector",
-        "torso_gyro",
-        "torso_acceleration",
-        "torso_upvector",
-    ):
-        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, sensor_name) >= 0
-
-
-def test_g1_box_tracking_scene_uses_sphere_hand_and_box_tracking_mesh():
-    repo_root = Path(__file__).parents[2]
-    scene_text = (
-        repo_root / "src" / "unilab" / "assets" / "robots" / "g1" / "scene_flat_with_largebox.xml"
-    ).read_text()
-
-    for snippet in (
-        '<include file="g1_sphere_hand.xml"/>',
-        'mesh name="largebox_mesh" file="box_tracking/largebox.obj"',
-        '<freejoint name="largebox_joint"/>',
-        '<geom name="largebox" type="mesh" mesh="largebox_mesh"',
-        "0.0 0.5 0.85",
-    ):
-        assert snippet in scene_text
-
-    for name in (
-        "left_foot_contact_0",
-        "left_foot_contact_1",
-        "left_foot_contact_2",
-        "left_foot_contact_3",
-        "right_foot_contact_0",
-        "right_foot_contact_1",
-        "right_foot_contact_2",
-        "right_foot_contact_3",
-    ):
-        assert name in scene_text
-
-
-def test_allegro_rotation_obs_groups_spec_dims():
-    """Allegro rotation obs_groups_spec should expose single actor obs group."""
-    from unilab.envs.manipulation.allegro_inhand.rotation import AllegroRotationPPO
-
-    env = cast(Any, object.__new__(AllegroRotationPPO))
-    spec = env.obs_groups_spec
-
-    assert spec == {"obs": 105}
-
-
-def test_allegro_grasp_obs_groups_spec_dims():
-    """Allegro grasp task inherits the same obs group layout as rotation."""
-    from unilab.envs.manipulation.allegro_inhand.grasp_gen import AllegroRotationGrasp
-
-    env = cast(Any, object.__new__(AllegroRotationGrasp))
-    spec = env.obs_groups_spec
-
-    assert spec == {"obs": 105}
-
-
-def test_allegro_missing_grasp_cache_prints_local_generation_notice(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from unilab.envs.manipulation.allegro_inhand.rotation import (
-        AllegroRotationDomainRandomizationProvider,
-    )
-
-    missing_cache = tmp_path / "missing_allegro_cache.npy"
-    env = SimpleNamespace(
-        _grasp_cache=None,
-        _grasp_cache_loaded=False,
-        cfg=SimpleNamespace(gen_grasp=False, grasp_cache_path=str(missing_cache)),
-    )
-
-    provider = AllegroRotationDomainRandomizationProvider()
-
-    assert provider._load_grasp_cache(env) is None
-    notice = capsys.readouterr().out
-
-    assert env._grasp_cache is None
-    assert env._grasp_cache_loaded is True
-    assert str(missing_cache) in notice
-    assert "no Hugging Face download will be attempted" in notice
-    assert "uv run train --algo ppo --task allegro_inhand_grasp --sim mujoco" in notice
-    assert "env.grasp_cache_path" in notice
-
-
-def test_g1_motion_tracking_uses_combined_body_pose_query():
-    """G1MotionTracking should query pos/quat via the stable combined backend API."""
-    from unilab.envs.motion_tracking.g1.tracking import G1MotionTrackingEnv
-
-    class FakeBackend:
-        def __init__(self) -> None:
-            self.calls: list[np.ndarray] = []
-
-        def get_body_pose_w(self, body_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-            self.calls.append(body_ids.copy())
-            return np.ones((2, len(body_ids), 3)), np.ones((2, len(body_ids), 4))
-
-    env = cast(Any, object.__new__(G1MotionTrackingEnv))
-    env._backend = FakeBackend()
-    env.body_ids = np.array([1, 3], dtype=np.int32)
-
-    pos_w, quat_w = env._get_body_pose_w()
-
-    assert pos_w.shape == (2, 2, 3)
-    assert quat_w.shape == (2, 2, 4)
-    assert len(env._backend.calls) == 1
-    np.testing.assert_array_equal(env._backend.calls[0], np.array([1, 3], dtype=np.int32))
-
-
-def _compute_g1_motion_tracking_obs_stub(env_cls: type):
-    from unilab.envs.motion_tracking.g1.motion_loader import MotionData
-
-    env = cast(Any, object.__new__(env_cls))
-    env._num_envs = 1
-    env._num_action = 2
-    env._n_motion_bodies = 2
-    env._critic_obs_width = env._critic_base_obs_dim(env._num_action) + env._n_motion_bodies * 9
-    env._cfg = SimpleNamespace(
-        noise_config=SimpleNamespace(
-            level=1.0,
-            scale_linvel=1.0,
-            scale_gyro=1.0,
-            scale_joint_angle=1.0,
-            scale_joint_vel=1.0,
-        ),
-        body_names=("pelvis", "torso_link"),
-    )
-    env.default_angles = np.array([[0.5, -0.5]], dtype=np.float32)
-    env.anchor_body_idx = 0
-    env._motion_anchor_pos_b = np.empty((1, 3), dtype=np.float32)
-    env._motion_anchor_ori_b = np.empty((1, 6), dtype=np.float32)
-    env._motion_command = np.empty((1, 4), dtype=np.float32)
-    env._joint_pos_rel = np.empty((1, 2), dtype=np.float32)
-    env._body_vec_error = np.empty((1, 2, 3), dtype=np.float32)
-    env._body_vec_tmp = np.empty((1, 2, 3), dtype=np.float32)
-    env._quat_error_w = np.empty((1, 2), dtype=np.float32)
-    env._quat_error_x = np.empty((1, 2), dtype=np.float32)
-    env._zero_actions = np.zeros((1, 2), dtype=np.float32)
-    env._obs_noise = lambda data, scale: np.asarray(data + 100.0, dtype=np.float32)
-
-    motion_data = MotionData(
-        joint_pos=np.array([[0.1, 0.2]], dtype=np.float32),
-        joint_vel=np.array([[0.3, 0.4]], dtype=np.float32),
-        body_pos_w=np.zeros((1, 2, 3), dtype=np.float32),
-        body_quat_w=np.tile(np.array([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32), (1, 2, 1)),
-        body_lin_vel_w=np.zeros((1, 2, 3), dtype=np.float32),
-        body_ang_vel_w=np.zeros((1, 2, 3), dtype=np.float32),
-    )
-    linvel = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
-    gyro = np.array([[4.0, 5.0, 6.0]], dtype=np.float32)
-    dof_pos = np.array([[0.7, -0.2]], dtype=np.float32)
-    dof_vel = np.array([[7.0, 8.0]], dtype=np.float32)
-    robot_body_pos_w = np.array([[[0.0, 0.0, 0.0], [0.2, 0.0, 0.1]]], dtype=np.float32)
-    robot_body_quat_w = np.tile(np.array([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32), (1, 2, 1))
-    info = {"current_actions": np.array([[0.1, -0.2]], dtype=np.float32)}
-
-    obs = env._compute_obs(
-        info,
-        motion_data,
-        linvel,
-        gyro,
-        dof_pos,
-        dof_vel,
-        robot_body_pos_w,
-        robot_body_quat_w,
-    )
-    return env, obs, motion_data, linvel, gyro, dof_pos, dof_vel, info
-
-
-def test_g1_motion_tracking_critic_uses_clean_beyondmimic_aligned_terms():
-    from unilab.envs.motion_tracking.g1.tracking import G1MotionTrackingEnv
-
-    env, obs, motion_data, linvel, gyro, dof_pos, dof_vel, info = (
-        _compute_g1_motion_tracking_obs_stub(G1MotionTrackingEnv)
-    )
-
-    assert env.obs_groups_spec == {"obs": 25, "critic": 43}
-    assert obs["obs"].shape == (1, 25)
-    np.testing.assert_allclose(obs["obs"][:, 13:16], linvel + 100.0)
-    np.testing.assert_allclose(obs["obs"][:, 16:19], gyro + 100.0)
-    np.testing.assert_allclose(obs["obs"][:, 19:21], dof_pos - env.default_angles + 100.0)
-    np.testing.assert_allclose(obs["obs"][:, 21:23], dof_vel + 100.0)
-    np.testing.assert_allclose(obs["obs"][:, 23:25], info["current_actions"])
-
-    command_dim = motion_data.joint_pos.shape[1] + motion_data.joint_vel.shape[1]
-    anchor_dim = 3 + 6
-    clean_proprio_start = command_dim + anchor_dim
-    np.testing.assert_allclose(
-        obs["critic"][:, clean_proprio_start : clean_proprio_start + 3], linvel
-    )
-    np.testing.assert_allclose(
-        obs["critic"][:, clean_proprio_start + 3 : clean_proprio_start + 6], gyro
-    )
-    np.testing.assert_allclose(
-        obs["critic"][:, clean_proprio_start + 6 : clean_proprio_start + 8],
-        dof_pos - env.default_angles,
-    )
-    np.testing.assert_allclose(
-        obs["critic"][:, clean_proprio_start + 8 : clean_proprio_start + 10], dof_vel
-    )
-    np.testing.assert_allclose(
-        obs["critic"][:, clean_proprio_start + 10 : clean_proprio_start + 12],
-        info["current_actions"],
-    )
-
-
-def test_g1_motion_tracking_anchor_frame_writers_match_reference():
-    from unilab.envs.common.rotation import (
-        np_matrix_from_quat,
-        np_quat_apply,
-        np_quat_inv,
-        np_quat_mul,
-    )
-    from unilab.envs.motion_tracking.g1.tracking import G1MotionTrackingEnv
-
-    rng = np.random.default_rng(123)
-    num_envs = 4
-    num_bodies = 5
-    dtype = np.float64
-
-    def random_quat(shape: tuple[int, ...]) -> np.ndarray:
-        quat = rng.normal(size=(*shape, 4)).astype(dtype)
-        quat /= np.linalg.norm(quat, axis=-1, keepdims=True)
-        return quat
-
-    anchor_pos = rng.normal(size=(num_envs, 3)).astype(dtype)
-    anchor_quat = random_quat((num_envs,))
-    body_pos = rng.normal(size=(num_envs, num_bodies, 3)).astype(dtype)
-    body_quat = random_quat((num_envs, num_bodies))
-
-    env = cast(Any, object.__new__(G1MotionTrackingEnv))
-    env._body_vec_error = np.empty((num_envs, num_bodies, 3), dtype=dtype)
-    env._body_vec_tmp = np.empty((num_envs, num_bodies, 3), dtype=dtype)
-    env._quat_error_w = np.empty((num_envs, num_bodies), dtype=dtype)
-    env._quat_error_x = np.empty((num_envs, num_bodies), dtype=dtype)
-
-    pos_out = np.empty((num_envs, num_bodies, 3), dtype=dtype)
-    ori_out = np.empty((num_envs, num_bodies, 6), dtype=dtype)
-
-    env._write_body_pos_in_anchor_frame(anchor_pos, anchor_quat, body_pos, pos_out)
-    env._write_body_ori6_in_anchor_frame(anchor_quat, body_quat, ori_out)
-
-    anchor_quat_inv = np_quat_inv(anchor_quat)
-    tiled_anchor_quat_inv = np.repeat(anchor_quat_inv, num_bodies, axis=0)
-    rel_pos_flat = (body_pos - anchor_pos[:, None, :]).reshape(num_envs * num_bodies, 3)
-    ref_pos = np_quat_apply(tiled_anchor_quat_inv, rel_pos_flat).reshape(num_envs, num_bodies, 3)
-    ref_quat = np_quat_mul(
-        tiled_anchor_quat_inv,
-        body_quat.reshape(num_envs * num_bodies, 4),
-    )
-    ref_ori = np_matrix_from_quat(ref_quat)[:, :, :2].reshape(num_envs, num_bodies, 6)
-
-    np.testing.assert_allclose(pos_out, ref_pos, rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(ori_out, ref_ori, rtol=1e-12, atol=1e-12)
-
-
-def test_g1_motion_tracking_relative_transform_fast_path_matches_reference():
-    from unilab.envs.common.rotation import np_quat_apply, np_quat_inv, np_quat_mul, np_yaw_quat
-    from unilab.envs.motion_tracking.g1.tracking import G1MotionTrackingEnv
-
-    rng = np.random.default_rng(321)
-    num_envs = 4
-    num_bodies = 5
-    anchor_idx = 2
-    dtype = np.float64
-
-    def random_quat(shape: tuple[int, ...]) -> np.ndarray:
-        quat = rng.normal(size=(*shape, 4)).astype(dtype)
-        quat /= np.linalg.norm(quat, axis=-1, keepdims=True)
-        return quat
-
-    motion_data = SimpleNamespace(
-        body_pos_w=rng.normal(size=(num_envs, num_bodies, 3)).astype(dtype),
-        body_quat_w=random_quat((num_envs, num_bodies)),
-    )
-    robot_body_pos_w = rng.normal(size=(num_envs, num_bodies, 3)).astype(dtype)
-    robot_body_quat_w = random_quat((num_envs, num_bodies))
-
-    env = cast(Any, object.__new__(G1MotionTrackingEnv))
-    env.anchor_body_idx = anchor_idx
-    env.body_pos_relative_w = np.empty((num_envs, num_bodies, 3), dtype=dtype)
-    env.body_quat_relative_w = np.empty((num_envs, num_bodies, 4), dtype=dtype)
-    env._delta_pos_w = np.empty((num_envs, 3), dtype=dtype)
-    env._delta_ori_w = np.empty((num_envs, 4), dtype=dtype)
-    env._body_vec_error = np.empty((num_envs, num_bodies, 3), dtype=dtype)
-    env._env_error = np.empty((num_envs,), dtype=dtype)
-    env._reward_term = np.empty((num_envs,), dtype=dtype)
-
-    env._update_relative_transforms(motion_data, robot_body_pos_w, robot_body_quat_w)
-
-    anchor_pos_w = motion_data.body_pos_w[:, anchor_idx]
-    anchor_quat_w = motion_data.body_quat_w[:, anchor_idx]
-    robot_anchor_pos_w = robot_body_pos_w[:, anchor_idx]
-    robot_anchor_quat_w = robot_body_quat_w[:, anchor_idx]
-    delta_pos_w = robot_anchor_pos_w.copy()
-    delta_pos_w[:, 2] = anchor_pos_w[:, 2]
-    delta_ori_w = np_yaw_quat(np_quat_mul(robot_anchor_quat_w, np_quat_inv(anchor_quat_w)))
-    delta_ori_tiled = np.tile(delta_ori_w, (1, num_bodies)).reshape(num_envs * num_bodies, 4)
-    expected_quat = np_quat_mul(
-        delta_ori_tiled,
-        motion_data.body_quat_w.reshape(num_envs * num_bodies, 4),
-    ).reshape(num_envs, num_bodies, 4)
-    rel_pos_flat = (motion_data.body_pos_w - anchor_pos_w[:, None, :]).reshape(
-        num_envs * num_bodies, 3
-    )
-    expected_pos = delta_pos_w[:, None, :] + np_quat_apply(delta_ori_tiled, rel_pos_flat).reshape(
-        num_envs, num_bodies, 3
-    )
-
-    np.testing.assert_allclose(env.body_pos_relative_w, expected_pos, rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(env.body_quat_relative_w, expected_quat, rtol=1e-12, atol=1e-12)
-
-
-def test_g1_motion_tracking_reward_fast_path_matches_reference():
-    from unilab.envs.common.rotation import np_quat_error_magnitude
-    from unilab.envs.motion_tracking.g1.motion_loader import MotionData
-    from unilab.envs.motion_tracking.g1.tracking import G1MotionTrackingEnv, RewardConfig
-
-    rng = np.random.default_rng(456)
-    num_envs = 3
-    num_bodies = 4
-    num_actions = 2
-    anchor_idx = 1
-    ee_indices = np.array([2, 3], dtype=np.int32)
-    undesired_indices = np.array([0, 1], dtype=np.int32)
-    dtype = np.float64
-
-    def random_quat(shape: tuple[int, ...]) -> np.ndarray:
-        quat = rng.normal(size=(*shape, 4)).astype(dtype)
-        quat /= np.linalg.norm(quat, axis=-1, keepdims=True)
-        return quat
-
-    reward_config = RewardConfig()
-    reward_config.scales = {
-        "motion_global_root_pos": 0.5,
-        "motion_global_root_ori": 0.25,
-        "motion_body_pos": 1.0,
-        "motion_body_ori": 0.75,
-        "motion_body_lin_vel": 0.4,
-        "motion_body_ang_vel": 0.3,
-        "motion_ee_body_pos_z": 0.2,
-        "motion_joint_pos": 0.6,
-        "motion_joint_vel": 0.7,
-        "action_rate_l2": -0.1,
-        "joint_limit": -0.2,
-        "undesired_contacts": -0.3,
-    }
-    ctrl_dt = 0.02
-    contact_threshold = 0.05
-
-    motion_data = MotionData(
-        joint_pos=rng.normal(size=(num_envs, num_actions)).astype(dtype),
-        joint_vel=rng.normal(size=(num_envs, num_actions)).astype(dtype),
-        body_pos_w=rng.normal(size=(num_envs, num_bodies, 3)).astype(dtype),
-        body_quat_w=random_quat((num_envs, num_bodies)),
-        body_lin_vel_w=rng.normal(size=(num_envs, num_bodies, 3)).astype(dtype),
-        body_ang_vel_w=rng.normal(size=(num_envs, num_bodies, 3)).astype(dtype),
-    )
-    robot_body_pos_w = rng.normal(size=(num_envs, num_bodies, 3)).astype(dtype)
-    robot_body_pos_w[:, undesired_indices, 2] = np.array(
-        [[0.01, 0.10], [0.20, 0.02], [0.07, 0.03]], dtype=dtype
-    )
-    robot_body_quat_w = random_quat((num_envs, num_bodies))
-    robot_body_lin_vel_w = rng.normal(size=(num_envs, num_bodies, 3)).astype(dtype)
-    robot_body_ang_vel_w = rng.normal(size=(num_envs, num_bodies, 3)).astype(dtype)
-    dof_pos = rng.normal(size=(num_envs, num_actions)).astype(dtype)
-    dof_vel = rng.normal(size=(num_envs, num_actions)).astype(dtype)
-    current_actions = rng.normal(size=(num_envs, num_actions)).astype(dtype)
-    last_actions = rng.normal(size=(num_envs, num_actions)).astype(dtype)
-    body_pos_relative_w = rng.normal(size=(num_envs, num_bodies, 3)).astype(dtype)
-    body_quat_relative_w = random_quat((num_envs, num_bodies))
-    joint_lower = np.array([-0.2, -0.1], dtype=dtype)
-    joint_upper = np.array([0.1, 0.2], dtype=dtype)
-
-    env = cast(Any, object.__new__(G1MotionTrackingEnv))
-    env._num_envs = num_envs
-    env.anchor_body_idx = anchor_idx
-    env.ee_body_indices = ee_indices
-    env.undesired_contact_body_indices = undesired_indices
-    env._has_ee_body_indices = True
-    env._has_undesired_contact_body_indices = True
-    env._cfg = SimpleNamespace(
-        reward_config=reward_config,
-        ctrl_dt=ctrl_dt,
-        undesired_contact_z_threshold=contact_threshold,
-    )
-    env.body_pos_relative_w = body_pos_relative_w.copy()
-    env.body_quat_relative_w = body_quat_relative_w.copy()
-    env._joint_lower = joint_lower
-    env._joint_upper = joint_upper
-    env._body_vec_error = np.empty((num_envs, num_bodies, 3), dtype=dtype)
-    env._joint_error = np.empty((num_envs, num_actions), dtype=dtype)
-    env._joint_error_upper = np.empty((num_envs, num_actions), dtype=dtype)
-    env._env_error = np.empty((num_envs,), dtype=dtype)
-    env._env_error2 = np.empty((num_envs,), dtype=dtype)
-    env._reward_term = np.empty((num_envs,), dtype=dtype)
-    env._weighted_reward = np.empty((num_envs,), dtype=dtype)
-    env._quat_error_w = np.empty((num_envs, num_bodies), dtype=dtype)
-    env._quat_error_x = np.empty((num_envs, num_bodies), dtype=dtype)
-    env._ee_pos_error_z = np.empty((num_envs, ee_indices.size), dtype=dtype)
-    env._undesired_contact_mask = np.empty((num_envs, undesired_indices.size), dtype=bool)
-    env._enable_reward_log = False
-    env._init_reward_functions()
-    env._active_reward_fns = {
-        name: fn for name, fn in env._reward_fns.items() if env._reward_term_is_active(name)
-    }
-
-    info = {
-        "current_actions": current_actions,
-        "last_actions": last_actions,
-        "steps": np.zeros((num_envs,), dtype=np.uint32),
-    }
-    actual = env._compute_reward(
-        info,
-        motion_data,
-        robot_body_pos_w,
-        robot_body_quat_w,
-        robot_body_lin_vel_w,
-        robot_body_ang_vel_w,
-        dof_pos,
-        dof_vel,
-    ).copy()
-
-    cfg = reward_config
-    expected = np.zeros((num_envs,), dtype=dtype)
-    root_pos_error = np.sum(
-        np.square(motion_data.body_pos_w[:, anchor_idx] - robot_body_pos_w[:, anchor_idx]),
-        axis=-1,
-    )
-    expected += cfg.scales["motion_global_root_pos"] * np.exp(-root_pos_error / cfg.std_root_pos**2)
-    root_ori_error = (
-        np_quat_error_magnitude(
-            motion_data.body_quat_w[:, anchor_idx],
-            robot_body_quat_w[:, anchor_idx],
-        )
-        ** 2
-    )
-    expected += cfg.scales["motion_global_root_ori"] * np.exp(-root_ori_error / cfg.std_root_ori**2)
-    body_pos_error = np.sum(np.square(body_pos_relative_w - robot_body_pos_w), axis=-1)
-    expected += cfg.scales["motion_body_pos"] * np.exp(
-        -body_pos_error.mean(-1) / cfg.std_body_pos**2
-    )
-    body_ori_error = np_quat_error_magnitude(
-        body_quat_relative_w.reshape(num_envs * num_bodies, 4),
-        robot_body_quat_w.reshape(num_envs * num_bodies, 4),
-    ).reshape(num_envs, num_bodies)
-    expected += cfg.scales["motion_body_ori"] * np.exp(
-        -np.square(body_ori_error).mean(-1) / cfg.std_body_ori**2
-    )
-    body_lin_error = np.sum(np.square(motion_data.body_lin_vel_w - robot_body_lin_vel_w), axis=-1)
-    expected += cfg.scales["motion_body_lin_vel"] * np.exp(
-        -body_lin_error.mean(-1) / cfg.std_body_lin_vel**2
-    )
-    body_ang_error = np.sum(np.square(motion_data.body_ang_vel_w - robot_body_ang_vel_w), axis=-1)
-    expected += cfg.scales["motion_body_ang_vel"] * np.exp(
-        -body_ang_error.mean(-1) / cfg.std_body_ang_vel**2
-    )
-    ee_error = np.square(body_pos_relative_w[:, ee_indices, 2] - robot_body_pos_w[:, ee_indices, 2])
-    expected += cfg.scales["motion_ee_body_pos_z"] * np.exp(
-        -ee_error.mean(-1) / cfg.std_body_pos**2
-    )
-    joint_pos_error = np.mean(np.square(motion_data.joint_pos - dof_pos), axis=-1)
-    expected += cfg.scales["motion_joint_pos"] * np.exp(-joint_pos_error / cfg.std_joint_pos**2)
-    joint_vel_error = np.mean(np.square(motion_data.joint_vel - dof_vel), axis=-1)
-    expected += cfg.scales["motion_joint_vel"] * np.exp(-joint_vel_error / cfg.std_joint_vel**2)
-    expected += cfg.scales["action_rate_l2"] * np.sum(
-        np.square(current_actions - last_actions), axis=1
-    )
-    lower_violation = np.maximum(0, joint_lower - dof_pos)
-    upper_violation = np.maximum(0, dof_pos - joint_upper)
-    expected += cfg.scales["joint_limit"] * np.sum(
-        np.square(lower_violation + upper_violation), axis=1
-    )
-    expected += cfg.scales["undesired_contacts"] * np.sum(
-        robot_body_pos_w[:, undesired_indices, 2] < contact_threshold,
-        axis=-1,
-    )
-    expected *= ctrl_dt
-
-    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
-
-
-def test_g1_motion_tracking_deploy_actor_matches_unitree_mimic_terms():
-    from unilab.envs.motion_tracking.g1.tracking import G1MotionTrackingDeployEnv
-
-    env, obs, _motion_data, _linvel, gyro, dof_pos, dof_vel, info = (
-        _compute_g1_motion_tracking_obs_stub(G1MotionTrackingDeployEnv)
-    )
-
-    assert env.obs_groups_spec == {"obs": 19, "critic": 43}
-    assert obs["obs"].shape == (1, 19)
-    np.testing.assert_allclose(obs["obs"][:, 10:13], gyro + 100.0)
-    np.testing.assert_allclose(obs["obs"][:, 13:15], dof_pos - env.default_angles + 100.0)
-    np.testing.assert_allclose(obs["obs"][:, 15:17], dof_vel + 100.0)
-    np.testing.assert_allclose(obs["obs"][:, 17:19], info["current_actions"])
-
-
-def test_g1_box_tracking_cfg_uses_largebox_scene_and_motion_defaults():
-    from unilab.envs.motion_tracking.g1.box_tracking import BoxRewardConfig, G1BoxTrackingCfg
-
-    cfg = G1BoxTrackingCfg()
-
-    assert cfg.scene.model_file.endswith("scene_flat_with_largebox.xml")
-    assert str(cfg.motion_file).endswith("sub3_largebox_003_boxconverted.npz")
-    assert cfg.object_body_name == "largebox"
-    assert cfg.object_pos_threshold == pytest.approx(0.25)
-    assert cfg.object_ori_threshold == pytest.approx(0.8)
-    assert isinstance(cfg.reward_config, BoxRewardConfig)
-    assert cfg.reward_config.scales["object_global_ref_position_error_exp"] == pytest.approx(1.0)
-    assert cfg.reward_config.scales["object_global_ref_orientation_error_exp"] == pytest.approx(1.0)
-
-
-def test_g1_box_tracking_is_exported_from_g1_and_motion_tracking_packages():
-    from unilab.envs.motion_tracking import (
-        G1BoxTrackingCfg as TopLevelCfg,
-    )
-    from unilab.envs.motion_tracking import (
-        G1BoxTrackingEnv as TopLevelEnv,
-    )
-    from unilab.envs.motion_tracking import (
-        G1BoxTrackingEnvCfg as TopLevelEnvCfg,
-    )
-    from unilab.envs.motion_tracking.g1 import (
-        G1BoxTrackingCfg as G1PkgCfg,
-    )
-    from unilab.envs.motion_tracking.g1 import (
-        G1BoxTrackingEnv as G1PkgEnv,
-    )
-    from unilab.envs.motion_tracking.g1 import (
-        G1BoxTrackingEnvCfg as G1PkgEnvCfg,
-    )
-
-    assert TopLevelCfg is G1PkgCfg
-    assert TopLevelEnv is G1PkgEnv
-    assert TopLevelEnvCfg is G1PkgEnvCfg
-
-
-def _compute_g1_box_tracking_obs_stub():
-    from unilab.envs.motion_tracking.g1.box_tracking import G1BoxTrackingEnv
-    from unilab.envs.motion_tracking.g1.motion_box_loader import BoxMotionData
-
-    env = cast(Any, object.__new__(G1BoxTrackingEnv))
-    env._num_envs = 1
-    env._num_action = 2
-    env._n_motion_bodies = 2
-    env._critic_obs_width = env._critic_base_obs_dim(env._num_action) + env._n_motion_bodies * 9
-    env._cfg = SimpleNamespace(
-        noise_config=SimpleNamespace(
-            level=1.0,
-            scale_linvel=1.0,
-            scale_gyro=1.0,
-            scale_joint_angle=1.0,
-            scale_joint_vel=1.0,
-        ),
-        body_names=("pelvis", "torso_link"),
-    )
-    env.default_angles = np.array([[0.5, -0.5]], dtype=np.float32)
-    env.anchor_body_idx = 0
-    env._object_body_ids = np.array([7], dtype=np.int32)
-    env._motion_anchor_pos_b = np.empty((1, 3), dtype=np.float32)
-    env._motion_anchor_ori_b = np.empty((1, 6), dtype=np.float32)
-    env._motion_command = np.empty((1, 4), dtype=np.float32)
-    env._joint_pos_rel = np.empty((1, 2), dtype=np.float32)
-    env._body_vec_error = np.empty((1, 2, 3), dtype=np.float32)
-    env._zero_actions = np.zeros((1, 2), dtype=np.float32)
-    env._obs_noise = lambda data, scale: np.asarray(data + 100.0, dtype=np.float32)
-
-    class FakeBackend:
-        def get_body_pos_w(self, body_ids: np.ndarray) -> np.ndarray:
-            np.testing.assert_array_equal(body_ids, np.array([7], dtype=np.int32))
-            return np.array([[[1.0, 2.0, 3.0]]], dtype=np.float32)
-
-        def get_body_quat_w(self, body_ids: np.ndarray) -> np.ndarray:
-            np.testing.assert_array_equal(body_ids, np.array([7], dtype=np.int32))
-            return np.array([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32)
-
-        def get_body_lin_vel_w(self, body_ids: np.ndarray) -> np.ndarray:
-            np.testing.assert_array_equal(body_ids, np.array([7], dtype=np.int32))
-            return np.array([[[4.0, 5.0, 6.0]]], dtype=np.float32)
-
-    env._backend = FakeBackend()
-
-    motion_data = BoxMotionData(
-        joint_pos=np.array([[0.1, 0.2]], dtype=np.float32),
-        joint_vel=np.array([[0.3, 0.4]], dtype=np.float32),
-        body_pos_w=np.zeros((1, 2, 3), dtype=np.float32),
-        body_quat_w=np.tile(np.array([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32), (1, 2, 1)),
-        body_lin_vel_w=np.zeros((1, 2, 3), dtype=np.float32),
-        body_ang_vel_w=np.zeros((1, 2, 3), dtype=np.float32),
-        object_pos_w=np.array([[1.0, 2.0, 3.0]], dtype=np.float32),
-        object_quat_w=np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float32),
-        object_lin_vel_w=np.array([[4.0, 5.0, 6.0]], dtype=np.float32),
-        object_ang_vel_w=np.array([[7.0, 8.0, 9.0]], dtype=np.float32),
-    )
-    linvel = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
-    gyro = np.array([[4.0, 5.0, 6.0]], dtype=np.float32)
-    dof_pos = np.array([[0.7, -0.2]], dtype=np.float32)
-    dof_vel = np.array([[7.0, 8.0]], dtype=np.float32)
-    robot_body_pos_w = np.array([[[0.0, 0.0, 0.0], [0.2, 0.0, 0.1]]], dtype=np.float32)
-    robot_body_quat_w = np.tile(np.array([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32), (1, 2, 1))
-    info = {"current_actions": np.array([[0.1, -0.2]], dtype=np.float32)}
-
-    obs = env._compute_obs(
-        info,
-        motion_data,
-        linvel,
-        gyro,
-        dof_pos,
-        dof_vel,
-        robot_body_pos_w,
-        robot_body_quat_w,
-    )
-    return env, obs, gyro, dof_pos, dof_vel, info
-
-
-def test_g1_box_tracking_actor_matches_deploy_and_critic_adds_object_state():
-    env, obs, gyro, dof_pos, dof_vel, info = _compute_g1_box_tracking_obs_stub()
-
-    assert env.obs_groups_spec == {"obs": 19, "critic": 55}
-    assert obs["obs"].shape == (1, 19)
-    np.testing.assert_allclose(obs["obs"][:, 10:13], gyro + 100.0)
-    np.testing.assert_allclose(obs["obs"][:, 13:15], dof_pos - env.default_angles + 100.0)
-    np.testing.assert_allclose(obs["obs"][:, 15:17], dof_vel + 100.0)
-    np.testing.assert_allclose(obs["obs"][:, 17:19], info["current_actions"])
-    np.testing.assert_allclose(
-        obs["critic"][:, -12:],
-        np.array([[1.0, 2.0, 3.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 4.0, 5.0, 6.0]], dtype=np.float32),
-    )
-
-
-def test_g1_box_tracking_critic_object_state_respects_subset_env_order():
-    from unilab.envs.motion_tracking.g1.box_tracking import G1BoxTrackingEnv
-    from unilab.envs.motion_tracking.g1.motion_box_loader import BoxMotionData
-
-    env = cast(Any, object.__new__(G1BoxTrackingEnv))
-    env._num_envs = 4
-    env._num_action = 2
-    env._n_motion_bodies = 2
-    env._critic_obs_width = env._critic_base_obs_dim(env._num_action) + env._n_motion_bodies * 9
-    env.anchor_body_idx = 0
-    env._object_body_ids = np.array([7], dtype=np.int32)
-    env._cfg = SimpleNamespace(
-        noise_config=SimpleNamespace(
-            level=0.0,
-            scale_linvel=0.0,
-            scale_gyro=0.0,
-            scale_joint_angle=0.0,
-            scale_joint_vel=0.0,
-        ),
-        body_names=("pelvis", "torso_link"),
-    )
-    env.default_angles = np.zeros((2,), dtype=np.float32)
-    env._body_vec_error = np.empty((4, 2, 3), dtype=np.float32)
-    env._obs_noise = lambda data, scale: np.asarray(data, dtype=np.float32)
-
-    class FakeBackend:
-        def get_body_pos_w(self, body_ids: np.ndarray) -> np.ndarray:
-            np.testing.assert_array_equal(body_ids, np.array([7], dtype=np.int32))
-            return np.array(
-                [
-                    [[10.0, 0.0, 0.0]],
-                    [[20.0, 0.0, 0.0]],
-                    [[30.0, 0.0, 0.0]],
-                    [[40.0, 0.0, 0.0]],
-                ],
-                dtype=np.float32,
-            )
-
-        def get_body_quat_w(self, body_ids: np.ndarray) -> np.ndarray:
-            np.testing.assert_array_equal(body_ids, np.array([7], dtype=np.int32))
-            return np.tile(np.array([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32), (4, 1, 1))
-
-        def get_body_lin_vel_w(self, body_ids: np.ndarray) -> np.ndarray:
-            np.testing.assert_array_equal(body_ids, np.array([7], dtype=np.int32))
-            return np.array(
-                [
-                    [[1.0, 0.0, 0.0]],
-                    [[2.0, 0.0, 0.0]],
-                    [[3.0, 0.0, 0.0]],
-                    [[4.0, 0.0, 0.0]],
-                ],
-                dtype=np.float32,
-            )
-
-    env._backend = FakeBackend()
-
-    motion_data = BoxMotionData(
-        joint_pos=np.zeros((2, 2), dtype=np.float32),
-        joint_vel=np.zeros((2, 2), dtype=np.float32),
-        body_pos_w=np.zeros((2, 2, 3), dtype=np.float32),
-        body_quat_w=np.tile(np.array([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32), (2, 2, 1)),
-        body_lin_vel_w=np.zeros((2, 2, 3), dtype=np.float32),
-        body_ang_vel_w=np.zeros((2, 2, 3), dtype=np.float32),
-        object_pos_w=np.zeros((2, 3), dtype=np.float32),
-        object_quat_w=np.tile(np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float32), (2, 1)),
-        object_lin_vel_w=np.zeros((2, 3), dtype=np.float32),
-        object_ang_vel_w=np.zeros((2, 3), dtype=np.float32),
-    )
-
-    linvel = np.zeros((2, 3), dtype=np.float32)
-    gyro = np.zeros((2, 3), dtype=np.float32)
-    dof_pos = np.zeros((2, 2), dtype=np.float32)
-    dof_vel = np.zeros((2, 2), dtype=np.float32)
-    robot_body_pos_w = np.zeros((2, 2, 3), dtype=np.float32)
-    robot_body_quat_w = np.tile(np.array([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32), (2, 2, 1))
-
-    obs = env._compute_obs(
-        {
-            "env_ids": np.array([2, 0], dtype=np.int32),
-            "current_actions": np.zeros((2, 2), dtype=np.float32),
-        },
-        motion_data,
-        linvel,
-        gyro,
-        dof_pos,
-        dof_vel,
-        robot_body_pos_w,
-        robot_body_quat_w,
-    )
-
-    np.testing.assert_allclose(
-        obs["critic"][:, -12:],
-        np.array(
-            [
-                [30.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 3.0, 0.0, 0.0],
-                [10.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
-            ],
-            dtype=np.float32,
-        ),
-    )
-
-
-def test_g1_motion_tracking_can_terminate_on_undesired_contacts():
-    from unilab.envs.motion_tracking.g1.tracking import G1MotionTrackingEnv
-
-    env = cast(Any, object.__new__(G1MotionTrackingEnv))
-    env._num_envs = 2
-    env.anchor_body_idx = 0
-    env.ee_body_indices = np.array([1], dtype=np.int32)
-    env._has_ee_body_indices = True
-    env.undesired_contact_body_indices = np.array([2], dtype=np.int32)
-    env._has_undesired_contact_body_indices = True
-    env._terminated = np.empty((2,), dtype=bool)
-    env._env_bool = np.empty((2,), dtype=bool)
-    env._env_error = np.empty((2,), dtype=np.float32)
-    env._ee_pos_error_z = np.empty((2, 1), dtype=np.float32)
-    env._ee_terminated = np.empty((2, 1), dtype=bool)
-    env._undesired_contact_mask = np.empty((2, 1), dtype=bool)
-    env.body_pos_relative_w = np.array(
-        [
-            [[0.0, 0.0, 1.0], [0.0, 0.0, 0.8], [0.0, 0.0, 0.8]],
-            [[0.0, 0.0, 1.0], [0.0, 0.0, 0.8], [0.0, 0.0, 0.8]],
-        ],
-        dtype=np.float32,
-    )
-    env._cfg = SimpleNamespace(
-        anchor_pos_z_threshold=0.5,
-        anchor_ori_threshold=1e9,
-        ee_body_pos_z_threshold=0.5,
-        terminate_on_undesired_contacts=True,
-        undesired_contact_z_threshold=0.05,
-    )
-    quat = np.tile(np.array([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32), (2, 3, 1))
-    motion_data = SimpleNamespace(body_pos_w=env.body_pos_relative_w.copy(), body_quat_w=quat)
-    robot_body_pos_w = env.body_pos_relative_w.copy()
-    robot_body_pos_w[0, 2, 2] = 0.04
-    robot_body_pos_w[1, 2, 2] = 0.10
-
-    terminated = env._compute_terminations(motion_data, robot_body_pos_w, quat)
-    np.testing.assert_array_equal(terminated, np.array([True, False]))
-
-    env._cfg.terminate_on_undesired_contacts = False
-    terminated_without_contact = env._compute_terminations(motion_data, robot_body_pos_w, quat)
-    np.testing.assert_array_equal(terminated_without_contact, np.array([False, False]))
-
-
-def test_g1_motion_tracking_cfg_has_domain_rand_for_motrix():
-    from unilab.envs.motion_tracking.g1.tracking import G1MotionTrackingCfg
-
-    cfg = G1MotionTrackingCfg()
-    assert hasattr(cfg, "domain_rand")
-    assert cfg.domain_rand.randomize_base_mass is False
-    assert cfg.domain_rand.random_com is False
-    assert cfg.domain_rand.randomize_gravity is False
-    assert cfg.domain_rand.push_robots is False
-
-
-def test_g1_motion_tracking_cfg_preserves_legacy_defaults():
-    from unilab.envs.motion_tracking.g1.tracking import G1MotionTrackingCfg
-
-    cfg = G1MotionTrackingCfg()
-
-    assert str(cfg.motion_file).endswith("dance1_subject2_part.npz")
-    assert cfg.pose_randomization.x == (-0.05, 0.05)
-    assert cfg.velocity_randomization.x == (-0.5, 0.5)
-    assert cfg.joint_position_range == (-0.1, 0.1)
-    assert cfg.anchor_ori_threshold == pytest.approx(0.8)
-    assert cfg.sampling_mode == "adaptive"
-    assert cfg.truncate_on_clip_end is False
-
-
-def test_g1_motion_tracking_init_delegates_motion_body_ids_to_backend(monkeypatch):
-    from unilab.envs.locomotion.g1.base import G1BaseEnv
-    from unilab.envs.motion_tracking.g1 import tracking as tracking_module
-    from unilab.envs.motion_tracking.g1.tracking import G1MotionTrackingCfg, G1MotionTrackingEnv
-
-    calls: dict[str, Any] = {}
-
-    class FakeBackend:
-        def get_body_ids(self, names: tuple[str, ...]) -> np.ndarray:
-            calls["body_ids_names"] = names
-            return np.array([10, 11], dtype=np.int32)
-
-        def get_motion_body_ids(self, names: tuple[str, ...]) -> np.ndarray:
-            calls["motion_body_ids_names"] = names
-            return np.array([1, 2], dtype=np.int32)
-
-        def copy_body_state_w(
-            self,
-            body_ids: np.ndarray,
-            out_pos: np.ndarray,
-            out_quat: np.ndarray,
-            out_lin_vel: np.ndarray,
-            out_ang_vel: np.ndarray,
-        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-            return out_pos, out_quat, out_lin_vel, out_ang_vel
-
-        def get_joint_range(self) -> None:
-            return None
-
-    def fake_base_init(self, cfg, backend, num_envs):
-        self._cfg = cfg
-        self._backend = backend
-        self._num_envs = num_envs
-        self._num_action = 2
-        self._init_qpos = np.zeros((9,), dtype=np.float32)
-        self._init_qvel = np.zeros((8,), dtype=np.float32)
-
-    class FakeMotionLoader:
-        def __init__(self, motion_file: str, body_indices: np.ndarray):
-            calls["motion_loader"] = (motion_file, body_indices.copy())
-
-    class FakeMotionSampler:
-        def __init__(
-            self,
-            motion_loader: Any,
-            mode: str,
-            num_envs: int,
-            start_ratio: float = 0.0,
-        ):
-            calls["motion_sampler"] = (motion_loader, mode, num_envs, start_ratio)
-
-    fake_backend = FakeBackend()
-    monkeypatch.setattr(tracking_module, "create_backend", lambda *args, **kwargs: fake_backend)
-    monkeypatch.setattr(G1BaseEnv, "__init__", fake_base_init)
-    monkeypatch.setattr(tracking_module, "MotionLoader", FakeMotionLoader)
-    monkeypatch.setattr(tracking_module, "MotionSampler", FakeMotionSampler)
-    monkeypatch.setattr(
-        G1MotionTrackingEnv,
-        "_init_domain_randomization",
-        lambda self, provider: calls.setdefault("dr_provider", provider.__class__.__name__),
-    )
-    monkeypatch.setattr(
-        G1MotionTrackingEnv,
-        "_init_reward_functions",
-        lambda self: (
-            calls.setdefault("reward_init", True),
-            setattr(self, "_reward_fns", {}),
-        ),
-    )
-
-    cfg = G1MotionTrackingCfg(
-        motion_file="dummy_motion.npz",
-        body_names=("pelvis", "torso_link"),
-        ee_body_names=("torso_link",),
-    )
-    env = cast(Any, G1MotionTrackingEnv)(cfg, num_envs=4, backend_type="motrix")
-
-    np.testing.assert_array_equal(env.body_ids, np.array([10, 11], dtype=np.int32))
-    assert calls["body_ids_names"] == cfg.body_names
-    assert calls["motion_body_ids_names"] == cfg.body_names
-    assert calls["motion_loader"][0] == "dummy_motion.npz"
-    np.testing.assert_array_equal(calls["motion_loader"][1], np.array([1, 2], dtype=np.int32))
-    assert calls["motion_sampler"][1:] == ("adaptive", 4, cfg.sampling_start_ratio)
-    assert calls["dr_provider"] == "G1MotionTrackingDomainRandomizationProvider"
-    assert calls["reward_init"] is True
-
-
-def test_sharpa_grasp_env_initializes_dr_once_with_grasp_provider(monkeypatch):
-    from unilab.envs.manipulation.sharpa_inhand import rotation as sharpa_rotation_module
-    from unilab.envs.manipulation.sharpa_inhand.base import SharpaInhandBaseEnv
-    from unilab.envs.manipulation.sharpa_inhand.grasp_gen import (
-        SharpaInhandRotationGraspCfg,
-        SharpaInhandRotationGraspEnv,
-    )
-
-    calls: list[str] = []
-
-    def fake_base_init(self, cfg, backend, num_envs):
-        self._cfg = cfg
-        self._backend = backend
-        self._num_envs = num_envs
-        self._np_dtype = np.float64
-        self._num_action = 22
-        self._num_tactile = 5
-        self._num_scales = len(cfg.domain_rand.scale_list)
-        self.scale_ids = np.zeros((num_envs,), dtype=np.int32)
-        self._object_body_ids = np.zeros((0,), dtype=np.int32)
-
-    def unsupported_backend_metadata(*args, **kwargs):
-        raise NotImplementedError("fake backend does not expose Sharpa MuJoCo metadata")
-
-    monkeypatch.setattr(
-        sharpa_rotation_module,
-        "create_backend",
-        lambda *args, **kwargs: SimpleNamespace(
-            backend_type="motrix",
-            get_actuator_gains=lambda: (
-                np.ones(22, dtype=np.float64),
-                np.ones(22, dtype=np.float64),
-            ),
-            get_geom_id=unsupported_backend_metadata,
-            get_body_id=unsupported_backend_metadata,
-            get_body_subtree_ids=unsupported_backend_metadata,
-            get_geom_body_ids=unsupported_backend_metadata,
-            get_geom_contact_masks=unsupported_backend_metadata,
-            get_geom_names=unsupported_backend_metadata,
-            get_geom_friction=unsupported_backend_metadata,
-            get_gravity=unsupported_backend_metadata,
-            get_body_mass=unsupported_backend_metadata,
-            get_body_ipos=unsupported_backend_metadata,
-        ),
-    )
-    monkeypatch.setattr(SharpaInhandBaseEnv, "__init__", fake_base_init)
-    monkeypatch.setattr(
-        SharpaInhandRotationGraspEnv,
-        "_init_domain_randomization",
-        lambda self, provider: calls.append(provider.__class__.__name__),
-    )
-
-    cfg = SharpaInhandRotationGraspCfg()
-    assert cfg.domain_rand.randomize_pd_gains is False
-    assert cfg.domain_rand.randomize_friction is False
-    assert cfg.domain_rand.randomize_com is False
-    assert cfg.domain_rand.randomize_mass is True
-    assert cfg.domain_rand.randomize_mass_lower == pytest.approx(0.05)
-    assert cfg.domain_rand.randomize_mass_upper == pytest.approx(0.051)
-    assert cfg.domain_rand.force_scale == pytest.approx(0.0)
-    assert cfg.domain_rand.random_force_prob_scalar == pytest.approx(0.0)
-    assert cfg.domain_rand.joint_noise_scale == pytest.approx(0.02)
-    assert cfg.domain_rand.contact_latency == pytest.approx(0.005)
-    assert cfg.domain_rand.contact_sensor_noise == pytest.approx(0.01)
-    assert cfg.control_config.torque_control is False
-    assert cfg.control_config.dof_limits_scale == pytest.approx(0.9)
-    assert cfg.obs.enable_tactile is True
-    assert cfg.obs.binary_contact is False
-    assert cfg.obs.enable_contact_pos is False
-    assert cfg.obs.contact_smooth == pytest.approx(0.5)
-    assert cfg.obs.contact_threshold == pytest.approx(0.05)
-    assert cfg.obs.tactile_force_clip_max == pytest.approx(4.0)
-    assert cfg.priv_info.include_friction_scale is True
-    assert cfg.priv_info.include_gravity_direction is False
-    env = cast(Any, SharpaInhandRotationGraspEnv)(cfg, num_envs=4, backend_type="mujoco")
-
-    assert calls == ["SharpaInhandGraspDRProvider"]
-    assert len(env._saved_grasping_states) == env._num_scales
-
-
-def test_g1_flip_tracking_cfg_uses_flip_profile():
-    from unilab.envs.motion_tracking.g1.flip_tracking import G1FlipTrackingCfg
-
-    cfg = G1FlipTrackingCfg()
-
-    assert cfg.scene.model_file.endswith("scene_flat.xml")
-    assert str(cfg.motion_file).endswith("flip_360_001__A304.npz")
-    assert cfg.pose_randomization.x == (0.0, 0.0)
-    assert cfg.velocity_randomization.x == (0.0, 0.0)
-    assert cfg.joint_position_range == (0.0, 0.0)
-    assert cfg.truncate_on_clip_end is False
-    assert cfg.anchor_ori_threshold == pytest.approx(1e9)
-    assert cfg.terminate_on_undesired_contacts is True
-    assert cfg.sampling_mode == "start"
-
-
-def test_g1_wall_flip_tracking_cfg_uses_wall_flip_profile():
-    from unilab.envs.motion_tracking.g1.flip_tracking import G1WallFlipTrackingCfg
-
-    cfg = G1WallFlipTrackingCfg()
-
-    assert cfg.scene.model_file.endswith("scene_flat_with_wall.xml")
-    assert str(cfg.motion_file).endswith("flip_from_wall_104__A304.npz")
-    assert cfg.pose_randomization.x == (0.0, 0.0)
-    assert cfg.velocity_randomization.x == (0.0, 0.0)
-    assert cfg.joint_position_range == (0.0, 0.0)
-    assert cfg.truncate_on_clip_end is False
-    assert cfg.anchor_ori_threshold == pytest.approx(1e9)
-    assert cfg.anchor_pos_z_threshold == pytest.approx(0.5)
-    assert cfg.ee_body_pos_z_threshold == pytest.approx(0.5)
-    assert cfg.terminate_on_undesired_contacts is True
-    assert cfg.sampling_mode == "adaptive"
-
-
-def test_g1_motion_tracking_apply_action_accepts_per_joint_action_scale():
-    from unilab.envs.motion_tracking.g1.tracking import G1MotionTrackingEnv
-
-    env = cast(Any, object.__new__(G1MotionTrackingEnv))
-    env.default_angles = np.array([0.5, -0.5, 1.0], dtype=np.float32)
-    env._cfg = SimpleNamespace(
-        control_config=SimpleNamespace(
-            action_scale=[0.1, 0.2, 0.3],
-            simulate_action_latency=False,
-        )
-    )
-    state = SimpleNamespace(info={})
-    actions = np.array([[1.0, -1.0, 0.5]], dtype=np.float32)
-
-    ctrl = env.apply_action(actions, state)
-
-    np.testing.assert_allclose(ctrl, np.array([[0.6, -0.7, 1.15]], dtype=np.float32))
-    np.testing.assert_array_equal(state.info["current_actions"], actions)
-
-
-def _make_g1_motion_tracking_clip_end_stub(
-    *,
-    truncate_on_clip_end: bool,
-    terminated: np.ndarray | None = None,
-    step_env_ids: np.ndarray | None = None,
-):
-    from unilab.base.np_env import NpEnvState
-    from unilab.envs.motion_tracking.g1.motion_loader import MotionData
-    from unilab.envs.motion_tracking.g1.tracking import G1MotionTrackingEnv
-
-    class FakeBackend:
-        def __init__(self) -> None:
-            self.set_state_calls: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-
-        def get_body_lin_vel_w(self, body_ids: np.ndarray) -> np.ndarray:
-            return np.zeros((2, len(body_ids), 3), dtype=np.float32)
-
-        def get_body_ang_vel_w(self, body_ids: np.ndarray) -> np.ndarray:
-            return np.zeros((2, len(body_ids), 3), dtype=np.float32)
-
-        def get_body_pos_w(self, body_ids: np.ndarray) -> np.ndarray:
-            return np.zeros((2, len(body_ids), 3), dtype=np.float32)
-
-        def get_body_quat_w(self, body_ids: np.ndarray) -> np.ndarray:
-            return np.tile(
-                np.array([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32),
-                (2, len(body_ids), 1),
-            )
-
-        def get_body_pose_w(self, body_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-            return self.get_body_pos_w(body_ids), self.get_body_quat_w(body_ids)
-
-        def get_body_pose_w_rows(
-            self, env_ids: np.ndarray, body_ids: np.ndarray
-        ) -> tuple[np.ndarray, np.ndarray]:
-            rows = np.asarray(env_ids, dtype=np.intp)
-            return self.get_body_pos_w(body_ids)[rows], self.get_body_quat_w(body_ids)[rows]
-
-        def get_sensor_data_rows(self, name: str, env_ids: np.ndarray) -> np.ndarray:
-            del name
-            return np.zeros((len(env_ids), 3), dtype=np.float32)
-
-        def get_body_vel_w(self, body_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-            return self.get_body_lin_vel_w(body_ids), self.get_body_ang_vel_w(body_ids)
-
-        def set_state(self, env_ids: np.ndarray, qpos: np.ndarray, qvel: np.ndarray) -> None:
-            self.set_state_calls.append((env_ids.copy(), qpos.copy(), qvel.copy()))
-
-    class FakeMotionLoader:
-        def get_motion_at_frame(self, frames: np.ndarray) -> MotionData:
-            frame_values = frames.astype(np.float32)[:, None]
-            return MotionData(
-                joint_pos=np.repeat(frame_values, 2, axis=1),
-                joint_vel=np.repeat(frame_values + 10.0, 2, axis=1),
-                body_pos_w=np.pad(frame_values[:, None, :], ((0, 0), (0, 0), (0, 2))),
-                body_quat_w=np.tile(
-                    np.array([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32), (len(frames), 1, 1)
-                ),
-                body_lin_vel_w=np.zeros((len(frames), 1, 3), dtype=np.float32),
-                body_ang_vel_w=np.zeros((len(frames), 1, 3), dtype=np.float32),
-            )
-
-    class FakeSampler:
-        def __init__(self) -> None:
-            self.failure_updates: list[np.ndarray] = []
-            self.sampled_env_ids: list[np.ndarray] = []
-            self.current_frames = np.zeros((2,), dtype=np.int32)
-            self._after_step = False
-
-        def get_current_motion(self) -> MotionData:
-            if self._after_step and np.any(self.current_frames == 99):
-                raise AssertionError("queried all current motion while a clip-end frame is invalid")
-            return MotionData(
-                joint_pos=np.zeros((2, 2), dtype=np.float32),
-                joint_vel=np.zeros((2, 2), dtype=np.float32),
-                body_pos_w=np.zeros((2, 1, 3), dtype=np.float32),
-                body_quat_w=np.tile(
-                    np.array([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32), (2, 1, 1)
-                ),
-                body_lin_vel_w=np.zeros((2, 1, 3), dtype=np.float32),
-                body_ang_vel_w=np.zeros((2, 1, 3), dtype=np.float32),
-            )
-
-        def update_failure_stats(self, terminated: np.ndarray) -> None:
-            self.failure_updates.append(terminated.copy())
-
-        def step(self) -> np.ndarray:
-            env_ids = np.array([1], dtype=np.int32) if step_env_ids is None else step_env_ids.copy()
-            self.current_frames[env_ids] = 99
-            self._after_step = True
-            return env_ids
-
-        def sample_frames(self, env_ids: np.ndarray) -> np.ndarray:
-            self.sampled_env_ids.append(env_ids.copy())
-            self.current_frames[env_ids] = 7
-            return np.full(len(env_ids), 7, dtype=np.int32)
-
-    env = cast(Any, object.__new__(G1MotionTrackingEnv))
-    env._num_envs = 2
-    zero_pose = SimpleNamespace(
-        x=(0.0, 0.0),
-        y=(0.0, 0.0),
-        z=(0.0, 0.0),
-        roll=(0.0, 0.0),
-        pitch=(0.0, 0.0),
-        yaw=(0.0, 0.0),
-    )
-    env._cfg = SimpleNamespace(
-        max_episode_steps=None,
-        truncate_on_clip_end=truncate_on_clip_end,
-        sensor=SimpleNamespace(local_linvel="local_linvel", gyro="gyro"),
-        pose_randomization=zero_pose,
-        velocity_randomization=zero_pose,
-        joint_position_range=(0.0, 0.0),
-    )
-    env.body_ids = np.array([0], dtype=np.int32)
-    env._backend = FakeBackend()
-    env.motion_sampler = FakeSampler()
-    env.motion_loader = FakeMotionLoader()
-    env._motion_data_buffer = None
-    env._copy_body_state_w = None
-    env._clip_end_truncated = np.zeros((2,), dtype=bool)
-    env._env_bool = np.empty((2,), dtype=bool)
-    env._init_qpos = np.zeros((9,), dtype=np.float32)
-    env._init_qvel = np.zeros((8,), dtype=np.float32)
-    env.get_local_linvel = lambda: np.zeros((2, 3), dtype=np.float32)
-    env.get_gyro = lambda: np.zeros((2, 3), dtype=np.float32)
-    env.get_dof_pos = lambda: np.zeros((2, 2), dtype=np.float32)
-    env.get_dof_vel = lambda: np.zeros((2, 2), dtype=np.float32)
-    env._get_joint_range = lambda: None
-    env._get_body_pose_w = lambda: (
-        np.zeros((2, 1, 3), dtype=np.float32),
-        np.tile(np.array([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32), (2, 1, 1)),
-    )
-    env._update_relative_transforms = lambda *args: None
-    env._compute_terminations = lambda *args: (
-        np.zeros((2,), dtype=bool) if terminated is None else terminated.copy()
-    )
-    env._compute_reward = lambda *args: np.zeros((2,), dtype=np.float32)
-    env._compute_obs = lambda *args: {
-        "obs": np.zeros((2, 1), dtype=np.float32),
-        "critic": np.zeros((2, 2), dtype=np.float32),
-    }
-
-    state = NpEnvState(
-        obs={
-            "obs": np.zeros((2, 1), dtype=np.float32),
-            "critic": np.zeros((2, 2), dtype=np.float32),
-        },
-        reward=np.zeros((2,), dtype=np.float32),
-        terminated=np.zeros((2,), dtype=bool),
-        truncated=np.zeros((2,), dtype=bool),
-        info={"steps": np.zeros((2,), dtype=np.uint32)},
-    )
-
-    return env, state
-
-
-def test_g1_motion_tracking_clip_end_resamples_by_default_without_truncation():
-    env, state = _make_g1_motion_tracking_clip_end_stub(truncate_on_clip_end=False)
-
-    next_state = env.update_state(state)
-    truncated = env._compute_truncated(next_state)
-
-    np.testing.assert_array_equal(next_state.terminated, np.array([False, False]))
-    np.testing.assert_array_equal(truncated, np.array([False, False]))
-    np.testing.assert_array_equal(env.motion_sampler.sampled_env_ids[0], np.array([1]))
-    assert len(env._backend.set_state_calls) == 1
-    set_state_env_ids, qpos, qvel = env._backend.set_state_calls[0]
-    np.testing.assert_array_equal(set_state_env_ids, np.array([1], dtype=np.int32))
-    np.testing.assert_array_equal(qpos[:, 0], np.array([7.0], dtype=np.float32))
-    np.testing.assert_array_equal(qpos[:, 7:], np.array([[7.0, 7.0]], dtype=np.float32))
-    np.testing.assert_array_equal(qvel[:, 6:], np.array([[17.0, 17.0]], dtype=np.float32))
-    np.testing.assert_array_equal(
-        env.motion_sampler.failure_updates[0], np.array([False, False], dtype=bool)
-    )
-
-
-def test_g1_motion_tracking_clip_end_truncates_when_config_enabled():
-    env, state = _make_g1_motion_tracking_clip_end_stub(truncate_on_clip_end=True)
-
-    next_state = env.update_state(state)
-    truncated = env._compute_truncated(next_state)
-
-    np.testing.assert_array_equal(next_state.terminated, np.array([False, False]))
-    np.testing.assert_array_equal(truncated, np.array([False, True]))
-    assert env.motion_sampler.sampled_env_ids == []
-    assert env._backend.set_state_calls == []
-    np.testing.assert_array_equal(
-        env.motion_sampler.failure_updates[0], np.array([False, False], dtype=bool)
-    )
-
-
-def test_g1_motion_tracking_clip_end_resample_skips_terminated_envs():
-    env, state = _make_g1_motion_tracking_clip_end_stub(
-        truncate_on_clip_end=False,
-        terminated=np.array([False, True], dtype=bool),
-    )
-
-    next_state = env.update_state(state)
-    truncated = env._compute_truncated(next_state)
-
-    np.testing.assert_array_equal(next_state.terminated, np.array([False, True]))
-    np.testing.assert_array_equal(truncated, np.array([False, False]))
-    assert env.motion_sampler.sampled_env_ids == []
-    assert env._backend.set_state_calls == []
-
-
-def test_g1_motion_tracking_clip_end_resample_keeps_terminated_final_obs_valid():
-    env, state = _make_g1_motion_tracking_clip_end_stub(
-        truncate_on_clip_end=False,
-        terminated=np.array([False, True], dtype=bool),
-        step_env_ids=np.array([0, 1], dtype=np.int32),
-    )
-
-    next_state = env.update_state(state)
-    truncated = env._compute_truncated(next_state)
-
-    np.testing.assert_array_equal(next_state.terminated, np.array([False, True]))
-    np.testing.assert_array_equal(truncated, np.array([False, False]))
-    np.testing.assert_array_equal(env.motion_sampler.sampled_env_ids[0], np.array([0]))
-    assert len(env._backend.set_state_calls) == 1
-    set_state_env_ids, qpos, qvel = env._backend.set_state_calls[0]
-    np.testing.assert_array_equal(set_state_env_ids, np.array([0], dtype=np.int32))
-    np.testing.assert_array_equal(qpos[:, 0], np.array([7.0], dtype=np.float32))
-    np.testing.assert_array_equal(qvel[:, 6:], np.array([[17.0, 17.0]], dtype=np.float32))
-
-
-def test_g1_motion_tracking_clip_end_does_not_override_true_termination():
-    from unilab.base.np_env import NpEnvState
-    from unilab.envs.motion_tracking.g1.tracking import G1MotionTrackingEnv
-
-    env = cast(Any, object.__new__(G1MotionTrackingEnv))
-    env._num_envs = 2
-    env._cfg = type("Cfg", (), {"max_episode_steps": None})()
-    env._clip_end_truncated = np.array([False, True], dtype=bool)
-
-    state = NpEnvState(
-        obs={},
-        reward=np.zeros((2,), dtype=np.float32),
-        terminated=np.array([False, True], dtype=bool),
-        truncated=np.zeros((2,), dtype=bool),
-        info={"steps": np.zeros((2,), dtype=np.uint32)},
-    )
-
-    truncated = env._compute_truncated(state)
-    np.testing.assert_array_equal(truncated, np.array([False, False]))
-
-
 # ---------------------------------------------------------------------------
 # Fast env/backend smoke tests
 # ---------------------------------------------------------------------------
 
 # Environments that don't need special config overrides
 _STANDARD_ENVS = [
-    "Go1JoystickFlat",
-    "Go1JoystickRough",
-    "Go2JoystickFlat",
-    "Go2WJoystickFlat",
-    "Go2WJoystickRough",
     "G1WalkFlat",
-    "G1WalkRough",
-    "AllegroInhandRotation",
-    "AllegroInhandRotationGrasp",
 ]
 
 
 @pytest.mark.parametrize("env_name", _STANDARD_ENVS)
-def test_env_reset_and_step(
-    env_name: str,
-    default_go1_reward_config,
-    default_go2_reward_config,
-    default_g1_reward_config,
-    default_g1_walk_flat_reward_config,
-    default_allegro_reward_config,
-):
+def test_env_reset_and_step(env_name: str):
     """Every registered env must be constructible, resetable, and steppable.
 
     Verifies:
@@ -1674,19 +236,10 @@ def test_env_reset_and_step(
     ensure_registries()
     from unilab.base import registry
 
-    # Provide reward_config for envs that require it via Hydra
+    # Provide config overrides for envs that require them via Hydra
     env_cfg_override = None
-    if "Go1" in env_name:
-        env_cfg_override = {"reward_config": default_go1_reward_config}
-    elif "Go2" in env_name:
-        env_cfg_override = {"reward_config": default_go2_reward_config}
-    elif "G1Walk" in env_name:
-        env_cfg_override = {"reward_config": default_g1_walk_flat_reward_config}
-    elif "G1" in env_name:
-        env_cfg_override = {"reward_config": default_g1_reward_config}
-    elif "Allegro" in env_name:
-        env_cfg_override = {"reward_config": default_allegro_reward_config}
-
+    if env_name == "G1WalkFlat":
+        env_cfg_override = _g1_manager_override("g1_walk_flat")
     env = cast(
         Any,
         registry.make(
@@ -1715,7 +268,7 @@ def test_env_reset_and_step(
             )
 
         # 3. Step with zero actions
-        actions = np.zeros((2, act_space.shape[0]))
+        actions = torch.zeros((2, int(act_space.shape[0])), dtype=torch.float32)
         state = env.step(actions)
         assert isinstance(state.obs, dict)
         for key, dim in spec.items():
@@ -1727,255 +280,735 @@ def test_env_reset_and_step(
         env.close()
 
 
-def _assert_mujoco_position_gains(
-    env: Any, *, kp: float, kd: float, actuator_ids=slice(None)
+_MOTION_CORE_RUNTIME_CASES = (
+    pytest.param("ppo", "g1_motion_tracking", "G1MotionTracking", 160, 286, 29, False),
+    pytest.param("appo", "g1_motion_tracking", "G1MotionTracking", 160, 286, 29, False),
+)
+
+
+def test_g1_motion_core_registrations_are_manager_only() -> None:
+    from unilab.base import registry
+
+    ensure_registries()
+    metadata = registry.list_registered_envs()
+    # PPO/APPO use the MuJoCo owner, while SAC/FlashSAC may select the scoped
+    # device-resident tensor owners through their Hydra task leaves.
+    assert metadata["G1MotionTracking"]["config_factory"] == "ManagerBasedRlEnvCfg"
+    assert set(metadata["G1MotionTracking"]["available_backends"]) >= {
+        "mujoco",
+        "mjwarp",
+        "genesis",
+    }
+
+
+def test_g1_motion_manager_ppo_wraps_only_active_rows_in_one_state_commit(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    model = env._backend.model
-    pool = env._backend._pool
-    np.testing.assert_allclose(model.actuator_gainprm[actuator_ids, 0], kp)
-    np.testing.assert_allclose(model.actuator_biasprm[actuator_ids, 1], -kp)
-    np.testing.assert_allclose(model.actuator_biasprm[actuator_ids, 2], -kd)
-    np.testing.assert_allclose(pool.get_field(0, "kp")[actuator_ids], kp)
-    np.testing.assert_allclose(pool.get_field(0, "kd")[actuator_ids], kd)
-
-
-def test_go1_env_initializes_kp_kd_into_pool(default_go1_reward_config):
-    _require_mujoco_runtime()
     ensure_registries()
+    _require_mujoco_runtime()
+    from unisim.backend.base import HostBridgeTransferPlan
+
     from unilab.base import registry
 
-    env = cast(
-        Any,
-        registry.make(
-            "Go1JoystickFlat",
-            num_envs=2,
-            sim_backend="mujoco",
-            env_cfg_override={
-                "reward_config": default_go1_reward_config,
-                "control_config": {"Kp": 12.0, "Kd": 0.7},
-            },
-        ),
+    _, override = _motion_manager_override("g1_motion_tracking", "mujoco")
+    env = registry.make(
+        "G1MotionTracking",
+        num_envs=2,
+        sim_backend="mujoco",
+        env_cfg_override=override,
     )
     try:
-        _assert_mujoco_position_gains(env, kp=12.0, kd=0.7)
+        env.init_state()
+        command = env.command_manager.get_term("motion")
+        command.time_steps[:] = command.tensor_sampler.current_clip_end_frames
+        env.reset_buf.copy_(torch.tensor([True, False], device=env.device))
+
+        reset_rows: list[torch.Tensor] = []
+
+        def _record_host_apply_reset(
+            self: HostBridgeTransferPlan,
+            env_ids: torch.Tensor,
+            qpos: torch.Tensor,
+            qvel: torch.Tensor,
+            *,
+            randomization: Any = None,
+        ) -> Any:
+            reset_rows.append(env_ids.detach().clone())
+            return self.__dict__.setdefault("_recorded_host_resets", len(reset_rows))
+
+        host_plan = env.scene._tensor_read_plan.host_plan
+        assert host_plan is not None
+        env._reset_state.declare_packed_reset_device(env.device)
+        monkeypatch.setattr(type(host_plan), "apply_reset", _record_host_apply_reset)
+        all_rows = torch.arange(env.num_envs, dtype=torch.int64, device=env.device)
+        with env._reset_state.scoped_device_owner_tensor_with_host_commit(all_rows, host_plan):
+            env.command_manager.compute(dt=0.0)
+        env.command_manager.post_compute()
+
+        assert len(reset_rows) == 1
+        torch.testing.assert_close(reset_rows[0], torch.tensor([1], device=env.device))
+        assert command.time_steps[0] == command.tensor_sampler.current_clip_end_frames[0]
+        assert command.time_steps[1] <= command.tensor_sampler.current_clip_end_frames[1]
+        expected_joint_pos = command._motion_features[
+            :,
+            : command.motion.num_joints,
+        ].index_select(0, command.time_steps.to(dtype=torch.int64))
+        torch.testing.assert_close(command.joint_pos, expected_joint_pos)
+        torch.testing.assert_close(command._robot_body_pos_w, command.robot_body_pos_w)
+        assert command._robot_cache_step == env.common_step_counter
     finally:
         env.close()
 
 
-def test_go2_env_initializes_kp_kd_into_pool():
-    _require_mujoco_runtime()
+def test_g1_motion_manager_sac_clip_end_is_truncation() -> None:
     ensure_registries()
+    _require_mujoco_runtime()
     from unilab.base import registry
-    from unilab.envs.locomotion.go2.joystick import RewardConfig
 
-    env = cast(
-        Any,
-        registry.make(
-            "Go2JoystickFlat",
+    _, override = _motion_manager_override(
+        "g1_motion_tracking",
+        "mujoco",
+        config_root="sac",
+    )
+    override["auto_reset"] = False
+    env = registry.make(
+        "G1MotionTracking",
+        num_envs=2,
+        sim_backend="mujoco",
+        env_cfg_override=override,
+    )
+    try:
+        env.init_state()
+        command = env.command_manager.get_term("motion")
+        command.time_steps[:] = command.tensor_sampler.current_clip_end_frames
+
+        state = env.step(torch.zeros((2, 29), dtype=torch.float32))
+
+        np.testing.assert_array_equal(state.terminated, [False, False])
+        np.testing.assert_array_equal(state.truncated, [True, True])
+        np.testing.assert_array_equal(
+            command.time_steps, command.tensor_sampler.current_clip_end_frames
+        )
+    finally:
+        env.close()
+
+
+def test_sac_g1_motion_mjwarp_dr_runtime_applies_reset_and_interval_dr() -> None:
+    ensure_registries()
+    _require_mjwarp_runtime()
+    from unilab.base import registry
+
+    _, override = _motion_manager_override(
+        "g1_motion_tracking",
+        "mjwarp",
+        config_root="sac",
+    )
+    push_robot = override["events"]["push_robot"]
+    push_robot["interval_range_s"] = [0.0, 0.0]
+    env = registry.make(
+        "G1MotionTracking",
+        num_envs=2,
+        sim_backend="mjwarp",
+        env_cfg_override=override,
+    )
+    try:
+        state = env.init_state()
+        assert torch.isfinite(state.obs["obs"]).all()
+        assert torch.isfinite(state.obs["critic"]).all()
+
+        for _ in range(3):
+            state = env.step(torch.zeros((2, 29), dtype=torch.float32, device=env.device))
+            assert torch.isfinite(state.obs["obs"]).all()
+            assert torch.isfinite(state.obs["critic"]).all()
+            assert torch.isfinite(state.reward).all()
+
+        velocity_range = env.event_manager.get_term_cfg("push_robot").params["velocity_range"]
+        assert velocity_range["x"] == [-0.5, 0.5]
+        assert velocity_range["z"] == [-0.2, 0.2]
+        assert all(velocity_range[axis] == [0.0, 0.0] for axis in ("roll", "pitch", "yaw"))
+    finally:
+        env.close()
+
+
+def test_flashsac_g1_motion_mjwarp_anchor_observations_roll_out() -> None:
+    """The canonical FlashSAC MJWarp owner exercises tensor-native anchors."""
+    ensure_registries()
+    _require_mjwarp_runtime()
+    from unilab.base import registry
+    from unilab.envs import ManagerBasedRlEnv
+
+    _, override = _motion_manager_override(
+        "g1_motion_tracking",
+        "mjwarp",
+        config_root="flashsac",
+    )
+    env = registry.make(
+        "G1MotionTracking",
+        num_envs=2,
+        sim_backend="mjwarp",
+        env_cfg_override=override,
+    )
+    assert isinstance(env, ManagerBasedRlEnv)
+    command = env.command_manager.get_term("motion")
+    assert command.tensor_carrier is True
+    assert env.command_manager.uses_tensor_reset_rows()
+    try:
+        assert env.obs_groups_spec == {"obs": 160, "critic": 289}
+
+        state = env.init_state()
+        for _ in range(3):
+            state = env.step(torch.zeros((2, 29), dtype=torch.float32, device=env.device))
+
+        from unisim.backend.base import SelectedResetPublication
+
+        capabilities = env.backend.get_tensor_capabilities()
+        assert capabilities.selected_reset_publication is (
+            SelectedResetPublication.AUTHORITATIVE_VIEWS
+        )
+        step_calls = 0
+        original_step = env.backend.step_tensor
+
+        def count_step(*args: Any, **kwargs: Any) -> Any:
+            nonlocal step_calls
+            step_calls += 1
+            return original_step(*args, **kwargs)
+
+        env.backend.step_tensor = count_step  # type: ignore[method-assign]
+        env.reset(env_indices=torch.tensor([1], dtype=torch.int64, device=env.device))
+        assert step_calls == 0
+        assert state.obs["obs"].shape == (2, 160)
+        assert state.obs["critic"].shape == (2, 289)
+        assert all(torch.isfinite(values).all() for values in state.obs.values())
+        assert torch.isfinite(state.reward).all()
+    finally:
+        env.close()
+
+
+def test_flashsac_g1_motion_mujoco_tensor_command_roll_out() -> None:
+    """The scoped MuJoCo host bridge owns a tensor motion command carrier."""
+    ensure_registries()
+    _require_mujoco_runtime()
+    script = textwrap.dedent(
+        """
+        from pathlib import Path
+        import torch
+        from hydra import compose, initialize_config_dir
+        from hydra.core.global_hydra import GlobalHydra
+        from unilab.base import registry
+        from unilab.base.config_adapter import BackendAdapter
+        from unilab.envs import ManagerBasedRlEnv
+
+        registry.ensure_registries()
+        GlobalHydra.instance().clear()
+        root = Path.cwd()
+        with initialize_config_dir(
+            config_dir=str(root / "src/unilab/conf/flashsac"), version_base="1.3"
+        ):
+            owner = compose("config", overrides=["task=g1_motion_tracking/mujoco"])
+        override = BackendAdapter(
+            owner, root_dir=root, algo_name="flashsac"
+        ).build_task_env_cfg_override()
+        env = registry.make(
+            "G1MotionTracking",
             num_envs=2,
             sim_backend="mujoco",
-            env_cfg_override={
-                "reward_config": RewardConfig(
-                    scales={
-                        "tracking_lin_vel": 1.0,
-                        "tracking_ang_vel": 0.2,
-                        "lin_vel_z": -5.0,
-                        "ang_vel_xy": -0.02,
-                        "base_height": -100.0,
-                        "action_rate": -0.005,
-                        "similar_to_default": -0.1,
+            env_cfg_override=override,
+        )
+        assert isinstance(env, ManagerBasedRlEnv)
+        try:
+            command = env.command_manager.get_term("motion")
+            assert command.tensor_carrier is True
+            assert env.torch_rng is not None
+            state = env.reset(seed=7)[0]
+            for _ in range(3):
+                state = env.step(torch.zeros((2, 29), dtype=torch.float32))
+            assert state.obs["obs"].shape == (2, 160)
+            assert torch.isfinite(state.obs["obs"]).all()
+            # Selected-row autoreset drives the tensor motion command through
+            # the packed host-bridge commit; it must not raise or step physics.
+            original_step = env.backend.step_tensor
+            step_calls = []
+
+            def count_step(*args, **kwargs):
+                step_calls.append(1)
+                return original_step(*args, **kwargs)
+
+            env.backend.step_tensor = count_step
+            env.reset(env_indices=torch.tensor([1], dtype=torch.int64))
+            assert not step_calls
+            state = env.step(torch.zeros((2, 29), dtype=torch.float32))
+            assert torch.isfinite(state.obs["obs"]).all()
+        finally:
+            env.close()
+        print("[mujoco tensor motion rollout] OK")
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).parents[2],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "[mujoco tensor motion rollout] OK" in result.stdout
+
+
+@pytest.mark.parametrize("mode", ["startup", "reset"])
+def test_flashsac_g1_motion_mujoco_tensor_command_model_field_dr_roll_out(
+    mode: str,
+) -> None:
+    """MuJoCo tensor motion commits startup/reset model-field DR in one boundary."""
+    ensure_registries()
+    _require_mujoco_runtime()
+    from unilab.base import registry
+    from unilab.envs import ManagerBasedRlEnv
+
+    _, override = _motion_manager_override("g1_motion_tracking", "mujoco", config_root="flashsac")
+    override["scene"]["entities"]["robot"]["geom_names"] = [
+        f"{side}_foot{index}_collision" for side in ("left", "right") for index in range(1, 8)
+    ]
+    events = {
+        "body_mass": {
+            "_target_": "unilab.managers.event_manager.EventTermCfg",
+            "func": "unilab.envs.mdp.randomize_rigid_body_mass",
+            "mode": mode,
+            "params": {
+                "asset_cfg": {
+                    "_target_": "unilab.managers.SceneEntityCfg",
+                    "name": "robot",
+                    "body_names": ["pelvis", "torso_link"],
+                },
+                "mass_distribution_params": [1.0, 1.0],
+                "operation": "scale",
+                "recompute_inertia": False,
+            },
+        },
+        "body_com": {
+            "_target_": "unilab.managers.event_manager.EventTermCfg",
+            "func": "unilab.envs.mdp.randomize_rigid_body_com",
+            "mode": mode,
+            "params": {
+                "asset_cfg": {
+                    "_target_": "unilab.managers.SceneEntityCfg",
+                    "name": "robot",
+                    "body_names": ["pelvis", "torso_link"],
+                },
+                "com_range": {"x": [0.0, 0.0], "y": [0.0, 0.0], "z": [0.0, 0.0]},
+            },
+        },
+    }
+    if mode == "reset":
+        events.update(
+            {
+                "foot_friction": {
+                    "_target_": "unilab.managers.event_manager.EventTermCfg",
+                    "func": "unilab.envs.mdp.geom_friction",
+                    "mode": "reset",
+                    "params": {
+                        "asset_cfg": {
+                            "_target_": "unilab.managers.SceneEntityCfg",
+                            "name": "robot",
+                            "geom_names": "^(left|right)_foot[1-7]_collision$",
+                        },
+                        "ranges": [1.0, 1.0],
+                        "operation": "abs",
                     },
-                    tracking_sigma=0.25,
-                    base_height_target=0.3,
-                ),
-                "control_config": {"Kp": 18.0, "Kd": 0.9},
-            },
-        ),
+                },
+                "pd_gains": {
+                    "_target_": "unilab.managers.event_manager.EventTermCfg",
+                    "func": "unilab.envs.mdp.pd_gains",
+                    "mode": "reset",
+                    "params": {
+                        "asset_cfg": {
+                            "_target_": "unilab.managers.SceneEntityCfg",
+                            "name": "robot",
+                            "actuator_names": ".*",
+                        },
+                        "kp_range": [1.0, 1.0],
+                        "kd_range": [1.0, 1.0],
+                        "operation": "scale",
+                    },
+                },
+            }
+        )
+    override["events"] = events
+
+    env = registry.make(
+        "G1MotionTracking",
+        num_envs=2,
+        sim_backend="mujoco",
+        env_cfg_override=override,
     )
+    assert isinstance(env, ManagerBasedRlEnv)
     try:
-        _assert_mujoco_position_gains(env, kp=18.0, kd=0.9)
+        command = env.command_manager.get_term("motion")
+        assert command.tensor_carrier is True
+        obs, _ = env.reset(seed=1812)
+        assert all(torch.isfinite(values).all() for values in obs.values())
+        for _ in range(3):
+            state = env.step(torch.zeros((2, 29), dtype=torch.float32))
+        assert torch.isfinite(state.reward).all()
+        assert all(torch.isfinite(values).all() for values in state.obs.values())
+
+        obs, _ = env.reset(env_indices=torch.tensor([1], dtype=torch.int64))
+        assert all(torch.isfinite(values).all() for values in obs.values())
     finally:
         env.close()
+        env._backend.close()
 
 
-def test_allegro_env_initializes_kp_kd_into_pool(default_allegro_reward_config):
-    _require_mujoco_runtime()
+def test_flashsac_g1_motion_genesis_manager_tensor_command_roll_out() -> None:
+    """The canonical FlashSAC Genesis owner exercises the Manager tensor path."""
     ensure_registries()
+    _require_genesis_runtime()
     from unilab.base import registry
+    from unilab.envs import ManagerBasedRlEnv
 
-    env = cast(
-        Any,
-        registry.make(
-            "AllegroInhandRotation",
-            num_envs=2,
-            sim_backend="mujoco",
-            env_cfg_override={
-                "reward_config": default_allegro_reward_config,
-                "control_config": {"kp": 2.5, "kd": 0.4},
-            },
-        ),
+    _, override = _motion_manager_override(
+        "g1_motion_tracking",
+        "genesis",
+        config_root="flashsac",
     )
+    env = registry.make(
+        "G1MotionTracking",
+        num_envs=2,
+        sim_backend="genesis",
+        env_cfg_override=override,
+    )
+    assert isinstance(env, ManagerBasedRlEnv)
     try:
-        _assert_mujoco_position_gains(env, kp=2.5, kd=0.4, actuator_ids=slice(0, 16))
+        assert env.obs_groups_spec == {"obs": 160, "critic": 289}
+        command = env.command_manager.get_term("motion")
+        assert command.tensor_carrier is True
+        assert env.command_manager.uses_tensor_reset_rows()
+
+        state = env.init_state()
+        for _ in range(3):
+            state = env.step(torch.zeros((2, 29), dtype=torch.float32, device=env.device))
+
+        assert state.obs["obs"].shape == (2, 160)
+        assert state.obs["critic"].shape == (2, 289)
+        assert all(torch.isfinite(values).all() for values in state.obs.values())
+        assert torch.isfinite(state.reward).all()
     finally:
         env.close()
+        env._backend.close()
 
 
-@pytest.mark.parametrize("sim_backend", ["mujoco", "motrix"])
-def test_g1_motion_tracking_reset_and_step(sim_backend: str):
-    """G1MotionTracking needs a motion_file — skip if not available."""
+def test_flashsac_g1_motion_newton_manager_tensor_command_roll_out() -> None:
+    """The canonical FlashSAC Newton owner exercises the Manager tensor path."""
+    ensure_registries()
+    _require_newton_runtime()
+    from unilab.base import registry
+    from unilab.envs import ManagerBasedRlEnv
+
+    _, override = _motion_manager_override(
+        "g1_motion_tracking",
+        "newton",
+        config_root="flashsac",
+    )
+    env = registry.make(
+        "G1MotionTracking",
+        num_envs=2,
+        sim_backend="newton",
+        env_cfg_override=override,
+    )
+    assert isinstance(env, ManagerBasedRlEnv)
+    try:
+        assert env.obs_groups_spec == {"obs": 160, "critic": 289}
+        command = env.command_manager.get_term("motion")
+        assert command.tensor_carrier is True
+        assert env.command_manager.uses_tensor_reset_rows()
+
+        state = env.init_state()
+        for _ in range(3):
+            state = env.step(torch.zeros((2, 29), dtype=torch.float32, device=env.device))
+
+        assert state.obs["obs"].shape == (2, 160)
+        assert state.obs["critic"].shape == (2, 289)
+        assert all(torch.isfinite(values).all() for values in state.obs.values())
+        assert torch.isfinite(state.reward).all()
+    finally:
+        env.close()
+        env._backend.close()
+
+
+def test_flashsac_g1_motion_motrix_manager_tensor_command_roll_out() -> None:
+    """The canonical FlashSAC Motrix owner exercises the packed host bridge."""
+    ensure_registries()
+    _require_motrix_runtime()
+    from unilab.base import registry
+    from unilab.envs import ManagerBasedRlEnv
+
+    _, override = _motion_manager_override(
+        "g1_motion_tracking",
+        "motrix",
+        config_root="flashsac",
+    )
+    env = registry.make(
+        "G1MotionTracking",
+        num_envs=2,
+        sim_backend="motrix",
+        env_cfg_override=override,
+    )
+    assert isinstance(env, ManagerBasedRlEnv)
+    try:
+        assert env.obs_groups_spec == {"obs": 160, "critic": 289}
+        command = env.command_manager.get_term("motion")
+        assert command.tensor_carrier is True
+        assert env.command_manager.uses_tensor_reset_rows()
+
+        state = env.init_state()
+        for _ in range(3):
+            state = env.step(torch.zeros((2, 29), dtype=torch.float32, device=env.device))
+
+        assert state.obs["obs"].shape == (2, 160)
+        assert state.obs["critic"].shape == (2, 289)
+        assert all(torch.isfinite(values).all() for values in state.obs.values())
+        assert torch.isfinite(state.reward).all()
+    finally:
+        env.close()
+        env._backend.close()
+
+
+@pytest.mark.parametrize(
+    ("task", "backend"), [("g1_motion_tracking", "mjwarp"), ("g1_motion_tracking", "newton")]
+)
+def test_selected_reset_publication_requires_no_manager_readiness_step(
+    task: str, backend: str
+) -> None:
+    """Selected reset publishes authoritative views without a control step."""
+    ensure_registries()
+    if backend == "mjwarp":
+        _require_mjwarp_runtime()
+    elif backend == "newton":
+        _require_newton_runtime()
+    else:
+        _require_genesis_runtime()
+    from unisim.backend.base import SelectedResetPublication
+
+    from unilab.base import registry
+
+    _, override = _motion_manager_override(
+        task,
+        backend,
+        config_root="flashsac",
+    )
+    env = registry.make(
+        "G1MotionTracking",
+        num_envs=2,
+        sim_backend=backend,
+        env_cfg_override=override,
+    )
+    try:
+        capabilities = env.backend.get_tensor_capabilities()
+        assert capabilities.selected_reset
+        assert (
+            capabilities.selected_reset_publication is SelectedResetPublication.AUTHORITATIVE_VIEWS
+        )
+        env.init_state()
+
+        step_calls = 0
+        original_step = env.backend.step_tensor
+
+        def count_step(*args: Any, **kwargs: Any) -> Any:
+            nonlocal step_calls
+            step_calls += 1
+            return original_step(*args, **kwargs)
+
+        env.backend.step_tensor = count_step  # type: ignore[method-assign]
+        env.reset(env_indices=torch.tensor([1], dtype=torch.int64, device=env.device))
+        assert step_calls == 0
+
+        state_views = env.backend.get_state_views(("qpos", "qvel"), device=env.device)
+        assert state_views["qpos"].shape == (2, env.backend.get_public_state_widths().nq)
+        assert state_views["qvel"].shape == (2, env.backend.get_public_state_widths().nv)
+        assert torch.isfinite(state_views["qpos"]).all()
+        assert torch.isfinite(state_views["qvel"]).all()
+    finally:
+        env.close()
+        env._backend.close()
+
+
+def test_newton_backend_close_disables_graphs_and_fails_closed() -> None:
+    """Newton teardown publishes disabled graph diagnostics before rejecting use."""
+    ensure_registries()
+    _require_newton_runtime()
+    from unilab.base import registry
+
+    _, override = _motion_manager_override(
+        "g1_motion_tracking",
+        "newton",
+        config_root="flashsac",
+    )
+    env = registry.make(
+        "G1MotionTracking",
+        num_envs=2,
+        sim_backend="newton",
+        env_cfg_override=override,
+    )
+    try:
+        env.init_state()
+        before = env.backend.get_tensor_runtime_diagnostics()["cuda_graph"]
+        assert before.requested is True
+    finally:
+        env.close()
+        env.backend.close()
+
+    after = env.backend.get_tensor_runtime_diagnostics()["cuda_graph"]
+    assert after.enabled is False
+    assert after.disable_reason is not None
+    with pytest.raises(RuntimeError, match="newton backend is closed"):
+        env.backend.get_state_views(("qpos", "qvel"), device=env.device)
+
+
+@pytest.mark.parametrize(
+    ("config_root", "task", "identity", "actor_dim", "critic_dim", "action_dim", "truncate"),
+    _MOTION_CORE_RUNTIME_CASES,
+)
+@pytest.mark.parametrize("sim_backend", ["mujoco"])
+def test_g1_motion_core_manager_reset_and_step(
+    config_root: str,
+    task: str,
+    identity: str,
+    actor_dim: int,
+    critic_dim: int,
+    action_dim: int,
+    truncate: bool,
+    sim_backend: str,
+) -> None:
     ensure_registries()
     from unilab.base import registry
+    from unilab.envs import ManagerBasedRlEnv
 
     if sim_backend == "mujoco":
         _require_mujoco_runtime()
     else:
         pytest.importorskip("motrixsim")
 
-    # Look for any motion file in the expected location
-    motion_dir = Path(__file__).parents[2] / "src" / "unilab" / "assets" / "motions" / "g1"
-    if not motion_dir.exists():
-        pytest.skip(f"Motion data directory not found: {motion_dir}")
-
-    npz_files = list(motion_dir.glob("*.npz"))
-    if not npz_files:
-        pytest.skip(f"No .npz motion files in {motion_dir}")
-
-    motion_file = str(npz_files[0])
-    env = cast(
-        Any,
-        registry.make(
-            "G1MotionTracking",
-            num_envs=2,
-            sim_backend=sim_backend,
-            env_cfg_override={"motion_file": motion_file},
-        ),
+    task_name, override = _motion_manager_override(
+        task,
+        sim_backend,
+        config_root=config_root,
     )
+    assert task_name == identity
+    env = registry.make(
+        identity,
+        num_envs=2,
+        sim_backend=sim_backend,
+        env_cfg_override=override,
+    )
+    assert isinstance(env, ManagerBasedRlEnv)
     try:
-        spec = env.obs_groups_spec
-        assert isinstance(spec, dict)
-        assert "obs" in spec
-        assert "critic" in spec
-        obs_shape = env.observation_space.shape
-        assert obs_shape is not None
-        assert sum(spec.values()) == obs_shape[0]
+        assert env.obs_groups_spec == {"obs": actor_dim, "critic": critic_dim}
+        assert env.action_space.shape == (action_dim,)
+        command = env.command_manager.get_term("motion")
+        assert command.cfg.params.truncate_on_clip_end is truncate
+        if sim_backend == "motrix" and "deploy" in task:
+            assert env._cfg.events["foot_friction"] is None
+            assert env._cfg.events["push_robot"] is None
+        if sim_backend == "motrix" and config_root in {"ppo", "appo"}:
+            root_pos = env._cfg.rewards["motion_global_root_pos"]
+            action_rate = env._cfg.rewards["action_rate_l2"]
+            assert root_pos is not None
+            assert action_rate is not None
+            expected_weights = (1.0, -0.05) if config_root == "ppo" else (0.5, -0.1)
+            assert (root_pos.weight, action_rate.weight) == pytest.approx(expected_weights)
 
         state = env.init_state()
-        assert isinstance(state.obs, dict)
-        for key, dim in spec.items():
-            assert state.obs[key].shape == (2, dim)
+        assert state.obs["obs"].shape == (2, actor_dim)
+        assert state.obs["critic"].shape == (2, critic_dim)
 
-        action_shape = env.action_space.shape
-        assert action_shape is not None
-        actions = np.zeros((2, action_shape[0]))
-        state = env.step(actions)
-        assert isinstance(state.obs, dict)
+        state = env.step(torch.zeros((2, action_dim), dtype=torch.float32))
         assert state.reward.shape == (2,)
         assert state.terminated.shape == (2,)
         assert state.truncated.shape == (2,)
+        assert torch.isfinite(state.reward).all()
+        assert all(torch.isfinite(values).all() for values in state.obs.values())
     finally:
         env.close()
 
 
-def test_g1_motion_tracking_deploy_reset_and_step_mujoco():
-    """Deploy env keeps motion-tracking behavior but exposes unitree mimic actor inputs."""
+def test_flashsac_motion_reset_publishes_call_graph_counts() -> None:
+    """Selected-reset diagnostics count Manager dispatch, not only wall time."""
     ensure_registries()
-    _require_mujoco_runtime()
+    _require_mjwarp_runtime()
     from unilab.base import registry
+    from unilab.envs import ManagerBasedRlEnv
 
-    motion_dir = Path(__file__).parents[2] / "src" / "unilab" / "assets" / "motions" / "g1"
-    if not motion_dir.exists():
-        pytest.skip(f"Motion data directory not found: {motion_dir}")
-
-    npz_files = list(motion_dir.glob("*.npz"))
-    if not npz_files:
-        pytest.skip(f"No .npz motion files in {motion_dir}")
-
-    env = cast(
-        Any,
-        registry.make(
-            "G1MotionTrackingDeploy",
-            num_envs=2,
-            sim_backend="mujoco",
-            env_cfg_override={"motion_file": str(npz_files[0])},
-        ),
+    _, override = _motion_manager_override(
+        "g1_motion_tracking",
+        "mjwarp",
+        config_root="flashsac",
     )
-    try:
-        assert env.obs_groups_spec == {"obs": 154, "critic": 286}
-        state = env.init_state()
-        assert state.obs["obs"].shape == (2, 154)
-        assert state.obs["critic"].shape == (2, 286)
-
-        action_shape = env.action_space.shape
-        assert action_shape is not None
-        state = env.step(np.zeros((2, action_shape[0])))
-        assert state.obs["obs"].shape == (2, 154)
-        assert state.obs["critic"].shape == (2, 286)
-    finally:
-        env.close()
-
-
-def test_go2_mujoco_reset_applies_kp_kd_domain_randomization(default_go2_reward_config):
-    _require_mujoco_runtime()
-    ensure_registries()
-
-    from unilab.base import registry
-
-    env = cast(
-        Any,
-        registry.make(
-            "Go2JoystickFlat",
-            num_envs=4,
-            sim_backend="mujoco",
-            env_cfg_override={"reward_config": default_go2_reward_config},
-        ),
+    env = registry.make(
+        "G1MotionTracking",
+        num_envs=4,
+        sim_backend="mjwarp",
+        env_cfg_override=override,
     )
+    assert isinstance(env, ManagerBasedRlEnv)
     try:
         env.init_state()
-        backend = env._backend
-        kp = np.stack([backend._pool.get_field(i, "kp") for i in range(env.num_envs)])
-        kd = np.stack([backend._pool.get_field(i, "kd") for i in range(env.num_envs)])
-        base_kp = float(env.cfg.control_config.Kp)
-        base_kd = float(env.cfg.control_config.Kd)
+        # Force every row done so the selected-reset path executes deterministically.
+        original_compute = env._compute_truncated
 
-        assert np.unique(np.round(kp[:, 0], 6)).size > 1
-        assert np.unique(np.round(kd[:, 0], 6)).size > 1
-        np.testing.assert_allclose(kp / base_kp, np.broadcast_to(kp[:, :1] / base_kp, kp.shape))
-        np.testing.assert_allclose(kd / base_kd, np.broadcast_to(kd[:, :1] / base_kd, kd.shape))
-        assert np.all(kp >= base_kp * 0.9)
-        assert np.all(kp <= base_kp * 1.1)
-        assert np.all(kd >= base_kd * 0.9)
-        assert np.all(kd <= base_kd * 1.1)
+        def terminate_all(state):
+            del state
+            return torch.ones((env.num_envs,), dtype=torch.bool, device=env.device)
+
+        env._compute_truncated = terminate_all
+        state = env.step(torch.zeros((4, 29), dtype=torch.float32, device=env.device))
+        env._compute_truncated = original_compute
+        timing = state.info["timing"]
+        assert timing["reset_done_event_term_count"] == 0.0
+        assert timing["reset_done_command_term_count"] == 1.0
+        assert timing["reset_done_manager_reset_count"] == 7.0
+        assert timing["reset_done_observation_term_count"] == 19.0
+        assert timing["reset_done_sampler_dispatch_count"] == 1.0
+        assert timing["reset_done_sampler_host_transfer_count"] == 0.0
     finally:
         env.close()
+        env._backend.close()
 
 
-def test_go2w_mujoco_keeps_kp_kd_out_of_backend_position_actuator_path():
-    _require_mujoco_runtime()
+def test_flashsac_motion_selected_reset_uses_generic_manager_lifecycle() -> None:
+    """Tensor command reset composes with canonical Manager reset terms."""
     ensure_registries()
-
+    _require_mjwarp_runtime()
     from unilab.base import registry
+    from unilab.envs import ManagerBasedRlEnv
+    from unilab.tasks.motion_tracking.common.manager_terms import MotionCommand
 
-    env = cast(
-        Any,
-        registry.make(
-            "Go2WJoystickFlat",
-            num_envs=2,
-            sim_backend="mujoco",
-            env_cfg_override={
-                "reward_config": {
-                    "scales": {"alive": 1.0, "torques": -0.0002},
-                    "tracking_sigma": 0.25,
-                    "base_height_target": 0.3,
-                }
-            },
-        ),
+    _, override = _motion_manager_override("g1_motion_tracking", "mjwarp", config_root="flashsac")
+    env = registry.make(
+        "G1MotionTracking",
+        num_envs=8,
+        sim_backend="mjwarp",
+        env_cfg_override=override,
     )
+    assert isinstance(env, ManagerBasedRlEnv)
     try:
-        env.init_state()
-        assert env._backend._position_actuator_gains is None
-        assert env._backend._pre_step_control_fn.__self__ is env
-        assert env._backend._pre_step_control_fn.__func__ is env._pre_step_motor_control.__func__
-        assert env._last_motor_ctrl.shape == (2, env.action_space.shape[0])
+        env.reset(seed=1811)
+        actions = torch.zeros((8, 29), dtype=torch.float32, device=env.device)
+        env.step(actions)
+        rows = torch.tensor([0, 2, 5, 7], dtype=torch.int64, device=env.device)
+        env.reset_terminated.fill_(False)
+        env.reset_time_outs.fill_(False)
+        env.reset_terminated[rows] = True
+        env.reset_time_outs[rows] = True
+        env.reset_buf.fill_(False)
+        env.reset_buf[rows] = True
+        obs, _info = env.reset(env_indices=rows)
+
+        assert all(torch.isfinite(values).all() for values in obs.values())
+        command = env.command_manager.get_term("motion")
+        assert isinstance(command, MotionCommand)
+        timing = env._last_reset_manager_timing_ms
+        assert timing["reset_done_manager_reset_count"] == 7.0
+        assert timing["reset_done_sampler_dispatch_count"] == 1.0
+        assert timing["reset_done_sampler_host_transfer_count"] == 0.0
     finally:
         env.close()
+        env._backend.close()

@@ -7,18 +7,16 @@ Hydra 组合。
 
 | 目标 | 命令形式 | 路由到的脚本 |
 | --- | --- | --- |
-| PPO | `uv run train --algo ppo --task <task> --sim <backend>` | `scripts/train_rsl_rl.py` |
-| MLX PPO | `uv run train --algo mlx_ppo --task <task> --sim <backend>` | `scripts/train_mlx_ppo.py` |
-| APPO | `uv run train --algo appo --task <task> --sim <backend>` | `scripts/train_appo.py` |
-| SAC | `uv run train --algo sac --task <task> --sim <backend>` | `scripts/train_offpolicy.py` |
-| TD3 | `uv run train --algo td3 --task <task> --sim <backend>` | `scripts/train_offpolicy.py` |
-| FlashSAC | `uv run train --algo flashsac --task <task> --sim <backend>` | `scripts/train_offpolicy.py` |
+| PPO | `uv run train --algo ppo --task <task> --sim <backend>` | `src/unilab/scripts/train_rsl_rl.py` |
+| APPO | `uv run train --algo appo --task <task> --sim <backend>` | `src/unilab/scripts/train_appo.py` |
+| SAC | `uv run train --algo sac --task <task> --sim <backend>` | `src/unilab/scripts/train_sac.py` |
+| FlashSAC | `uv run train --algo flashsac --task <task> --sim <backend>` | `src/unilab/scripts/train_flashsac.py` |
 
 示例：
 
 ```bash
 uv run train --algo ppo --task go2_joystick_flat --sim mujoco
-uv run train --algo appo --task g1_motion_tracking --sim motrix training.no_play=true
+uv run train --algo appo --task g1_motion_tracking --sim mujoco training.no_play=true
 uv run train --algo sac --task g1_walk_flat --sim mujoco training.no_play=true
 uv run train --algo flashsac --task go2_joystick_flat --sim mujoco
 ```
@@ -26,6 +24,27 @@ uv run train --algo flashsac --task go2_joystick_flat --sim mujoco
 CLI 会根据 `--algo`、`--task`、`--sim` 以及可选的 `--profile` 构造出 owner YAML
 路径。定义路由的取值必须使用 CLI flag；命令之后的 Hydra override 用于设置诸如
 `algo.max_iterations`、`algo.num_envs` 和 `training.no_play` 等字段。
+
+`uni-cumps` 负责 CUDA MPS 的显式用户态 daemon 生命周期。它提供只读
+host/topology 诊断，只启动和停止 UniLab record 记录的 user-owned daemon，并输出
+launcher 环境而不修改调用方 shell：
+
+```bash
+# 单 GPU 主机；默认参数已经完整。
+uv run uni-cumps start
+eval "$(uv run uni-cumps env)"
+uv run uni-cumps doctor
+uv run uni-cumps stop
+
+# 多 GPU 或需要显式命名的部署。
+uv run uni-cumps doctor --gpus <gpu-index-or-uuid>
+uv run uni-cumps start --gpus <gpu-index-or-uuid> --name <name>
+uv run uni-cumps env --name <name>
+uv run uni-cumps stop --name <name>
+```
+
+ownership、并发和拓扑限制见 tensor runtime 生产指南。训练仍必须显式设置
+`training.cuda_process_sharing=mps`。
 
 ### 各环境的调用方式
 
@@ -41,21 +60,24 @@ choices，不改变命令行为。在新 checkout 上，可用一条 setup 命�
 安装：
 
 ```bash
+# 完整默认环境：
 make setup
-
-# 需要 Motrix 时：
-make setup-motrix
 ```
 
-`make setup` 会执行 `uv sync` 和 `uv run --no-sync unilab-complete install`；
-`make setup-motrix` 会执行 `uv sync --extra motrix` 和同样的补全安装。安装命令会按
-`$SHELL` / 平台选择 Bash 或 Zsh，只写入用户级 rc 文件。当前终端不会被自动激活，重新
-打开终端或 source 对应 rc 文件后生效。
+`make setup` 会执行 `uv sync --extra mujoco --extra uni_rl`，随后运行
+`uv run --no-sync unilab-complete install`。仅需要 MuJoCo 时使用裸
+`uv sync --extra mujoco`。一个环境只选择一条安装路径。
+安装命令会按 `$SHELL` / 平台选择 Bash 或 Zsh，只写入用户级 rc 文件。当前终端不会被自动
+激活，重新打开终端或 source 对应 rc 文件后生效。
 
 如果系统没有 `make`，可直接执行：
 
 ```bash
-uv sync && uv run --no-sync unilab-complete install
+uv sync --extra mujoco --extra uni_rl
+uv run --no-sync unilab-complete install
+
+# 仅 MuJoCo 环境：
+# uv sync --extra mujoco && uv run --no-sync unilab-complete install
 ```
 
 Linux / WSL 的 Bash 用户也可手动把下面内容写入 `~/.bashrc`：
@@ -82,24 +104,28 @@ source scripts/completions/unilab.zsh
 
 ```bash
 uv run eval --algo ppo --task go2_joystick_flat --sim mujoco --load-run -1
-uv run eval --algo ppo --task go2_joystick_flat --sim motrix --load-run -1 \
+uv run eval --algo ppo --task go2_joystick_flat --sim mujoco --load-run -1 \
   --render-mode record
 ```
 
-支持的渲染模式为 `auto`、`interactive`、`record` 和 `none`。
+支持的渲染模式为 `auto`、`interactive`、`record`、`viser` 和 `none`。其中 MuJoCo 交互模式
+（`--sim mujoco --render-mode interactive`）直接路由到 `play_interactive.py`，并始终只
+rollout 一个环境。
+
+具备 physics-state playback 的后端（`mujoco`、`mjwarp`、`newton`、`drake`、`superdex`）
+还支持 `--render-mode viser`：通过基于浏览器的 viser viewer 展示回放，不需要本地显示，
+在 macOS 上也不需要 `mjpython`。eval 会路由到独立的 `play_viser.py` viewer；train 则在
+训练后回放阶段运行同一 viewer。viser 是必选依赖；`viser.*` 配置组
+（`viser.port`、`viser.max_envs`、`viser.display_mode`、`viser.env_idx`）用于调整服务器与场景。
 
 ## 演示
 
 ```bash
 uv run demo dance
-uv run demo wallflip
-uv run demo boxtracking
-uv run demo locomani
-uv run demo inhandgrasp
 uv run demo dance --refresh --device cpu
 ```
 
-可用的 demo：`teaser`、`dance`、`wallflip`、`boxtracking`、`locomani`、`inhandgrasp`。
+可用的 demo：`teaser`、`dance`。
 每个 demo 在首次运行时会从 `unilabsim/unilab-checkpoints` 这个 Hugging Face
 数据集拉取预训练检查点，并缓存到 `src/unilab/assets/checkpoints/<demo>/model_0.pt`。
 传入 `--refresh` 可重新下载。
@@ -117,8 +143,8 @@ demo 入口由 `src/unilab/demo.py` 实现，并从 `src/unilab/cli.py` 路由�
 当你需要检查 Hydra 配置组或复现脚本层面的问题时，底层脚本仍然可用。在正常使用
 中，请将定义路由的取值保留在上面的统一 CLI flag 中。
 
-对于 off-policy 路由，请保持 `--algo` 与 `conf/offpolicy/task/<algo>/` 下的
-owner 树对齐；不要在 `--task` 中包含算法名称。
+对于 off-policy 路由，`--algo` 选择按算法划分的 owner 树 `src/unilab/conf/<algo>/`；
+不要在 `--task` 中包含算法名称。
 
 ## 常用 Override
 

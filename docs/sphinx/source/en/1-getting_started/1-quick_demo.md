@@ -18,13 +18,13 @@ Choose exactly one dependency setup command for your platform:
 
 ```bash
 # Linux CUDA or macOS
-make setup-motrix
+make setup
 
 # Without shell completion setup:
-# uv sync --extra motrix
+# uv sync --extra mujoco --extra uni_rl
 
 # If make is not installed:
-# uv sync --extra motrix && uv run --no-sync unilab-complete install
+# uv sync --extra mujoco --extra uni_rl && uv run --no-sync unilab-complete install
 
 # Linux AMD / ROCm
 # make sync-rocm
@@ -33,34 +33,42 @@ make setup-motrix
 # make sync-xpu
 ```
 
-## Train
+## First Success
+
+Run a pre-trained policy before changing any task configuration:
 
 ```bash
-uv run train --algo ppo --task go2_joystick_flat --sim motrix
-```
-
-This command routes to the registered `go2_joystick_flat` task with the Motrix
-backend. The CLI keeps algorithm, task, and backend selection explicit through
-`--algo`, `--task`, and `--sim`; internally it composes the matching owner YAML.
-
-## Evaluate Or Demo
-
-```bash
-uv run eval --algo ppo --task go2_joystick_flat --sim motrix --load-run -1
-
-# Headless Motrix video export for Linux/server runs
-uv run eval --algo ppo --task go2_joystick_flat --sim motrix \
-  --load-run -1 --render-mode record
-
-# Demo playback (fetches a pre-trained checkpoint from Hugging Face on first run)
+# Fetches the checkpoint and assets from Hugging Face on first run.
 uv run demo dance
 ```
 
-Available demo names: `teaser`, `dance`, `wallflip`, `boxtracking`, `locomani`, `inhandgrasp`.
+Available demo names are `teaser` and `dance`. Use `uv run demo --help` for
+device and refresh options.
 
-Mainland China users: motions, scenes, and demo checkpoints come from Hugging
-Face on first run. If `huggingface.co` is unreachable, switch to the community
-mirror before running training, eval, or demo commands:
+## Train A Task
+
+```bash
+uv run train --algo ppo --task go2_joystick_flat --sim mujoco
+```
+
+This command routes to the registered `go2_joystick_flat` task with the MuJoCo
+backend. The CLI keeps algorithm, task, and backend selection explicit through
+`--algo`, `--task`, and `--sim`; internally it composes the matching owner YAML.
+
+## Evaluate And Replay
+
+```bash
+uv run eval --algo ppo --task go2_joystick_flat --sim mujoco --load-run -1
+
+# Headless video export for Linux/server runs
+uv run eval --algo ppo --task go2_joystick_flat --sim mujoco \
+  --load-run -1 --render-mode record
+
+```
+
+Mainland China users: motions, scenes, robot meshes, and demo checkpoints come
+from Hugging Face on first run. If `huggingface.co` is unreachable, switch to the
+community mirror before running training, eval, or demo commands:
 
 ```bash
 export HF_ENDPOINT=https://hf-mirror.com
@@ -76,7 +84,7 @@ For CI-style local checks, keep the same CLI route and add Hydra overrides after
 the flags:
 
 ```bash
-uv run train --algo ppo --task go2_joystick_flat --sim motrix \
+uv run train --algo ppo --task go2_joystick_flat --sim mujoco \
   algo.max_iterations=1 \
   algo.num_envs=16 \
   training.no_play=true

@@ -8,45 +8,31 @@ budgets as robot-specific measurements, not UniLab defaults.
 
 | Surface | Repo evidence | What it covers |
 | --- | --- | --- |
-| One-step action delay | `control_config.simulate_action_latency` in locomotion and G1 motion-tracking envs | Executes the previous action instead of the current action. |
-| G1 WBT observation history | `noise_config.obs_history_length` and `scripts/deploy/export_deploy_config.py` | Exports per-term `obs_layout` history for `gyro`, `joint_pos_rel`, `dof_vel`, and `last_actions`. |
-| Sharpa tactile contact latency | `domain_rand.contact_latency` in Sharpa in-hand configs | Keeps previous tactile contact values for sampled contact channels. |
-| Deploy-side ONNX contract check | `scripts/deploy/sim_prototype.py` | Validates `obs_layout`, `obs_dim`, ONNX input width, clipping, and EMA action smoothing for the G1 WBT path. |
+| One-step action delay | Manager action term `simulate_action_latency` declarations in task owners | Executes the previous action instead of the current action. |
+| Observation history | Per-term `history_length` declarations in task owners | Per-term history for selected observation terms. |
+| Obs history ordering | `ObservationManager` per-term history buffers (`tests/managers/test_observation_buffers_noise.py`) | Per-term oldest-first flatten for actor observations. |
 
 ## Action Latency
 
-For tasks that expose `control_config.simulate_action_latency`, the env applies
-`last_actions` when the flag is enabled. Keep this in the selected task owner
-YAML instead of adding deploy-only behavior later.
+For Manager-Based tasks that enable action latency, the action manager applies
+the previous action when the flag is enabled. Keep this in the selected task
+owner YAML instead of adding deploy-only behavior later.
 
 ```yaml
 env:
-  control_config:
-    simulate_action_latency: true
+  actions:
+    joint_pos:
+      simulate_action_latency: true
 ```
-
-The checked-in G1 WBT owner enables this flag in
-`conf/offpolicy/task/sac/g1_wbt_obs/mujoco.yaml`.
 
 ## Observation Lag And History
 
-The G1 WBT deployment helpers do not guess observation width. They export a
-schema with `obs_layout`, per-term `history_length`, and `obs_dim`; the
-prototype then assembles the same layout and refuses mismatches.
+Observation width is the sum of `dim * history_length` over the declared actor
+terms, not something a hardware runtime may guess. Terms carrying
+`history_length` are flattened oldest-first within each term while other terms
+stay single-step.
 
-```bash
-uv run scripts/deploy/export_deploy_config.py \
-  --output logs/deploy/deploy_config.yaml
-
-uv run scripts/deploy/sim_prototype.py \
-  --onnx runs/<run>/policy.onnx \
-  --config logs/deploy/deploy_config.yaml \
-  --motion logs/deploy/dance1.bin
-```
-
-Do not lag command/reference terms unless the training owner did so. In the G1
-WBT schema, reference terms stay single-step while proprioceptive terms carry
-history.
+Do not lag command/reference terms unless the training owner did so.
 
 ## Deploy-Side Measurements
 
@@ -58,10 +44,10 @@ Record these per policy tick in the hardware runtime:
 4. actuator command send timestamp
 5. the action vector before and after clamp / smoothing
 
-Compare the observation vector against a sim rollout built from the same
-`deploy_config.yaml`. If the measured pipeline needs filtering or buffering,
-encode the matching behavior in the task owner and re-export the deployment
-artifacts.
+Compare the observation vector against a sim rollout built from the same task
+owner YAML. If the measured pipeline needs filtering or buffering, encode the
+matching behavior in the task owner and retrain, rather than adding it only on
+the deploy side.
 
 ## Symptoms Of Mismatch
 
@@ -74,4 +60,4 @@ artifacts.
 
 - {doc}`6-domain_randomization`
 - {doc}`7-safety_layers`
-- `src/unilab/dr/manager.py`
+- `src/unilab/managers/event_manager.py`

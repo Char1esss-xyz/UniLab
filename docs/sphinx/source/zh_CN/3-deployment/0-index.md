@@ -17,7 +17,7 @@
 :link-type: doc
 :class-card: sd-shadow-md
 
-为 G1 / Go2 / Allegro 上机准备训练好的策略，包含 ONNX 导出与部署侧契约检查。
+为 G1 / Go2 上机准备训练好的策略，包含 ONNX 导出与部署侧契约检查。
 :::
 
 :::{grid-item-card} 🔀 仿真 → 仿真
@@ -60,13 +60,7 @@
 :::{grid-item-card} 🐕 Go2 运动
 :link: 1-sim_to_real/3-go2_locomotion
 :link-type: doc
-摇杆、崎岖地形、Go2W 轮足。
-:::
-
-:::{grid-item-card} 🤚 Allegro 手内操作
-:link: 1-sim_to_real/4-allegro_inhand
-:link-type: doc
-方块旋转；摩擦 + 视觉。
+Go2 joystick-flat 部署。
 :::
 
 :::{grid-item-card} 📦 ONNX 导出与运行时
@@ -156,7 +150,7 @@ GPU 常驻 → CPU + 共享内存。
 :::{grid-item-card} 来自 **Legged Gym**
 :link: 3-framework_migration/2-from_legged_gym
 :link-type: doc
-基于类的环境 → NpEnv。
+基于类的环境 → Manager-Based TorchEnv。
 :::
 
 :::{grid-item-card} 来自 **rsl_rl**

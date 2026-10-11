@@ -6,9 +6,8 @@ page in this section drills into one stage.
 ## What "sim-to-real" means in UniLab
 
 A deployable UniLab policy is the exported policy plus the exact observation
-and action contracts used by the selected task owner. The G1 WBT helper path
-materializes this as `policy.onnx`, `deploy_config.yaml`, and a motion binary;
-other robots need an equivalent hardware-side runtime that:
+and action contracts used by the selected task owner. UniLab ships the training
+side and the ONNX export; every robot needs a hardware-side runtime that:
 
 1. Reads sensors → assembles the **same observation vector** the policy saw
    in simulation.
@@ -36,12 +35,12 @@ flowchart LR
 | Stage | UniLab artefact | Page |
 |---|---|---|
 | Train | Task owner YAML + training script | {doc}`../../2-user_guide/1-training/1-cli_reference` |
-| Curriculum + DR | `unilab.dr` + task-side providers | {doc}`6-domain_randomization` |
+| Curriculum + DR | Manager-Based event terms | {doc}`6-domain_randomization` |
 | Cross-backend sanity | `--task <task> --sim <other_backend>` | {doc}`../2-sim_to_sim/1-backend_swap` |
 | ONNX export | Training playback scripts + deploy helpers | {doc}`5-onnx_runtime` |
 | Latency / obs lag | Task config flags and deploy-side logs | {doc}`8-latency_budget` |
 | Safety layer | Hardware-side clamp / fallback | {doc}`7-safety_layers` |
-| Robot bringup | Robot-specific guides | {doc}`2-g1_whole_body`, {doc}`3-go2_locomotion`, {doc}`4-allegro_inhand` |
+| Robot bringup | Robot-specific guides | {doc}`2-g1_whole_body`, {doc}`3-go2_locomotion` |
 
 ## What you should have before starting
 
@@ -70,10 +69,10 @@ flowchart LR
   runtime (units, frame, filter cutoffs). Log the first deploy-side
   observation window and compare it with a sim rollout built from the same
   owner YAML.
-- **Action latency.** Some task configs expose one-step delayed action
-  execution through `control_config.simulate_action_latency`. Measure the
-  deploy loop and make the training owner match that contract before a
-  hardware run. See {doc}`8-latency_budget`.
+- **Action latency.** Some task owners expose one-step delayed action execution
+  through a control config or Manager-Based action term. Measure the deploy loop
+  and make the training owner match that contract before a hardware run. See
+  {doc}`8-latency_budget`.
 - **Friction / damping mismatch.** Especially for in-hand manipulation.
   Sweep friction in DR; cross-check via {doc}`../2-sim_to_sim/3-contact_and_friction_alignment`.
 - **Reset transients.** Sim resets to a stable pose; deployment starts from a
@@ -96,14 +95,7 @@ Humanoid motion tracking deployment, joint clamp ranges, IMU alignment.
 :link: 3-go2_locomotion
 :link-type: doc
 
-Joystick + rough terrain policies on Go2 and Go2W.
-:::
-
-:::{grid-item-card} ✋ Allegro in-hand
-:link: 4-allegro_inhand
-:link-type: doc
-
-Dexterous cube reorientation, tactile-free deployment, grasp generator.
+Joystick-flat policies on Go2.
 :::
 
 ::::

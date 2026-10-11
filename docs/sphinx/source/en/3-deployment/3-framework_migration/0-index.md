@@ -9,13 +9,13 @@ contract-driven layout.
 :::{grid-item-card} From Isaac Lab
 :link: 1-from_isaac_lab
 :link-type: doc
-Map GPU-resident task structure to UniLab's CPU sim and learner split.
+Keep Manager-Based terms while adapting Hydra config, NumPy execution, and scene access.
 :::
 
 :::{grid-item-card} From Legged Gym
 :link: 2-from_legged_gym
 :link-type: doc
-Move class-based environments into the `NpEnv` contract.
+Move class-based environments into the Manager-Based `TorchEnv` contract.
 :::
 
 :::{grid-item-card} From RSL-RL

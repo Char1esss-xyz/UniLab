@@ -1,65 +1,119 @@
 # Collaboration Workflow
 
+This page is the repository's source of truth for issue scope, roadmap branches,
+pull requests, architecture decisions, and release gates. Stable policy belongs
+here; live status, owners, and delivery tracking belong in GitHub issues and PRs.
 
-Repository documentation only records stable standards. Execution status, owners, and stage progression belong in GitHub collaboration objects.
+## Working With Agents
 
-If you just want to install or train UniLab, start with
-{doc}`/en/1-getting_started/2-installation` and
-{doc}`/en/1-getting_started/1-quick_demo`.
+An agent should establish the requested outcome, inspect the owner layer and its
+tests/configuration, then make the smallest complete change. It may make routine
+implementation choices and continue all authorized, reversible work without
+waiting. It asks a focused question when an answer changes product direction,
+public contracts, irreversible external actions, or durable maintenance cost.
 
-## Work Item Granularity
+For a task with independent research, test, log-analysis, or review work, agents
+may delegate those read-heavy parts in parallel and return concise evidence to
+the main task. Do not use concurrent writers for the same files. The implementing
+agent remains responsible for reconciling evidence, validating the final tree,
+and reporting the result.
 
-Each issue should at minimum answer these questions:
+## Work Items
 
-1. What problem are we solving?
-2. What is the expected deliverable?
-3. What is the completion criterion?
-4. Who is responsible for execution?
-5. What upstream blockers exist?
+Use one issue for one observable, reviewable result. Include its required code,
+configuration, tests, and docs in the same issue when they only have value as a
+complete vertical slice. Split a child issue when it has its own acceptance
+criteria, owner decision, rollback path, or independently useful result.
 
-Recommended issue types:
+Every implementation issue records:
 
-- `bug`
-- `work item`: feature / infra / benchmark / test / sim / docs work
+1. The problem and repository evidence.
+2. The delivered behavior and explicit scope boundary.
+3. Affected owner layers and contracts.
+4. Acceptance criteria and focused validation.
+5. Dependencies, intended PR base, and material platform/backend impact.
 
-## Milestone Structure
+Use a roadmap only for one integrated result that needs multiple independently
+reviewable child PRs. A roadmap starts with a short maintainer-facing summary:
+goal, recommended path, delivery boundary, estimated review scale, durable
+responsibility, and decisions required. Research or benchmark work produces
+reproducible evidence and a decision; it does not imply production support.
 
-Each milestone should:
+## Scope Decisions
 
-- Exist as a milestone object in GitHub
-- Have a tracking issue that aggregates sub-issues
-- Keep execution details in the sub-issues, not in the milestone description
-- Define completion by delivered artifacts, not just "code merged"
+Development authorization covers the confirmed issue or roadmap boundary. Pause
+for a maintainer decision before adding a public contract, execution path,
+runner/env lifecycle, synchronization protocol, routine CI, support commitment,
+durable benchmark facility, history rewrite, or production subsystem. Also
+revisit scope when evidence changes the estimated scale, dependencies, owner
+boundary, or makes a smaller/upstream solution viable. Record the decision in
+the issue, roadmap, or ADR before extending the work.
 
-Typical completion artifacts:
+## Roadmap Branches
 
-- green CI
-- benchmark results or W&B run link
-- demo video / ONNX export / checkpoint path
-- if user-visible behavior changes, accompanying docs updates
+After a roadmap is approved for development, record its declared base and create
+`dev/issue-<roadmap-number>-<slug>` from that base's latest head. The base can
+be `main` or a parent roadmap integration branch. Create each child branch from
+the latest integration branch using a conventional type prefix, such as
+`feat/issue-<number>-<slug>` or `fix/issue-<number>-<slug>`, and target its PR
+at the integration branch.
 
-## PR Evidence Standard
+Before review, update a child with the current integration branch and validate
+the resulting head. Once child PRs are merged, validate the integration head
+again and open its final PR to the declared base. Synchronize a moving declared
+base at planned integration points, then rerun the relevant gate.
 
-Every PR should:
+## Pull Requests And CI
 
-- Link the driving issue
-- Describe user-visible changes and training impact
-- List the validation commands actually executed
-- State whether behavior changes between `mujoco`, `motrix`, macOS, or Linux
+Choose and record the intended base before development. Every PR links its
+driving issue, explains the delivered behavior and impact, and lists exact
+commands run on its final local head. The required local and remote evidence is
+defined below; the PR template records it.
 
-## Ownership Model
+| PR base | Required evidence before merge |
+| --- | --- |
+| `main` | Focused checks and `make test-all` on the final head; all applicable current-head remote CI passes. |
+| Any other branch | Focused checks and `make test-all` on the final head; local results and review are the gate. The later PR to `main` runs remote CI. |
 
-Execution owners are expressed via GitHub assignees, and review owners are expressed via `CODEOWNERS`. If a stable GitHub handle is not yet available, leave the issue unassigned and note the intended owner temporarily in the issue body.
+Use Conventional Commit titles. State whether the change affects MuJoCo, Motrix,
+another backend, macOS, Linux, or training behavior. A documentation-only change
+uses its focused docs checks as well as the repository gate required for its PR.
 
-## ADR Governance
+## Architecture Decisions
 
-When a change touches runtime / backend / config / registry contracts, the issue or PR must explicitly link the corresponding ADR:
+When work changes a runtime, backend, config, registry, or other public
+contract, link the governing ADR in the issue or PR. Add an ADR in the same PR
+only for a new structural decision that existing ADRs do not cover. Use the
+{doc}`ADR template </adr/ADR-TEMPLATE>` and include status, owners, supersession,
+alternatives, repository evidence, and related documents.
 
-- Architecture standards entry: {doc}`Architecture Overview </en/4-developer_guide/1-architecture/1-overview>`
-- ADR index: {doc}`ADR Index </adr/ADR-0000-index>`
-- Backend capability boundary: {doc}`ADR-0002 </adr/ADR-0002-backend-capability-boundary-for-play-and-snapshot>`
-- task owner / compose: {doc}`ADR-0003 </adr/ADR-0003-task-owner-and-config-compose-contract>`
-- Registry bootstrap: {doc}`ADR-0004 </adr/ADR-0004-registry-bootstrap-contract>`
+## Releases
 
-If existing ADRs cannot cover a new structural decision, add a new ADR in the same PR and link it back into the documents above.
-New ADRs use the {doc}`ADR Template </adr/ADR-TEMPLATE>` and must explicitly state `Supersedes`, `Superseded by`, `Alternatives Considered`, and `Evidence In Repo`.
+Release from an approved final commit: update the single version in
+`pyproject.toml`, run `make test-all` and `uv build`, and ensure `ci.yml` has a
+successful run for that exact commit. Push an annotated `v<version>` tag matching
+the project version. The release workflow builds and verifies distributions, then
+publishes tagged builds through PyPI trusted publishing. A code change after a
+failed release requires a new version and tag; never replace an already published
+version.
+
+### Tensor-runtime published dependency transition
+
+Before replacing the published dependency versions, all of the following must
+be true:
+
+1. M11's long-duration soak, leak, shutdown, schema, platform fail-closed, and
+   documentation acceptance items are complete.
+2. The required public `unisim-core` tensor lifecycle contracts and adapters are
+   available in a released `unisim-core` version with a passing standalone
+   package gate.
+3. The required CUDA inference/replay runner behavior is available in a released
+   `unilab-rl` version with its complete repository gate.
+4. The required MJBatch executor API is available in a published `mjbatch-uni`
+   version supported by the UniSim adapter contract.
+5. The default and ROCm lock profiles resolve only registry packages.
+6. Focused CPU CI and the manually gated single-GPU CUDA profile pass on the
+   exact transition commit.
+
+Publication itself is outside M11. The issue remains a no-PyPI checklist until a
+maintainer approves a separate release decision.

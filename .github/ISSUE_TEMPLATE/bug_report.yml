@@ -21,8 +21,10 @@ body:
         - algos
         - envs
         - sim
-        - motrix
+        - historical adapter
         - mujoco
+        - mjwarp
+        - genesis
         - benchmark
         - scripts
         - docs
@@ -37,7 +39,7 @@ body:
       label: Reproduction
       description: Exact command, config, or sequence that reproduces the issue.
       placeholder: |
-        uv run scripts/train_offpolicy.py algo=sac task=sac/g1_walk_flat/mujoco ...
+        uv run train --algo sac --task g1_walk_flat --sim mujoco ...
     validations:
       required: true
 

@@ -10,14 +10,13 @@ from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import OmegaConf
 
-from unilab.training.seed import (
+from unilab.utils.seed import (
     apply_training_seed,
-    derive_worker_seed,
     resolve_training_seed,
 )
 
 _ROOT_DIR = Path(__file__).resolve().parents[2]
-_CONF_DIR = _ROOT_DIR / "conf"
+_CONF_DIR = _ROOT_DIR / "src" / "unilab" / "conf"
 
 
 def _compose(config_dir: str, overrides: list[str] | None = None):
@@ -36,16 +35,20 @@ def test_resolve_training_seed_prefers_algo_seed_over_legacy_training_seed():
     assert seed_info.effective_seed == 7
 
 
-def test_apply_training_seed_controls_python_numpy_and_torch_rng():
+def test_apply_training_seed_controls_python_and_torch_rng_without_numpy():
+    before = np.random.get_state()
     apply_training_seed(123, torch_runtime=True, cuda=True)
-    first = (random.random(), np.random.rand(), torch.rand(3))
+    first = (random.random(), torch.rand(3))
+    after_seed = np.random.get_state()
 
     apply_training_seed(123, torch_runtime=True, cuda=True)
-    second = (random.random(), np.random.rand(), torch.rand(3))
+    second = (random.random(), torch.rand(3))
 
     assert second[0] == first[0]
-    assert second[1] == first[1]
-    assert torch.equal(second[2], first[2])
+    assert torch.equal(second[1], first[1])
+    assert before[0] == after_seed[0]
+    np.testing.assert_array_equal(before[1], after_seed[1])
+    assert before[2:] == after_seed[2:]
 
 
 def test_apply_training_seed_rejects_negative_seed():
@@ -53,22 +56,13 @@ def test_apply_training_seed_rejects_negative_seed():
         apply_training_seed(-1)
 
 
-def test_derive_worker_seed_is_deterministic_and_distinct_from_base_seed():
-    assert derive_worker_seed(10, worker_index=0) == 11
-    assert derive_worker_seed(10, worker_index=3) == 14
-    assert derive_worker_seed(None, worker_index=3) is None
-
-
 @pytest.mark.parametrize(
     ("config_dir", "overrides"),
     [
-        ("ppo", ["task=go1_joystick_flat/mujoco"]),
-        ("ppo", ["task=go1_joystick_flat/mujoco", "algo.seed=41"]),
-        ("ppo", ["task=sharpa_inhand/mujoco_hora"]),
-        ("appo", ["task=go1_joystick_flat/mujoco"]),
-        ("appo", ["task=sharpa_inhand/mujoco_hora"]),
-        ("offpolicy", ["algo=sac", "task=sac/g1_walk_flat/mujoco"]),
-        ("offpolicy", ["algo=td3", "task=td3/g1_walk_flat/mujoco"]),
+        ("ppo", ["task=go2_joystick_flat/mujoco"]),
+        ("ppo", ["task=go2_joystick_flat/mujoco", "algo.seed=41"]),
+        ("appo", ["task=go2_joystick_flat/mujoco"]),
+        ("sac", ["task=g1_walk_flat/mujoco"]),
     ],
 )
 def test_owner_configs_resolve_algorithm_seed_contract(config_dir: str, overrides: list[str]):
@@ -79,14 +73,3 @@ def test_owner_configs_resolve_algorithm_seed_contract(config_dir: str, override
     assert seed_info.configured_seed == int(cfg.algo.seed)
     assert seed_info.configured_seed_source == "algo.seed"
     assert seed_info.effective_seed == int(cfg.algo.seed)
-
-
-def test_mlx_config_keeps_training_seed_as_legacy_fallback_only():
-    mlx_cfg = OmegaConf.load(_CONF_DIR / "ppo" / "config_mlx.yaml")
-    mlx_cfg.algo.seed = 17
-    mlx_cfg.training.seed = 29
-
-    seed_info = resolve_training_seed(mlx_cfg)
-
-    assert seed_info.configured_seed == 17
-    assert seed_info.configured_seed_source == "algo.seed"

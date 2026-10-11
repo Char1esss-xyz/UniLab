@@ -6,8 +6,6 @@ import os
 import sys
 import warnings
 from datetime import datetime
-from importlib import machinery, util
-from types import ModuleType, SimpleNamespace
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -26,103 +24,17 @@ for _p in _candidate_siblings:
         break
 
 
-class _MlxDocDtype:
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    def __repr__(self) -> str:
-        return f"mlx.core.{self.name}"
-
-
-def _make_doc_module(name: str, *, package: bool = False) -> ModuleType:
-    module = ModuleType(name)
-    module.__spec__ = machinery.ModuleSpec(name, loader=None, is_package=package)
-    if package:
-        module.__path__ = []  # type: ignore[attr-defined]
-    return module
-
-
-def _install_mlx_doc_stubs() -> None:
-    # Sphinx's generic mock objects are callable and can look like wrapper
-    # loops to sphinx-autodoc-typehints. MLX dtype defaults need simpler stubs.
-    if "mlx" in sys.modules or util.find_spec("mlx") is not None:
-        return
-
-    mlx_module = _make_doc_module("mlx", package=True)
-    core_module = _make_doc_module("mlx.core")
-    nn_module = _make_doc_module("mlx.nn")
-    optimizers_module = _make_doc_module("mlx.optimizers")
-    utils_module = _make_doc_module("mlx.utils")
-
-    class Dtype:
-        pass
-
-    class array:
-        pass
-
-    class Module:
-        pass
-
-    class Linear:
-        pass
-
-    class Adam:
-        pass
-
-    for cls, module_name in (
-        (Dtype, "mlx.core"),
-        (array, "mlx.core"),
-        (Module, "mlx.nn"),
-        (Linear, "mlx.nn"),
-        (Adam, "mlx.optimizers"),
-    ):
-        cls.__module__ = module_name
-        cls.__qualname__ = cls.__name__
-
-    def _identity(*args: Any, **kwargs: Any) -> Any:
-        return args[0] if args else None
-
-    core_module.Dtype = Dtype
-    core_module.array = array
-    core_module.float32 = _MlxDocDtype("float32")
-    core_module.int32 = _MlxDocDtype("int32")
-    nn_module.Module = Module
-    nn_module.Linear = Linear
-    nn_module.init = SimpleNamespace(orthogonal=lambda *args, **kwargs: _identity)
-    nn_module.value_and_grad = lambda *args, **kwargs: _identity
-    nn_module.softplus = _identity
-    optimizers_module.Adam = Adam
-    utils_module.tree_flatten = lambda tree: []
-    utils_module.tree_map = lambda fn, tree: tree
-
-    mlx_module.core = core_module
-    mlx_module.nn = nn_module
-    mlx_module.optimizers = optimizers_module
-    mlx_module.utils = utils_module
-    sys.modules.update(
-        {
-            "mlx": mlx_module,
-            "mlx.core": core_module,
-            "mlx.nn": nn_module,
-            "mlx.optimizers": optimizers_module,
-            "mlx.utils": utils_module,
-        }
-    )
-
-
-_install_mlx_doc_stubs()
-
 # Probe whether unilab is importable. If not (heavy deps missing), we
 # downgrade the build: skip autodoc / autosummary so a preview build still
 # produces a usable site for the prose pages. CI installs UniLab properly
 # and gets the full API reference.
 _UNILAB_AVAILABLE = False
-_UNILAB_VERSION = "0.1.0"
+_UNILAB_VERSION = "1.1.0"
 try:
     import unilab  # type: ignore
 
     _UNILAB_AVAILABLE = True
-    _UNILAB_VERSION = getattr(unilab, "__version__", "0.1.0")
+    _UNILAB_VERSION = getattr(unilab, "__version__", "1.1.0")
 except Exception as exc:  # pragma: no cover — diagnostic only
     warnings.warn(
         f"UniLab is not importable in this environment ({exc!r}); "
@@ -230,8 +142,7 @@ always_document_param_types = True
 
 # Heavy / optional deps that should not block doc builds.
 # These are mocked so `autodoc` can still import unilab modules in CI even
-# when the deps are missing. MLX uses the lightweight docs stubs above because
-# Sphinx's generic mocks interact poorly with dtype defaults.
+# when the deps are missing.
 autodoc_mock_imports = [
     "motrixsim",
     "mxpython",
@@ -363,7 +274,21 @@ _LANGUAGE_ROOT_INDEX = {
 # table keeps the language switcher landing on the closest equivalent page
 # instead of bouncing to the language index. Forward direction only — reverse
 # map is computed below.
-_LANGUAGE_PATH_FORWARD: dict[str, str] = {}
+_LANGUAGE_PATH_FORWARD: dict[str, str] = {
+    "en/why_unilab": "zh_CN/why_unilab",
+    "en/2-user_guide/3-backends/6-drake": "zh_CN/2-user_guide/3-backends/6-drake",
+    "en/2-user_guide/3-backends/8-superdex": "zh_CN/2-user_guide/3-backends/8-superdex",
+    "en/1-getting_started/5-faq": "zh_CN/1-getting_started/5-faq",
+    "en/4-developer_guide/1-architecture/6-manager_based_api": (
+        "zh_CN/4-developer_guide/1-architecture/6-manager_based_api"
+    ),
+    "en/2-user_guide/1-training/7-tensor_runtime_production": (
+        "zh_CN/2-user_guide/1-training/7-tensor_runtime_production"
+    ),
+    "en/4-developer_guide/8-tensor_runtime_production": (
+        "zh_CN/4-developer_guide/8-tensor_runtime_production"
+    ),
+}
 # Keyed by (current_pagename, target_language) → target_pagename.
 _LANGUAGE_PATH_MAP: dict[tuple[str, str], str] = {}
 for _en_page, _zh_page in _LANGUAGE_PATH_FORWARD.items():

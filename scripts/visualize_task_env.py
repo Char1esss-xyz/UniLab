@@ -15,8 +15,8 @@ all `num_envs` robots out on a grid using `cfg.render_spacing`.
 
 Usage:
     uv run scripts/visualize_task_env.py --task Go2JoystickFlat
-    uv run scripts/visualize_task_env.py --task Go2JoystickRough --num_envs 16
-    uv run scripts/visualize_task_env.py --task Go1JoystickFlat --backend motrix --num_envs 4
+    uv run scripts/visualize_task_env.py --task G1WalkFlat --num_envs 16
+    uv run scripts/visualize_task_env.py --task Go2JoystickFlat --backend motrix --num_envs 4
 """
 
 # pyright: reportAttributeAccessIssue=false
@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast, get_args, get_origin, get_type_hints
 
 import numpy as np
+from unisim.backend.base import CameraCfg
 
 ROOT_DIR = Path(__file__).parent.parent
 SRC_DIR = ROOT_DIR / "src"
@@ -97,7 +98,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--task",
         type=str,
         default="Go2JoystickFlat",
-        help="Registered task name (e.g. Go2JoystickFlat, Go2JoystickRough, Go1JoystickFlat).",
+        help="Registered task name (e.g. Go2JoystickFlat, G1WalkFlat).",
     )
     parser.add_argument(
         "--backend",
@@ -165,7 +166,7 @@ def _run_motrix(env, num_envs: int) -> None:
     )
 
 
-def _motrix_camera_kwargs(env, num_envs: int) -> dict[str, Any] | None:
+def _motrix_camera_kwargs(env, num_envs: int) -> CameraCfg | None:
     """Point Motrix's interactive camera at the actual terrain spawn cells."""
     spawn = getattr(env, "_spawn", None)
     origins_for = getattr(spawn, "origins_for", None)
@@ -194,12 +195,14 @@ def _motrix_camera_kwargs(env, num_envs: int) -> dict[str, Any] | None:
         lookat = origins[0].copy()
         distance = 4.0
     lookat[2] += 0.5
-    return {
-        "cam_lookat": lookat.tolist(),
-        "cam_distance": distance,
-        "cam_elevation": -25.0,
-        "cam_azimuth": 135.0,
-    }
+    return CameraCfg.from_kwargs(
+        {
+            "cam_lookat": lookat.tolist(),
+            "cam_distance": distance,
+            "cam_elevation": -25.0,
+            "cam_azimuth": 135.0,
+        }
+    )
 
 
 def _env_scene(env) -> "SceneCfg | None":
@@ -284,13 +287,14 @@ def _run_mujoco(env, num_envs: int) -> None:
 
 def _build_env_cfg_override(task_name: str) -> dict[str, Any]:
     """Build the env_cfg_override dict from CLI args alone — no Hydra."""
-    if task_name not in registry._envs:
+    if not registry.contains(task_name):
         raise SystemExit(
-            f"Task '{task_name}' is not registered. Available: {sorted(registry._envs.keys())}"
+            f"Task '{task_name}' is not registered. "
+            f"Available: {sorted(registry.list_registered_envs())}"
         )
-    env_cfg_cls = registry._envs[task_name].env_cfg_cls
+    env_cfg = registry.materialize_env_config(task_name)
     override: dict[str, Any] = {}
-    reward_stub = _build_reward_stub(env_cfg_cls)
+    reward_stub = _build_reward_stub(type(env_cfg))
     if reward_stub is not None:
         override["reward_config"] = reward_stub
     return override

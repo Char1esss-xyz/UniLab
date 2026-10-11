@@ -9,21 +9,21 @@ The async paths use a CPU simulation to accelerator learner pipeline:
 
 ```text
 CPU physics backend -> collector / IPC -> learner
-MuJoCo or Motrix      shared memory       torch or mlx
+MuJoCo or Motrix      shared memory       torch
 ```
 
-PPO and MLX PPO are synchronous single-process paths. APPO and off-policy
+PPO is a synchronous single-process path. APPO and off-policy
 algorithms use the async runner, shared buffers, and weight synchronization
-primitives under `src/unilab/ipc/` and `src/unilab/algos/`.
+primitives under `uni_rl.ipc` (unilab-rl repo) and `uni_rl` (unilab-rl repo).
 
 ## Layer Boundaries
 
 | Layer | Paths | Owns |
 | --- | --- | --- |
-| Backend | `src/unilab/base/backend/` | `SimBackend`, physics state, optional capabilities |
-| Env | `src/unilab/envs/`, `src/unilab/base/np_env.py` | MDP semantics, observation, reward, reset |
-| Config and registry | `conf/`, `src/unilab/base/registry.py`, `src/unilab/structured_configs.py` | Schema, owner YAMLs, env/backend registration |
-| Algorithms and IPC | `src/unilab/algos/`, `src/unilab/ipc/` | Learners, runners, buffers, weight sync |
+| Backend | `unisim.backend` | `SimBackend`, physics state, optional capabilities |
+| Env | `src/unilab/envs/`, `src/unilab/base/torch_env.py` | MDP semantics, observation, reward, reset |
+| Config and registry | `src/unilab/conf/`, `src/unilab/base/registry.py`, `src/unilab/structured_configs.py` | Schema, owner YAMLs, env/backend registration |
+| Algorithms and IPC | `uni_rl` (unilab-rl repo), `uni_rl.ipc` (unilab-rl repo) | Learners, runners, buffers, weight sync |
 | Scripts | `scripts/`, `src/unilab/cli.py` | Thin assembly and CLI routing |
 
 ## Design Rules
@@ -44,8 +44,9 @@ primitives under `src/unilab/ipc/` and `src/unilab/algos/`.
 - Make evidence-graded claims. Use grades such as `Registered`, `Configured`,
   `Tested`, `Benchmarked`, or `Recommended`; do not claim stable support without
   evidence in the repo.
-- Lift reusable primitives. Shared logic belongs in `src/unilab/base/` or
-  `src/unilab/utils/`, not copy-pasted across workflows.
+- Lift reusable primitives to their owning package, or to `src/unilab/base/`
+  for shared infrastructure; do not copy them across workflows. New owner logic
+  does not belong in the transitional `src/unilab/utils/` package.
 - Validate at the closest boundary to the risk: config tests for Hydra changes,
   env tests for observation/reset changes, IPC tests for runner changes.
 
@@ -58,13 +59,13 @@ validation at the boundary a change actually touched.
 | --- | --- |
 | Docs only | `uv run pytest tests/scripts/test_check_docs.py -q`, plus manually verify every support claim against the repo |
 | Hydra / task / reward config | `make test` (`tests/config/`, `tests/scripts/`) |
-| Env contract / observation | `make test` (`tests/base/test_np_env.py` and env tests) plus a 1-iteration smoke run |
+| Env contract / observation | `make test` (`tests/base/test_torch_env.py` and env tests) plus a 1-iteration smoke run |
 | Runner / IPC | `make test`; add `make test-slow` when needed |
 | Backend path | the matching backend smoke run, plus a slow test when needed |
 | Training entrypoint | the relevant tests plus a 1-iteration smoke run |
 
-Use `make test` for the fast path and `make test-all` (`make check` plus
-`make test-cov`) before opening a PR.
+Use `make test` for the fast path and `make test-all` (`make check`,
+`make test-cov`, and `make test-benchmark-smoke`) before opening a PR.
 
 ## Review Checklist
 
@@ -77,14 +78,14 @@ Use `make test` for the fast path and `make test-all` (`make check` plus
 
 ## High-Signal Files
 
-- `scripts/train_rsl_rl.py`
-- `scripts/train_mlx_ppo.py`
-- `scripts/train_appo.py`
-- `scripts/train_offpolicy.py`
-- `src/unilab/base/np_env.py`
-- `src/unilab/base/backend/base.py`
+- `src/unilab/scripts/train_rsl_rl.py`
+- `src/unilab/scripts/train_appo.py`
+- `src/unilab/scripts/train_sac.py`
+- `src/unilab/scripts/train_flashsac.py`
+- `src/unilab/base/torch_env.py`
+- `unisim.backend.base`
 - `src/unilab/base/registry.py`
-- `src/unilab/ipc/async_runner.py`
+- `uni_rl.ipc.async_runner` (unilab-rl repo)
 - `src/unilab/training/run.py`
 
 ## Related ADRs

@@ -17,7 +17,7 @@ backends, and source frameworks. Each tutorial follows the same shape:
 :link-type: doc
 :class-card: sd-shadow-md
 
-Prepare a trained policy for G1 / Go2 / Allegro bring-up with ONNX exports and
+Prepare a trained policy for G1 / Go2 bring-up with ONNX exports and
 deploy-side contract checks.
 :::
 
@@ -61,13 +61,7 @@ End-to-end pipeline + go/no-go checklist.
 :::{grid-item-card} 🐕 Go2 locomotion
 :link: 1-sim_to_real/3-go2_locomotion
 :link-type: doc
-Joystick, rough terrain, Go2W wheels.
-:::
-
-:::{grid-item-card} 🤚 Allegro in-hand
-:link: 1-sim_to_real/4-allegro_inhand
-:link-type: doc
-Cube rotation; friction + vision.
+Go2 joystick-flat deployment.
 :::
 
 :::{grid-item-card} 📦 ONNX export & runtime
@@ -157,7 +151,7 @@ GPU-resident → CPU + shared-mem.
 :::{grid-item-card} From **Legged Gym**
 :link: 3-framework_migration/2-from_legged_gym
 :link-type: doc
-Class-based env → NpEnv.
+Class-based env → Manager-Based TorchEnv.
 :::
 
 :::{grid-item-card} From **rsl_rl**

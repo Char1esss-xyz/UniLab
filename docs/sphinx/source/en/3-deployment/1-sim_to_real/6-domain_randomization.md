@@ -1,7 +1,7 @@
 # Domain Randomization for Real-World Transfer
 
 This page is the deployment checklist for domain randomization. For the
-**contract** layer (what a DR provider must implement), see
+**contract** layer (what Manager-Based event terms and backends must implement), see
 {doc}`../../4-developer_guide/2-contracts/4-dr_contract`.
 
 ## What to randomize, in priority order
@@ -42,41 +42,29 @@ range in the task owner only after recording why that range is plausible.
 
 ## How UniLab structures DR
 
-Tasks that use DR attach a provider through the env initialization path:
+Manager-Based tasks declare reset and interval randomization through
+`env.events` in their owner YAML, executed by the manager lifecycle.
 
-```python
-from unilab.envs.locomotion.common.dr_provider import LocomotionDRProvider
-
-class MyTaskEnv(NpEnv):
-    def __init__(self, cfg):
-        super().__init__(cfg)
-        self._init_domain_randomization(LocomotionDRProvider(cfg.domain_rand))
-```
-
-The manager lives in `src/unilab/dr/manager.py`; providers live near their env
-owners and conform to the contract in
+The legacy task-level provider protocol has been removed. The capability
+boundary is described in
 {doc}`../../4-developer_guide/2-contracts/4-dr_contract`.
 
 ## Recipe: starting ranges
 
-Use the selected owner YAML as the source of truth. For example,
-`conf/ppo/task/go2_joystick_rough/mujoco.yaml` enables base-mass, COM, kp/kd,
-and push randomization; `conf/ppo/task/sharpa_inhand/mujoco.yaml` configures
-PD-gain, friction, COM, mass, joint-noise, and contact-noise fields.
+Use the selected owner YAML as the source of truth. This excerpt shows a
+PD-gain term; evaluate absolute gain ranges together with the robot's control
+settings.
 
 ```yaml
-# conf/ppo/task/go2_joystick_rough/mujoco.yaml
 env:
-  domain_rand:
-    randomize_base_mass: true
-    added_mass_range: [-1.0, 3.0]
-    random_com: true
-    randomize_kp: true
-    kp_multiplier_range: [0.5, 2.0]
-    randomize_kd: true
-    kd_multiplier_range: [0.5, 2.0]
-    push_robots: true
-    push_interval: 625
+  events:
+    pd_gains:
+      func: unilab.envs.mdp.pd_gains
+      mode: reset
+      params:
+        kp_range: [17.5, 70.0]
+        kd_range: [0.25, 1.0]
+        operation: abs
 ```
 
 ## Curriculum: ramp DR with skill
@@ -91,7 +79,7 @@ After training, replay the checkpoint against the same backend owner YAML while
 you sweep DR ranges in config:
 
 ```bash
-uv run eval --algo ppo --task go2_joystick_flat --sim motrix --load-run -1
+uv run eval --algo ppo --task go2_joystick_flat --sim mujoco --load-run -1
 ```
 
 Log reward components and task success metrics for each sweep point. A sharp
