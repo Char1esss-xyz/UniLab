@@ -289,3 +289,15 @@ def test_manager_env_and_task_runtime_have_no_numpy_conversion() -> None:
     ]
 
     assert offenders == [], f"runtime NumPy conversions remain: {offenders}"
+
+
+def test_production_source_does_not_seed_global_numpy_rng() -> None:
+    source_root = _REPO_ROOT / "src" / "unilab"
+    offenders = [
+        (path.relative_to(_REPO_ROOT).as_posix(), line_number, line.strip())
+        for path in sorted(source_root.rglob("*.py"))
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if "np.random.seed(" in line or "numpy.random.seed(" in line
+    ]
+
+    assert offenders == [], f"global NumPy RNG seeding remains: {offenders}"

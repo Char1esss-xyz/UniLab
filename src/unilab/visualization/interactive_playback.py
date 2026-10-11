@@ -266,12 +266,11 @@ class RslRlPlaybackSession:
                 self.obs = self.obs.float()
             return self.policy(self.obs)
         if self.action_mode == "random":
-            actions = np.random.uniform(
-                action_space.low,
-                action_space.high,
-                size=(self.num_envs, action_dim),
+            low = torch.as_tensor(action_space.low, device=self.device).to(torch.float32)
+            high = torch.as_tensor(action_space.high, device=self.device).to(torch.float32)
+            return low + (high - low) * torch.rand(
+                (self.num_envs, action_dim), device=self.device, dtype=torch.float32
             )
-            return torch.from_numpy(actions).to(self.device).float()
         return torch.zeros(self.num_envs, action_dim, device=self.device)
 
 
