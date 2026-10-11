@@ -2268,7 +2268,7 @@ def reset_root_state_uniform_tensor(
         pose_bounds_tensor = new_pose_bounds
         env._tensor_reset_velocity_bounds = new_velocity_bounds
         velocity_bounds_tensor = new_velocity_bounds
-        setattr(env, "_tensor_reset_bounds_key", new_bounds_key)
+        env._tensor_reset_bounds_key = new_bounds_key
     reset_unit = torch.rand(
         (count, 2 * len(_SE3_KEYS)),
         dtype=torch.float32,
