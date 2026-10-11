@@ -27,6 +27,11 @@ pytestmark = pytest.mark.slow
 
 def _fake_scene(sensor_data: dict[str, np.ndarray]) -> Any:
     class _Scene(dict):
+        def __init__(self) -> None:
+            super().__init__()
+            self["robot"] = SimpleNamespace()
+            self._tensor_read_plan = None
+
         def bind_sensor_data(self, names):
             arrays = [sensor_data[name] for name in names]
             concatenated = np.concatenate(arrays, axis=1)
@@ -35,6 +40,20 @@ def _fake_scene(sensor_data: dict[str, np.ndarray]) -> Any:
                 dimensions=dimensions,
                 backend_type="fake",
                 read=lambda: concatenated,
+            )
+
+        def refresh_tensor_read_plan(self, device: torch.device = torch.device("cpu")) -> None:
+            values = {
+                name: torch.as_tensor(value, device=device) for name, value in sensor_data.items()
+            }
+
+            def sensor_tensor_views(entity, names):
+                return SimpleNamespace(values={name: values[name] for name in names})
+
+            self._tensor_read_plan = SimpleNamespace(
+                device=device,
+                sensor_names={"robot": tuple(sensor_data)},
+                sensor_tensor_views=sensor_tensor_views,
             )
 
     return _Scene()
@@ -59,6 +78,7 @@ class _FakeEnv:
         self.rng = np.random.default_rng(0)
         self.torch_rng = TorchManagerRng.seeded(0)
         self.scene = _fake_scene(sensor_data)
+        self.scene.refresh_tensor_read_plan()
         self.command_manager = SimpleNamespace(get_command=lambda name: commands[name])
 
 
