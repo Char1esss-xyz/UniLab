@@ -482,7 +482,7 @@ class _ModelFieldRandomizer(ManagerTermBase):
         self,
         entity: Entity,
         asset_cfg: SceneEntityCfg,
-    ) -> tuple[np.ndarray, torch.Tensor, tuple[str, ...]]:
+    ) -> tuple[torch.Tensor, torch.Tensor, tuple[str, ...]]:
         raise NotImplementedError
 
     def _write(
@@ -497,11 +497,11 @@ class _ModelFieldRandomizer(ManagerTermBase):
 
     def _select_string_ranges(
         self,
-        local_ids: np.ndarray,
+        local_ids: torch.Tensor,
         defaults: torch.Tensor,
         names: tuple[str, ...],
         ranges: Any,
-    ) -> tuple[np.ndarray, torch.Tensor, tuple[str, ...], Any]:
+    ) -> tuple[torch.Tensor, torch.Tensor, tuple[str, ...], Any]:
         if not isinstance(ranges, dict) or not ranges:
             return local_ids, defaults, names, ranges
         keys = tuple(ranges)
@@ -546,7 +546,7 @@ class _ModelFieldRandomizer(ManagerTermBase):
                 f"shape {defaults.shape}"
             )
         return (
-            local_ids[selected],
+            local_ids.index_select(0, selected_tensor),
             selected_defaults,
             tuple(names[index] for index in selected),
             [assigned[index] for index in selected],
@@ -795,7 +795,7 @@ class GeomFriction(_ModelFieldRandomizer):
         self,
         entity: Entity,
         asset_cfg: SceneEntityCfg,
-    ) -> tuple[np.ndarray, torch.Tensor, tuple[str, ...]]:
+    ) -> tuple[torch.Tensor, torch.Tensor, tuple[str, ...]]:
         local_ids, defaults = entity.bind_geom_friction_write(
             asset_cfg.geom_ids,
             term_name=self._term_name,
@@ -829,7 +829,7 @@ class JointArmature(_ModelFieldRandomizer):
         self,
         entity: Entity,
         asset_cfg: SceneEntityCfg,
-    ) -> tuple[np.ndarray, torch.Tensor, tuple[str, ...]]:
+    ) -> tuple[torch.Tensor, torch.Tensor, tuple[str, ...]]:
         local_ids, defaults = entity.bind_joint_armature_write(
             asset_cfg.joint_ids,
             term_name=self._term_name,

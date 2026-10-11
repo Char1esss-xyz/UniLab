@@ -3215,7 +3215,7 @@ class Entity:
         joint_ids: np.ndarray | Sequence[int] | slice | None = None,
         *,
         term_name: str,
-    ) -> tuple[np.ndarray, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Bind entity-local joints and immutable default DOF armatures."""
         if self._reset_state is None:
             raise self._capability_error(
@@ -3233,12 +3233,12 @@ class Entity:
             model_dof_ids[local_ids],
             term_name=f"{term_name}:{self.name}",
         )
-        return local_ids, defaults
+        return torch.as_tensor(local_ids), defaults
 
     def write_joint_armature_to_sim(
         self,
         values: torch.Tensor,
-        joint_ids: np.ndarray | Sequence[int] | slice | None = None,
+        joint_ids: torch.Tensor | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "joint_armature",
@@ -3266,7 +3266,7 @@ class Entity:
         geom_ids: np.ndarray | Sequence[int] | slice | None = None,
         *,
         term_name: str,
-    ) -> tuple[np.ndarray, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Bind entity-local geoms and immutable default friction vectors."""
         if self._reset_state is None or self._geom_ids is None:
             raise self._capability_error(
@@ -3283,12 +3283,12 @@ class Entity:
             self._geom_ids[local_ids],
             term_name=f"{term_name}:{self.name}",
         )
-        return local_ids, defaults
+        return torch.as_tensor(local_ids), defaults
 
     def write_geom_friction_to_sim(
         self,
         values: torch.Tensor,
-        geom_ids: np.ndarray | Sequence[int] | slice | None = None,
+        geom_ids: torch.Tensor | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "geom_friction",
@@ -4040,7 +4040,7 @@ class Entity:
 
     def _normalize_local_joint_ids(
         self,
-        joint_ids: np.ndarray | Sequence[int] | slice | None,
+        joint_ids: np.ndarray | Sequence[int] | torch.Tensor | slice | None,
         *,
         capability: str,
     ) -> np.ndarray:
@@ -4073,7 +4073,7 @@ class Entity:
 
     def _normalize_local_geom_ids(
         self,
-        geom_ids: np.ndarray | Sequence[int] | slice | None,
+        geom_ids: np.ndarray | Sequence[int] | torch.Tensor | slice | None,
         *,
         capability: str,
     ) -> np.ndarray:
