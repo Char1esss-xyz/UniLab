@@ -53,7 +53,7 @@ def fixture(num_envs=5):
 @pytest.mark.parametrize("default", [False, True])
 def test_complete_fields_do_not_read_current_entity_state(default):
     transaction, reads, commits = fixture()
-    ids = np.array([4, 1])
+    ids = torch.tensor([4, 1], dtype=torch.int64)
     with transaction.scoped(ids):
         if default:
             transaction.reset_to_default(ids, term_name="defaults")
@@ -72,14 +72,14 @@ def test_complete_fields_do_not_read_current_entity_state(default):
 
 def test_mixed_joint_field_subsets_read_once_only_for_missing_merge_columns():
     transaction, reads, commits = fixture()
-    ids = np.array([4, 1])
+    ids = torch.tensor([4, 1], dtype=torch.int64)
     with transaction.scoped(ids):
         transaction.write_entity_state(
             "object", ids, term_name="a", joint_names=("a",), joint_positions=np.array([[1], [2]])
         )
         transaction.write_entity_state(
             "object",
-            ids[::-1],
+            ids.flip(0),
             term_name="b",
             joint_names=("b",),
             joint_velocities=np.array([[3.5], [4.5]]),
@@ -97,14 +97,14 @@ def test_overlapping_joint_writes_preserve_fractions_and_last_write_wins():
     with transaction.scoped(torch.tensor([1], dtype=torch.int64)):
         transaction.write_entity_state(
             "object",
-            np.array([1]),
+            torch.tensor([1], dtype=torch.int64),
             term_name="first",
             joint_names=("a",),
             joint_positions=np.array([[1]]),
         )
         transaction.write_entity_state(
             "object",
-            np.array([1]),
+            torch.tensor([1], dtype=torch.int64),
             term_name="second",
             joint_names=("a",),
             joint_positions=np.array([[0.25]]),
@@ -118,20 +118,23 @@ def test_late_invalid_patch_does_not_read_current_or_commit():
     with pytest.raises(ValueError), transaction.scoped(torch.tensor([1], dtype=torch.int64)):
         transaction.write_entity_state(
             "object",
-            np.array([1]),
+            torch.tensor([1], dtype=torch.int64),
             term_name="first",
             joint_names=("a",),
             joint_positions=np.array([[0.25]]),
         )
         transaction.write_entity_state(
-            "object", np.array([1]), term_name="invalid", root_pose=np.zeros((1, 7))
+            "object",
+            torch.tensor([1], dtype=torch.int64),
+            term_name="invalid",
+            root_pose=np.zeros((1, 7)),
         )
     assert reads == [] and commits == []
 
 
 def test_root_read_after_only_joint_staging_uses_current_root_and_keeps_it_unwritten():
     transaction, reads, commits = fixture()
-    ids = np.array([4, 1])
+    ids = torch.tensor([4, 1], dtype=torch.int64)
     original = transaction._backend.get_entity_state
 
     def current(entity):

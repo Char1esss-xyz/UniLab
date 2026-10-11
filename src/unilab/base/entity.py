@@ -1183,7 +1183,7 @@ class EntityData:
     def write_ctrl(
         self,
         values: np.ndarray | torch.Tensor,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         actuator_ids: np.ndarray | Sequence[int] | slice | None = None,
     ) -> None:
@@ -1306,7 +1306,7 @@ class EntityData:
         values: torch.Tensor,
         control: torch.Tensor,
         *,
-        env_ids: np.ndarray | slice | None,
+        env_ids: torch.Tensor | slice | None,
         actuator_ids: np.ndarray | Sequence[int] | slice | None,
     ) -> None:
         entity_actuator_ids = self._require(self._actuator_ids, "actuator control write")
@@ -2533,7 +2533,7 @@ class Entity:
         self,
         target: np.ndarray | torch.Tensor,
         joint_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
     ) -> None:
         """Map entity-local joint targets to the env-owned actuator control buffer."""
         joint_to_actuator = self._joint_to_actuator_local
@@ -2652,7 +2652,7 @@ class Entity:
         self,
         target: np.ndarray,
         joint_ids: np.ndarray | Sequence[int] | slice | None,
-        env_ids: np.ndarray | slice | None,
+        env_ids: torch.Tensor | slice | None,
         *,
         capability: str,
     ) -> None:
@@ -2685,7 +2685,7 @@ class Entity:
         self,
         target: np.ndarray,
         joint_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
     ) -> None:
         """Map joint velocity targets to the entity actuator control buffer."""
         self._set_joint_control_target(
@@ -2699,7 +2699,7 @@ class Entity:
         self,
         target: np.ndarray,
         joint_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
     ) -> None:
         """Map joint effort (torque) targets to the actuator control buffer."""
         self._set_joint_control_target(
@@ -2729,7 +2729,7 @@ class Entity:
     def write_root_state_to_sim(
         self,
         root_state: np.ndarray,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
     ) -> None:
         """Stage a 13-D world-frame root state in the active reset transaction."""
         if self._physical_entity is not None:
@@ -2887,7 +2887,7 @@ class Entity:
         kp: np.ndarray,
         kd: np.ndarray,
         actuator_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "pd_gains",
     ) -> None:
@@ -2969,7 +2969,7 @@ class Entity:
         self,
         values: np.ndarray,
         geom_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "geom_size",
     ) -> None:
@@ -3008,7 +3008,7 @@ class Entity:
         self,
         values: np.ndarray,
         geom_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "geom_solref",
     ) -> None:
@@ -3047,7 +3047,7 @@ class Entity:
         self,
         values: np.ndarray,
         geom_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "geom_solimp",
     ) -> None:
@@ -3086,7 +3086,7 @@ class Entity:
         self,
         values: np.ndarray,
         joint_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "joint_damping",
     ) -> None:
@@ -3125,7 +3125,7 @@ class Entity:
         self,
         values: np.ndarray,
         joint_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "joint_frictionloss",
     ) -> None:
@@ -3186,7 +3186,7 @@ class Entity:
     def write_mocap_pose_to_sim(
         self,
         poses: np.ndarray,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "mocap_pose",
     ) -> None:
@@ -3229,7 +3229,7 @@ class Entity:
         self,
         values: np.ndarray,
         joint_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "joint_armature",
     ) -> None:
@@ -3279,7 +3279,7 @@ class Entity:
         self,
         values: np.ndarray,
         geom_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "geom_friction",
     ) -> None:
@@ -3349,7 +3349,7 @@ class Entity:
         self,
         values: np.ndarray,
         body_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "randomize_rigid_body_mass",
     ) -> None:
@@ -3369,7 +3369,7 @@ class Entity:
         self,
         values: np.ndarray,
         body_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "randomize_rigid_body_mass",
     ) -> None:
@@ -3437,7 +3437,7 @@ class Entity:
         self,
         values: np.ndarray,
         body_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "randomize_rigid_body_com",
     ) -> None:
@@ -3457,7 +3457,7 @@ class Entity:
         self,
         values: np.ndarray,
         body_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "randomize_rigid_body_com",
     ) -> None:
@@ -3529,7 +3529,7 @@ class Entity:
         self,
         values: np.ndarray,
         body_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "randomize_body_mass_inertia",
     ) -> None:
@@ -3577,7 +3577,7 @@ class Entity:
     def apply_root_linear_velocity_delta_to_sim(
         self,
         values: np.ndarray,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "push_by_setting_velocity",
     ) -> None:
@@ -3593,7 +3593,7 @@ class Entity:
         self,
         linear_delta: np.ndarray | torch.Tensor | None,
         angular_delta: np.ndarray | torch.Tensor | None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str = "push_by_setting_velocity",
     ) -> None:
@@ -3633,7 +3633,7 @@ class Entity:
     def _validate_root_velocity_delta(
         self,
         values: np.ndarray | torch.Tensor | None,
-        ids: np.ndarray,
+        ids: torch.Tensor,
         *,
         term_name: str,
     ) -> np.ndarray | None:
@@ -3713,7 +3713,7 @@ class Entity:
         forces: np.ndarray,
         torques: np.ndarray | None,
         body_ids: np.ndarray,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
         *,
         term_name: str,
     ) -> None:
@@ -3755,7 +3755,7 @@ class Entity:
     def _validate_body_wrench_values(
         self,
         values: np.ndarray | None,
-        ids: np.ndarray,
+        ids: torch.Tensor,
         body_ids: np.ndarray,
         *,
         label: str,
@@ -3768,7 +3768,8 @@ class Entity:
                 f"EventManager term '{term_name}' body {label} must be np.ndarray, "
                 f"got {type(values).__name__}"
             )
-        expected = (ids.size, body_ids.size, 3)
+        host_ids = ids.detach().cpu().numpy()
+        expected = (host_ids.size, body_ids.size, 3)
         if values.shape != expected:
             raise ValueError(
                 f"EventManager term '{term_name}' body {label} has shape {values.shape}; "
@@ -3779,13 +3780,13 @@ class Entity:
                 f"EventManager term '{term_name}' body {label} must be finite floating data"
             )
         full = np.zeros((self._backend.num_envs, body_ids.size, 3), dtype=values.dtype)
-        full[ids] = values
+        full[host_ids] = values
         return full
 
     def write_root_link_pose_to_sim(
         self,
         root_pose: np.ndarray,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
     ) -> None:
         """Stage world position and wxyz root orientation during reset."""
         if self._physical_entity is not None:
@@ -3803,7 +3804,7 @@ class Entity:
     def write_root_link_velocity_to_sim(
         self,
         root_velocity: np.ndarray,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
     ) -> None:
         """Stage world linear/angular root velocity during reset."""
         if self._physical_entity is not None:
@@ -3820,7 +3821,7 @@ class Entity:
 
     def read_reset_root_pose(
         self,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
     ) -> np.ndarray:
         """Read the world position and wxyz root orientation staged in the reset.
 
@@ -3860,7 +3861,7 @@ class Entity:
         position: np.ndarray,
         velocity: np.ndarray,
         joint_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
     ) -> None:
         """Stage community-style joint state writes in the active reset transaction."""
         if self._reset_state is None:
@@ -4119,11 +4120,11 @@ class Entity:
             )
         return ids
 
-    def _normalize_reset_env_ids(self, env_ids: np.ndarray | slice | None) -> np.ndarray:
+    def _normalize_reset_env_ids(self, env_ids: torch.Tensor | slice | None) -> torch.Tensor:
         if env_ids is None:
-            return np.arange(self._backend.num_envs, dtype=np.int32)
+            return torch.arange(self._backend.num_envs, dtype=torch.int64)
         if isinstance(env_ids, slice):
-            return np.arange(self._backend.num_envs, dtype=np.int32)[env_ids]
+            return torch.arange(self._backend.num_envs, dtype=torch.int64)[env_ids]
         return env_ids
 
     def find_bodies(
@@ -4220,6 +4221,7 @@ class EntityScene(Mapping[str, Entity]):
         env_origins = np.zeros((backend.num_envs, 3), dtype=np.float32)
         env_origins.setflags(write=False)
         self._env_origins = env_origins
+        self._has_nonzero_env_origins = bool(np.any(env_origins))
         self._env_origins_tensor: torch.Tensor | None = None
 
     @classmethod
@@ -4442,7 +4444,7 @@ class EntityScene(Mapping[str, Entity]):
                 f"EventManager term '{term_name}' reset-state capability is unavailable: "
                 "EntityScene was materialized without an env-owned reset transaction"
             )
-        if np.any(self._env_origins):
+        if self._has_nonzero_env_origins:
             raise NotImplementedError(
                 f"EventManager term '{term_name}' cannot apply non-zero env_origins without "
                 "a formal backend root-state layout"
@@ -4461,7 +4463,7 @@ class EntityScene(Mapping[str, Entity]):
     def write_gravity_to_sim(
         self,
         values: np.ndarray,
-        env_ids: np.ndarray,
+        env_ids: torch.Tensor,
         *,
         term_name: str,
     ) -> None:

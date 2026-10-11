@@ -245,7 +245,7 @@ def test_manipulation_entity_maps_local_columns_and_binds_mocap_without_floating
     joint_ids, _ = hand.bind_joint_damping_write(term_name="damping")
     default_pose = hand.bind_mocap_pose_write("foot", term_name="wrist")
     calls = backend.calls.copy()
-    ids = np.array([2], dtype=np.int32)
+    ids = torch.tensor([2], dtype=torch.int64)
     pose = default_pose[None].copy()
     pose[:, 0] = 0.8
     for _ in range(2):
@@ -256,7 +256,7 @@ def test_manipulation_entity_maps_local_columns_and_binds_mocap_without_floating
     np.testing.assert_array_equal(backend.payload.geom_size[0, 2], 0.5)
     np.testing.assert_array_equal(backend.payload.geom_size[0, :2], 1.0)
     assert backend.payload.dof_damping[0, 7] == 0.2
-    np.testing.assert_array_equal(hand.read_mocap_pose()[ids], pose)
+    np.testing.assert_array_equal(hand.read_mocap_pose()[ids.detach().cpu().numpy()], pose)
     for name in ("geom_size defaults", "dof_damping defaults", "model DOF IDs", "mocap binding"):
         assert backend.calls[name] == calls[name] == 1
     assert backend.calls["root-state layout"] == 0
@@ -297,7 +297,7 @@ def test_entity_binding_selects_per_world_default_columns() -> None:
     assert defaults.shape == (backend.num_envs, body_ids.size)
     np.testing.assert_allclose(defaults[:, 0], [1.0, 2.0, 3.0])
 
-    ids = np.array([1], dtype=np.int32)
+    ids = torch.tensor([1], dtype=torch.int64)
     with transaction.scoped(ids):
         entity.write_body_mass_to_sim(
             np.asarray([[7.0]]),
@@ -501,7 +501,7 @@ def test_entity_control_write_uses_cached_actuator_columns_and_fails_closed() ->
     np.testing.assert_array_equal(control[:, 2], [2.0, 4.0, 6.0])
     data.write_ctrl(
         np.array([[9.0, 8.0], [7.0, 6.0]], dtype=np.float32),
-        env_ids=np.array([2, 0], dtype=np.int32),
+        env_ids=torch.tensor([2, 0], dtype=torch.int64),
     )
     np.testing.assert_array_equal(control[:, 4], [7.0, 3.0, 9.0])
     np.testing.assert_array_equal(control[:, 2], [6.0, 4.0, 8.0])
@@ -514,7 +514,7 @@ def test_entity_control_write_uses_cached_actuator_columns_and_fails_closed() ->
     with pytest.raises(IndexError, match="out of range"):
         data.write_ctrl(
             np.zeros((1, 2), dtype=np.float32),
-            env_ids=np.array([backend.num_envs], dtype=np.int32),
+            env_ids=torch.tensor([backend.num_envs], dtype=torch.int64),
         )
 
     _, read_only_scene = _scene()
@@ -543,14 +543,14 @@ def test_entity_root_writes_use_cached_layout_and_one_reset_commit() -> None:
                 ],
                 dtype=np.float32,
             ),
-            env_ids=np.array([2, 0], dtype=np.int32),
+            env_ids=torch.tensor([2, 0], dtype=torch.int64),
         )
         robot.write_root_link_velocity_to_sim(
             np.array(
                 [[1.0, 2.0, 3.0, 1.0, 0.0, 0.0], [4.0, 5.0, 6.0, 0.0, 1.0, 2.0]],
                 dtype=np.float32,
             ),
-            env_ids=np.array([2, 0], dtype=np.int32),
+            env_ids=torch.tensor([2, 0], dtype=torch.int64),
         )
 
     assert backend.calls["root-state layout"] == cold_layout_calls == 1
@@ -576,9 +576,9 @@ def test_entity_read_reset_root_pose_returns_staged_or_default_pose() -> None:
     with transaction.scoped(torch.tensor([0, 2], dtype=torch.int64)):
         robot.write_root_link_pose_to_sim(
             np.array([[10.0, 11.0, 12.0, 1.0, 0.0, 0.0, 0.0]], dtype=np.float32),
-            env_ids=np.array([2], dtype=np.int32),
+            env_ids=torch.tensor([2], dtype=torch.int64),
         )
-        staged = robot.read_reset_root_pose(env_ids=np.array([0, 2], dtype=np.int32))
+        staged = robot.read_reset_root_pose(env_ids=torch.tensor([0, 2], dtype=torch.int64))
 
     # Env 2 reflects the staged write; env 0 the backend default root pose.
     np.testing.assert_allclose(staged[1], [10.0, 11.0, 12.0, 1.0, 0.0, 0.0, 0.0])
@@ -613,7 +613,7 @@ def test_entity_caches_unsupported_root_layout_without_hot_path_probe() -> None:
         with transaction.scoped(torch.tensor([0], dtype=torch.int64)):
             robot.write_root_state_to_sim(
                 np.array([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]),
-                env_ids=np.array([0], dtype=np.int32),
+                env_ids=torch.tensor([0], dtype=torch.int64),
             )
     assert backend.calls["root-state layout"] == 1
     assert backend.set_state_calls == []

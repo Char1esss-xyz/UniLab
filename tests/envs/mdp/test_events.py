@@ -72,7 +72,7 @@ class _CaptureEntity:
     ) -> None:
         assert env_ids is not None
         root = root_state.clone() if isinstance(root_state, torch.Tensor) else root_state.copy()
-        self.writes.append((root, env_ids.copy()))
+        self.writes.append((root, env_ids.clone()))
 
 
 class _CaptureScene:
@@ -124,7 +124,7 @@ def test_uniform_root_state_applies_pinned_pose_velocity_and_origin_semantics() 
         dtype=np.float32,
     )
     env, entity = _capture_env(default_root_state=defaults, env_origins=origins)
-    ids = np.asarray([2, 0], dtype=np.int32)
+    ids = torch.tensor([2, 0], dtype=torch.int64)
 
     mdp.reset_root_state_uniform(
         env,
@@ -167,7 +167,7 @@ def test_uniform_root_state_applies_pinned_pose_velocity_and_origin_semantics() 
 def test_generic_event_randomization_fails_closed_without_torch_rng() -> None:
     env, _entity = _capture_env()
     env.torch_rng = None
-    ids = np.asarray([0, 1], dtype=np.int32)
+    ids = torch.tensor([0, 1], dtype=torch.int64)
 
     with pytest.raises(RuntimeError, match="Manager-owned Torch generator"):
         mdp.reset_root_state_uniform(env, ids, {"x": (0.1, 0.2)})
@@ -178,7 +178,7 @@ def test_uniform_root_state_uses_env_rng_and_preserves_single_env_shape() -> Non
     velocity_range = {"x": (-2.0, 2.0), "roll": (-0.25, 0.25)}
     left, left_entity = _capture_env(seed=9)
     right, right_entity = _capture_env(seed=9)
-    ids = np.asarray([1], dtype=np.int32)
+    ids = torch.tensor([1], dtype=torch.int64)
 
     mdp.reset_root_state_uniform(left, ids, pose_range, velocity_range)
     mdp.reset_root_state_uniform(right, ids, pose_range, velocity_range)
@@ -453,7 +453,7 @@ def _transaction_env(
 
 def test_uniform_root_state_composes_in_one_reset_transaction_commit() -> None:
     env, backend, transaction = _transaction_env()
-    active_ids = np.asarray([0, 2], dtype=np.int32)
+    active_ids = torch.tensor([0, 2], dtype=torch.int64)
 
     with transaction.scoped(active_ids):
         mdp.reset_scene_to_default(env, active_ids)
@@ -524,7 +524,7 @@ def test_pd_gains_event_supports_log_uniform_absolute_sampling() -> None:
         },
         env,
     )
-    ids = np.arange(3, dtype=np.int32)
+    ids = torch.arange(3, dtype=torch.int64)
 
     with transaction.scoped(ids):
         manager.apply(mode="reset", env_ids=ids, global_env_step_count=0)
@@ -891,8 +891,7 @@ def test_min_step_count_gating_reuses_committed_field_values() -> None:
         env,
     )
     first_rows = torch.tensor([0, 1], dtype=torch.int64)
-    first_ids = first_rows.cpu().numpy()
-    with transaction.scoped(first_ids):
+    with transaction.scoped(first_rows):
         mdp.reset_scene_to_default(env, first_rows)
         manager.apply(mode="reset", env_ids=first_rows, global_env_step_count=0)
     first = backend.randomization_calls[-1]
@@ -901,8 +900,7 @@ def test_min_step_count_gating_reuses_committed_field_values() -> None:
     # Env 2 has never triggered, so the first-trigger override fires it while
     # envs 0 and 1 stay gated; their payload rows reuse committed values.
     rows = torch.tensor([0, 1, 2], dtype=torch.int64)
-    ids = rows.cpu().numpy()
-    with transaction.scoped(ids):
+    with transaction.scoped(rows):
         mdp.reset_scene_to_default(env, rows)
         manager.apply(mode="reset", env_ids=rows, global_env_step_count=50)
     second = backend.randomization_calls[-1]
@@ -914,15 +912,15 @@ def test_min_step_count_gating_reuses_committed_field_values() -> None:
 
     # Fully gated resets skip the field entirely; the backend keeps the
     # previously applied per-env values, so no dense payload is needed.
-    with transaction.scoped(first_ids):
-        mdp.reset_scene_to_default(env, first_ids)
+    with transaction.scoped(first_rows):
+        mdp.reset_scene_to_default(env, first_rows)
         manager.apply(mode="reset", env_ids=first_rows, global_env_step_count=60)
     third = backend.randomization_calls[-1]
     assert third is None or third.body_mass is None
 
     # Once enough steps elapsed the gate reopens and the term resamples.
-    with transaction.scoped(first_ids):
-        mdp.reset_scene_to_default(env, first_ids)
+    with transaction.scoped(first_rows):
+        mdp.reset_scene_to_default(env, first_rows)
         manager.apply(mode="reset", env_ids=first_rows, global_env_step_count=200)
     fourth = backend.randomization_calls[-1]
     assert fourth is not None and fourth.body_mass is not None
@@ -1052,15 +1050,13 @@ def test_min_step_count_gating_applies_to_pd_gains_payload_rows() -> None:
         env,
     )
     first_rows = torch.tensor([0, 1], dtype=torch.int64)
-    first_ids = first_rows.cpu().numpy()
-    with transaction.scoped(first_ids):
+    with transaction.scoped(first_rows):
         manager.apply(mode="reset", env_ids=first_rows, global_env_step_count=0)
     first = backend.randomization_calls[-1]
     assert first is not None and first.kp is not None and first.kd is not None
 
     rows = torch.tensor([0, 1, 2], dtype=torch.int64)
-    ids = rows.cpu().numpy()
-    with transaction.scoped(ids):
+    with transaction.scoped(rows):
         mdp.reset_scene_to_default(env, rows)
         manager.apply(mode="reset", env_ids=rows, global_env_step_count=10)
     second = backend.randomization_calls[-1]

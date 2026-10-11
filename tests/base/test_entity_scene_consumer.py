@@ -119,7 +119,7 @@ def test_two_manager_entity_writes_commit_once_and_late_failure_commits_nothing(
             "reset_entities",
             lambda request: (commits.append(request), native(request))[-1],
         )
-        ids = np.array([1])
+        ids = torch.tensor([1], dtype=torch.int64)
         with env._reset_state.scoped(ids):
             env.scene["object"].write_root_link_pose_to_sim(
                 np.array([[0, 0, 2, 1, 0, 0, 0.0]]), env_ids=ids
@@ -150,10 +150,12 @@ def test_different_entity_row_selections_fail_before_committing(monkeypatch):
         with pytest.raises(NotImplementedError, match="same selected env rows"):
             with env._reset_state.scoped(torch.tensor([0, 1], dtype=torch.int64)):
                 env.scene["object"].write_root_link_pose_to_sim(
-                    np.array([[0, 0, 2, 1, 0, 0, 0.0]]), env_ids=np.array([1])
+                    np.array([[0, 0, 2, 1, 0, 0, 0.0]]),
+                    env_ids=torch.tensor([1], dtype=torch.int64),
                 )
                 env.scene["target"].write_root_link_pose_to_sim(
-                    np.array([[3, 2, 1, 1, 0, 0, 0.0]]), env_ids=np.array([0])
+                    np.array([[3, 2, 1, 1, 0, 0, 0.0]]),
+                    env_ids=torch.tensor([0], dtype=torch.int64),
                 )
         assert commits == []
     finally:

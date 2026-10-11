@@ -191,12 +191,13 @@ def _sample_distribution(
 
 def _selected_reset_defaults_tensor(
     defaults: np.ndarray,
-    env_ids: np.ndarray,
+    env_ids: torch.Tensor,
     *,
     canonical_ndim: int,
     device: torch.device,
 ) -> torch.Tensor:
-    selected = _selected_reset_defaults(defaults, env_ids, canonical_ndim=canonical_ndim)
+    rows = env_ids.detach().cpu().numpy()
+    selected = _selected_reset_defaults(defaults, rows, canonical_ndim=canonical_ndim)
     return torch.from_numpy(np.ascontiguousarray(selected)).to(dtype=torch.float64, device=device)
 
 
@@ -267,13 +268,13 @@ def _validate_event_term(
         raise ValueError(f"EventManager term '{term_name}' is missing parameters {missing}")
 
 
-def resolve_env_ids(env: ManagerBasedRlEnv, env_ids: torch.Tensor | None) -> np.ndarray:
-    """Return the NumPy rows still owned by generic event-term internals."""
+def resolve_env_ids(env: ManagerBasedRlEnv, env_ids: torch.Tensor | None) -> torch.Tensor:
+    """Return CPU Torch rows for the legacy host event boundary."""
     if env_ids is None:
-        return np.arange(env.num_envs, dtype=np.int32)
+        return torch.arange(env.num_envs, dtype=torch.int64)
     if isinstance(env_ids, torch.Tensor):
-        return env_ids.detach().cpu().numpy().astype(np.int32, copy=False)
-    return np.asarray(env_ids, dtype=np.int32)
+        return env_ids.detach().cpu().to(dtype=torch.int64)
+    return torch.as_tensor(env_ids, dtype=torch.int64)
 
 
 def _selected_reset_defaults(
@@ -746,7 +747,7 @@ class _ModelFieldRandomizer(ManagerTermBase):
             return
         ids = resolve_env_ids(env, env_ids)
         canonical_ndim = 1 if self._field_width == 1 else 2
-        sampled_axis = self._sample_axis(env, self._axes[0], len(ids)) if self._axes else None
+        sampled_axis = self._sample_axis(env, self._axes[0], ids.numel()) if self._axes else None
         default_values = _selected_reset_defaults_tensor(
             self._defaults,
             ids,
@@ -755,7 +756,7 @@ class _ModelFieldRandomizer(ManagerTermBase):
         )
         values = default_values.clone()
         for index, axis in enumerate(self._axes):
-            samples = sampled_axis if index == 0 else self._sample_axis(env, axis, len(ids))
+            samples = sampled_axis if index == 0 else self._sample_axis(env, axis, ids.numel())
             if self._field_width == 1:
                 values = _apply_randomization_operation_tensor(
                     default_values,
@@ -964,7 +965,7 @@ class PdGains(ManagerTermBase):
             self._apply_device(env, cast(torch.Tensor, env_ids))
             return
         ids = resolve_env_ids(env, env_ids)
-        shape = (len(ids), len(self._actuator_ids))
+        shape = (ids.numel(), len(self._actuator_ids))
         kp = _sample_gain_range(
             _require_torch_rng(env, "pd_gains"), self._kp_range, shape, self._distribution
         )
@@ -1083,8 +1084,7 @@ class RandomizeRigidBodyMass(ManagerTermBase):
         later selected-row resets can omit this field entirely.
         """
         ids = resolve_env_ids(env, env_ids)
-        expected_ids = np.arange(env.num_envs, dtype=np.int32)
-        if not np.array_equal(ids, expected_ids):
+        if not torch.equal(ids, torch.arange(env.num_envs, dtype=torch.int64)):
             raise ValueError(
                 "EventManager term 'randomize_rigid_body_mass' startup mode requires all "
                 f"environment rows; got {ids.tolist()} for {env.num_envs} environments"
@@ -1193,7 +1193,7 @@ class RandomizeRigidBodyMass(ManagerTermBase):
         sampled = _sample_distribution(
             _require_torch_rng(env, "randomize_rigid_body_mass"),
             self._distribution_params,
-            (ids.size, self._body_ids.size),
+            (ids.numel(), self._body_ids.size),
             self._distribution,
         )
         default_mass = _selected_reset_defaults_tensor(
@@ -1390,8 +1390,7 @@ class RandomizeRigidBodyCom(ManagerTermBase):
     ) -> None:
         """Sample every world once and commit the immutable startup table."""
         ids = resolve_env_ids(env, env_ids)
-        expected_ids = np.arange(env.num_envs, dtype=np.int32)
-        if not np.array_equal(ids, expected_ids):
+        if not torch.equal(ids, torch.arange(env.num_envs, dtype=torch.int64)):
             raise ValueError(
                 "EventManager term 'randomize_rigid_body_com' startup mode requires all "
                 f"environment rows; got {ids.tolist()} for {env.num_envs} environments"
@@ -1496,7 +1495,7 @@ class RandomizeRigidBodyCom(ManagerTermBase):
         offsets = _require_torch_rng(env, "randomize_rigid_body_com").uniform(
             torch.as_tensor(ranges[:, 0], dtype=torch.float64),
             torch.as_tensor(ranges[:, 1], dtype=torch.float64),
-            (ids.size, 3),
+            (ids.numel(), 3),
             dtype=torch.float64,
         )
         default_ipos = _selected_reset_defaults_tensor(
@@ -1564,7 +1563,7 @@ class RandomizePhysicsSceneGravity(ManagerTermBase):
         sampled = _sample_distribution(
             _require_torch_rng(env, "randomize_gravity"),
             self._distribution_params,
-            (ids.size, 3),
+            (ids.numel(), 3),
             self._distribution,
         )
         default_gravity = _selected_reset_defaults_tensor(
@@ -1651,7 +1650,7 @@ class PushBySettingVelocity(ManagerTermBase):
         linear_delta = self._host_uniform(
             linear_ranges[:, 0],
             linear_ranges[:, 1],
-            size=(ids.size, 3),
+            size=(ids.numel(), 3),
             env=env,
         )
         angular_delta = None
@@ -1666,13 +1665,14 @@ class PushBySettingVelocity(ManagerTermBase):
             angular_delta = self._host_uniform(
                 angular_ranges[:, 0],
                 angular_ranges[:, 1],
-                size=(ids.size, 3),
+                size=(ids.numel(), 3),
                 env=env,
             )
+        host_ids = ids.cpu().numpy()
         self._entity.apply_root_velocity_delta_to_sim(
             linear_delta,
             angular_delta,
-            env_ids=ids,
+            env_ids=host_ids,
             term_name="push_by_setting_velocity",
         )
 
@@ -1907,27 +1907,27 @@ class ApplyBodyImpulse(ManagerTermBase):
             )
 
     def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
-        ids = (
+        host_ids = (
             np.arange(self.num_envs, dtype=np.intp)
             if env_ids is None
             else np.arange(self.num_envs, dtype=np.intp)[env_ids]
             if isinstance(env_ids, slice)
-            else resolve_env_ids(self._env, env_ids).astype(np.intp, copy=False)
+            else resolve_env_ids(self._env, env_ids).numpy().astype(np.intp, copy=False)
         )
         active = self._active.detach().cpu().numpy()
-        was_active = ids[active[ids]]
-        self._active[ids] = False
-        self._active_forces[ids] = 0.0
-        self._active_torques[ids] = 0.0
-        self._time_remaining[ids] = 0.0
-        self._interval_time_left[ids] = self._sample_cooldown(len(ids))
+        was_active = np.flatnonzero(active[host_ids])
+        self._active[host_ids] = False
+        self._active_forces[host_ids] = 0.0
+        self._active_torques[host_ids] = 0.0
+        self._time_remaining[host_ids] = 0.0
+        self._interval_time_left[host_ids] = self._sample_cooldown(host_ids.size)
         if was_active.size:
             zeros = np.zeros((len(was_active), self._backend_body_ids.size, 3), dtype=np.float64)
             self._entity.apply_body_wrench_to_sim(
                 zeros,
                 zeros.copy() if self._uses_torque else None,
                 self._backend_body_ids,
-                env_ids=was_active,
+                env_ids=torch.as_tensor(host_ids[was_active], dtype=torch.int64),
                 term_name="apply_body_impulse",
             )
 
@@ -2013,7 +2013,7 @@ class RandomizeEncoderBias(ManagerTermBase):
             self._entity.data.update_encoder_bias_tensor(rows, columns, sampled)
             return
         self._entity.data.update_encoder_bias(
-            ids, self._joint_ids, self._host_uniform(ids.size, env)
+            ids, self._joint_ids, self._host_uniform(ids.numel(), env)
         )
 
     def _host_uniform(self, count: int, env: ManagerBasedRlEnv) -> np.ndarray:
@@ -2067,7 +2067,7 @@ def reset_root_state_uniform(
         ) from exc
 
     pose_samples = _sample_se3_range(
-        pose_range, (len(ids), 6), _require_torch_rng(env, "reset_root_state_uniform")
+        pose_range, (ids.numel(), 6), _require_torch_rng(env, "reset_root_state_uniform")
     )
     root_states[:, 0:3] = (
         root_states[:, 0:3]
@@ -2082,7 +2082,7 @@ def reset_root_state_uniform(
     )
 
     velocity_samples = _sample_se3_range(
-        velocity_range, (len(ids), 6), _require_torch_rng(env, "reset_root_state_uniform")
+        velocity_range, (ids.numel(), 6), _require_torch_rng(env, "reset_root_state_uniform")
     )
     root_states[:, 7:13] = root_states[:, 7:13] + velocity_samples.to(dtype=root_states.dtype)
     asset.write_root_state_to_sim(root_states, env_ids=ids)

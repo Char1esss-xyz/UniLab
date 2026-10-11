@@ -293,7 +293,7 @@ def test_manipulation_fields_preserve_unselected_columns_and_bind_once(field, wi
     columns = np.array([1], dtype=np.int32)
     _, defaults = getattr(transaction, f"bind_{field}_write")(columns, term_name=field)
     assert not defaults.flags.writeable
-    ids = np.array([2, 0], dtype=np.int32)
+    ids = torch.tensor([2, 0], dtype=torch.int64)
     values = np.full((2, 1, width) if width else (2, 1), 0.25)
     for _ in range(2):
         with transaction.scoped(ids):
@@ -315,12 +315,12 @@ def test_per_world_body_mass_preserves_each_selected_rows_baseline() -> None:
     np.testing.assert_allclose(defaults[:, 0], [10.0, 20.0, 30.0, 40.0])
     np.testing.assert_allclose(defaults[:, 1], [100.0, 200.0, 300.0, 400.0])
 
-    ids = np.array([2, 0], dtype=np.int32)
+    ids = torch.tensor([2, 0], dtype=torch.int64)
     with transaction.scoped(ids):
         transaction.write_body_mass(
             ids,
             columns[:1],
-            np.full((ids.size, 1), 0.5),
+            np.full((ids.numel(), 1), 0.5),
             term_name="variant_mass",
         )
 
@@ -333,7 +333,7 @@ def test_per_world_body_mass_preserves_each_selected_rows_baseline() -> None:
 def test_startup_model_field_commit_becomes_reset_baseline() -> None:
     backend = _StartupModelFieldBackend()
     transaction = _transaction(backend)
-    all_rows = np.arange(backend.num_envs, dtype=np.int32)
+    all_rows = torch.arange(backend.num_envs, dtype=torch.int64)
     columns = np.arange(3, dtype=np.int32)
     _, mass_defaults = transaction.bind_body_mass_write(columns, term_name="startup_mass")
     startup_mass = np.asarray(mass_defaults) * 2.0
@@ -368,12 +368,12 @@ def test_startup_model_field_commit_becomes_reset_baseline() -> None:
     assert startup_payload.body_mass is not None
     assert startup_payload.body_ipos is not None
 
-    selected = np.asarray([2, 0], dtype=np.int32)
-    with transaction.scoped(torch.from_numpy(selected.astype(np.int64))):
+    selected = torch.tensor([2, 0], dtype=torch.int64)
+    with transaction.scoped(selected):
         transaction.write_body_mass(
             selected,
             columns[:1],
-            np.full((selected.size, 1), 0.75),
+            np.full((selected.numel(), 1), 0.75),
             term_name="later_reset_mass",
         )
 
@@ -391,7 +391,7 @@ def test_startup_model_field_baseline_promotion_is_deferred_until_commit() -> No
     backend = _StartupModelFieldBackend()
     backend.fail_set_state = True
     transaction = _transaction(backend)
-    rows = np.arange(backend.num_envs, dtype=np.int32)
+    rows = torch.arange(backend.num_envs, dtype=torch.int64)
     columns = np.array([1], dtype=np.int32)
     _, selected_defaults = transaction.bind_body_mass_write(columns, term_name="startup_mass")
 
@@ -420,16 +420,18 @@ def test_mocap_pose_is_staged_then_committed_after_generalized_state():
     backend = _ManipulationBackend()
     transaction = _transaction(backend)
     transaction.bind_mocap_pose("palm")
-    ids = np.array([2], dtype=np.int32)
-    poses = backend.poses[ids].copy()
+    ids = torch.tensor([2], dtype=torch.int64)
+    poses = backend.poses[ids.detach().cpu().numpy()].copy()
     poses[:, 0] = 0.7
     with transaction.scoped(ids):
         transaction.write_mocap_pose("palm", ids, poses, term_name="wrist")
         transaction.reset_to_default(ids, term_name="scene")
-        np.testing.assert_array_equal(transaction.read_mocap_pose("palm")[ids], poses)
+        np.testing.assert_array_equal(
+            transaction.read_mocap_pose("palm")[ids.detach().cpu().numpy()], poses
+        )
         assert backend.events == []
     assert backend.events == ["state", "mocap"]
-    np.testing.assert_array_equal(backend.poses[ids], poses)
+    np.testing.assert_array_equal(backend.poses[ids.detach().cpu().numpy()], poses)
     np.testing.assert_array_equal(backend.poses[[0, 1, 3], 0], 0.0)
     assert transaction.last_commit_had_writes
 
@@ -438,8 +440,8 @@ def test_mocap_only_write_does_not_reset_physics_and_abort_discards_pose():
     backend = _ManipulationBackend()
     transaction = _transaction(backend)
     transaction.bind_mocap_pose("palm")
-    ids = np.array([1], dtype=np.int32)
-    poses = backend.poses[ids].copy()
+    ids = torch.tensor([1], dtype=torch.int64)
+    poses = backend.poses[ids.detach().cpu().numpy()].copy()
     poses[:, 0] = 0.4
     with pytest.raises(RuntimeError, match="cancel"):
         with transaction.scoped(ids):
@@ -450,14 +452,14 @@ def test_mocap_only_write_does_not_reset_physics_and_abort_discards_pose():
         transaction.write_mocap_pose("palm", ids, poses, term_name="wrist")
     assert backend.events == ["mocap"]
     assert backend.default_qpos_calls == 0
-    np.testing.assert_array_equal(backend.poses[ids], poses)
+    np.testing.assert_array_equal(backend.poses[ids.detach().cpu().numpy()], poses)
 
 
 def test_invalid_mocap_write_fails_before_any_backend_mutation():
     backend = _ManipulationBackend()
     transaction = _transaction(backend)
     transaction.bind_mocap_pose("palm")
-    ids = np.array([0], dtype=np.int32)
+    ids = torch.tensor([0], dtype=torch.int64)
     with pytest.raises(ValueError, match="quaternion"):
         with transaction.scoped(ids):
             transaction.reset_to_default(ids, term_name="scene")
@@ -477,11 +479,11 @@ def test_transaction_is_lazy_and_combines_terms_into_one_commit() -> None:
 
     with transaction.scoped(torch.tensor([0, 2, 3], dtype=torch.int64)):
         transaction.reset_to_default(
-            np.array([2], dtype=np.int32),
+            torch.tensor([2], dtype=torch.int64),
             term_name="first",
         )
         transaction.reset_to_default(
-            np.array([3, 0], dtype=np.int32),
+            torch.tensor([3, 0], dtype=torch.int64),
             term_name="second",
         )
         assert backend.set_state_calls == []
@@ -496,7 +498,7 @@ def test_transaction_is_lazy_and_combines_terms_into_one_commit() -> None:
     np.testing.assert_array_equal(qvel, np.tile(backend.qvel, (3, 1)))
 
     with transaction.scoped(torch.tensor([1], dtype=torch.int64)):
-        transaction.reset_to_default(np.array([1], dtype=np.int32), term_name="third")
+        transaction.reset_to_default(torch.tensor([1], dtype=torch.int64), term_name="third")
     assert backend.default_qpos_calls == 1
     assert backend.init_qvel_calls == 1
     assert len(backend.set_state_calls) == 2
@@ -512,12 +514,12 @@ def test_transaction_reports_only_committed_dirty_rows_as_writes() -> None:
     assert not transaction.last_commit_had_writes
 
     with transaction.scoped(torch.tensor([0], dtype=torch.int64)):
-        transaction.reset_to_default(np.array([0], dtype=np.int32), term_name="dirty")
+        transaction.reset_to_default(torch.tensor([0], dtype=torch.int64), term_name="dirty")
     assert transaction.last_commit_had_writes
 
     with pytest.raises(RuntimeError, match="abort"):
         with transaction.scoped(torch.tensor([1], dtype=torch.int64)):
-            transaction.reset_to_default(np.array([1], dtype=np.int32), term_name="aborted")
+            transaction.reset_to_default(torch.tensor([1], dtype=torch.int64), term_name="aborted")
             raise RuntimeError("abort")
     assert not transaction.last_commit_had_writes
 
@@ -528,14 +530,14 @@ def test_exception_aborts_without_backend_mutation_and_next_reset_is_clean() -> 
 
     with pytest.raises(RuntimeError, match="term failed"):
         with transaction.scoped(torch.tensor([0, 1], dtype=torch.int64)):
-            transaction.reset_to_default(np.array([0], dtype=np.int32), term_name="broken")
+            transaction.reset_to_default(torch.tensor([0], dtype=torch.int64), term_name="broken")
             raise RuntimeError("term failed")
 
     assert not transaction.active
     assert backend.set_state_calls == []
 
     with transaction.scoped(torch.tensor([1], dtype=torch.int64)):
-        transaction.reset_to_default(np.array([1], dtype=np.int32), term_name="healthy")
+        transaction.reset_to_default(torch.tensor([1], dtype=torch.int64), term_name="healthy")
     assert len(backend.set_state_calls) == 1
     np.testing.assert_array_equal(backend.set_state_calls[0][0], [1])
 
@@ -552,9 +554,9 @@ def test_actuator_gains_compose_with_state_in_one_reset_commit() -> None:
     np.testing.assert_array_equal(default_kd, [3.0, 1.0])
 
     with transaction.scoped(torch.tensor([0, 2], dtype=torch.int64)):
-        transaction.reset_to_default(np.array([0, 2], dtype=np.int32), term_name="default")
+        transaction.reset_to_default(torch.tensor([0, 2], dtype=torch.int64), term_name="default")
         transaction.write_actuator_gains(
-            np.array([2, 0], dtype=np.int32),
+            torch.tensor([2, 0], dtype=torch.int64),
             columns,
             np.array([[5.0, 6.0], [7.0, 8.0]]),
             np.array([[0.5, 0.6], [0.7, 0.8]]),
@@ -576,9 +578,9 @@ def test_host_randomization_write_accepts_cpu_tensor_values() -> None:
     )
 
     with transaction.scoped(torch.tensor([1], dtype=torch.int64)):
-        transaction.reset_to_default(np.array([1], dtype=np.int32), term_name="default")
+        transaction.reset_to_default(torch.tensor([1], dtype=torch.int64), term_name="default")
         transaction.write_actuator_gains(
-            np.array([1], dtype=np.int32),
+            torch.tensor([1], dtype=torch.int64),
             columns,
             torch.tensor([[4.0, 2.0]], dtype=torch.float64),
             torch.tensor([[0.4, 0.2]], dtype=torch.float64),
@@ -606,7 +608,7 @@ def test_host_randomization_write_rejects_non_cpu_tensor_values() -> None:
         pytest.raises(TypeError, match="host write requires a CPU Torch tensor"),
     ):
         transaction.write_actuator_gains(
-            np.array([0], dtype=np.int32),
+            torch.tensor([0], dtype=torch.int64),
             columns,
             torch.zeros((1, 1), dtype=torch.float64, device="cuda"),
             torch.zeros((1, 1), dtype=torch.float64, device="cuda"),
@@ -627,11 +629,11 @@ def test_actuator_gain_sparse_rows_abort_without_backend_mutation() -> None:
     with pytest.raises(RuntimeError, match=r"cannot represent sparse rows.*missing env IDs \[1\]"):
         with transaction.scoped(torch.tensor([0, 1], dtype=torch.int64)):
             transaction.reset_to_default(
-                np.array([0, 1], dtype=np.int32),
+                torch.tensor([0, 1], dtype=torch.int64),
                 term_name="default",
             )
             transaction.write_actuator_gains(
-                np.array([0], dtype=np.int32),
+                torch.tensor([0], dtype=torch.int64),
                 columns,
                 np.array([[11.0]]),
                 np.array([[1.1]]),
@@ -647,7 +649,7 @@ def test_joint_writes_initialize_defaults_and_compose_by_column() -> None:
 
     with transaction.scoped(torch.tensor([0, 2], dtype=torch.int64)):
         transaction.write_joint_state(
-            np.array([2, 0], dtype=np.int32),
+            torch.tensor([2, 0], dtype=torch.int64),
             np.array([1], dtype=np.int32),
             np.array([0], dtype=np.int32),
             np.array([[9.0], [8.0]], dtype=np.float32),
@@ -683,13 +685,13 @@ def test_root_pose_and_world_velocity_compose_at_nonzero_columns() -> None:
 
     with transaction.scoped(torch.tensor([0, 2], dtype=torch.int64)):
         transaction.write_root_pose(
-            np.array([2, 0], dtype=np.int32),
+            torch.tensor([2, 0], dtype=torch.int64),
             layout,
             poses,
             term_name="root_pose",
         )
         transaction.write_root_velocity(
-            np.array([2, 0], dtype=np.int32),
+            torch.tensor([2, 0], dtype=torch.int64),
             layout,
             velocities_w,
             term_name="root_velocity",
@@ -716,13 +718,13 @@ def test_read_root_pose_returns_staged_or_default_pose_without_dirtying() -> Non
 
     with transaction.scoped(torch.tensor([0, 2], dtype=torch.int64)):
         transaction.write_root_pose(
-            np.array([2], dtype=np.int32),
+            torch.tensor([2], dtype=torch.int64),
             layout,
             np.array([[10.0, 11.0, 12.0, 1.0, 0.0, 0.0, 0.0]]),
             term_name="reset_base",
         )
         staged = transaction.read_root_pose(
-            np.array([0, 2], dtype=np.int32),
+            torch.tensor([0, 2], dtype=torch.int64),
             layout,
             term_name="random_prone_init",
         )
@@ -732,7 +734,7 @@ def test_read_root_pose_returns_staged_or_default_pose_without_dirtying() -> Non
         # The read is a detached copy: mutating it must not leak back.
         staged[1, 0] = -5.0
         reread = transaction.read_root_pose(
-            np.array([2], dtype=np.int32),
+            torch.tensor([2], dtype=torch.int64),
             layout,
             term_name="random_prone_init",
         )
@@ -753,11 +755,11 @@ def test_read_root_pose_fails_closed_outside_reset_scope() -> None:
     layout = BackendRootStateLayout(tuple(range(7)), tuple(range(6)))
 
     with pytest.raises(RuntimeError, match="requires an active reset event"):
-        transaction.read_root_pose(np.array([0], dtype=np.int32), layout, term_name="t")
+        transaction.read_root_pose(torch.tensor([0], dtype=torch.int64), layout, term_name="t")
 
     with transaction.scoped(torch.tensor([0], dtype=torch.int64)):
         with pytest.raises(ValueError, match="outside the active reset"):
-            transaction.read_root_pose(np.array([1], dtype=np.int32), layout, term_name="t")
+            transaction.read_root_pose(torch.tensor([1], dtype=torch.int64), layout, term_name="t")
 
 
 def test_combined_root_state_uses_staged_pose_for_angular_velocity() -> None:
@@ -774,7 +776,7 @@ def test_combined_root_state_uses_staged_pose_for_angular_velocity() -> None:
 
     with transaction.scoped(torch.tensor([1], dtype=torch.int64)):
         transaction.write_root_state(
-            np.array([1], dtype=np.int32),
+            torch.tensor([1], dtype=torch.int64),
             layout,
             root_state,
             term_name="root_state",
@@ -809,7 +811,7 @@ def test_root_state_values_fail_closed(root_state, error, match: str) -> None:
     with pytest.raises(error, match=match):
         with transaction.scoped(torch.tensor([0], dtype=torch.int64)):
             transaction.write_root_state(
-                np.array([0], dtype=np.int32),
+                torch.tensor([0], dtype=torch.int64),
                 layout,
                 root_state,
                 term_name="bad_root",
@@ -828,7 +830,7 @@ def test_root_layout_bounds_and_reset_scope_fail_closed() -> None:
     with pytest.raises(IndexError, match="root qpos indices out of range"):
         with transaction.scoped(torch.tensor([0], dtype=torch.int64)):
             transaction.write_root_pose(
-                np.array([0], dtype=np.int32),
+                torch.tensor([0], dtype=torch.int64),
                 out_of_bounds,
                 np.array([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]]),
                 term_name="bad_layout",
@@ -838,7 +840,7 @@ def test_root_layout_bounds_and_reset_scope_fail_closed() -> None:
     with pytest.raises(ValueError, match="root-pose mutation outside the active reset"):
         with transaction.scoped(torch.tensor([0], dtype=torch.int64)):
             transaction.write_root_pose(
-                np.array([1], dtype=np.int32),
+                torch.tensor([1], dtype=torch.int64),
                 valid,
                 np.array([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]]),
                 term_name="outside",
@@ -859,7 +861,7 @@ def test_joint_write_values_fail_closed(position, velocity, error, match: str) -
     with pytest.raises(error, match=match):
         with transaction.scoped(torch.tensor([0], dtype=torch.int64)):
             transaction.write_joint_state(
-                np.array([0], dtype=np.int32),
+                torch.tensor([0], dtype=torch.int64),
                 np.array([1], dtype=np.int32),
                 np.array([0], dtype=np.int32),
                 position,
@@ -872,10 +874,10 @@ def test_mutation_must_stay_inside_active_reset() -> None:
     transaction = _transaction(_Backend())
     with transaction.scoped(torch.tensor([1, 2], dtype=torch.int64)):
         with pytest.raises(ValueError, match="outside the active reset.*3"):
-            transaction.reset_to_default(np.array([3], dtype=np.int32), term_name="bad")
+            transaction.reset_to_default(torch.tensor([3], dtype=torch.int64), term_name="bad")
 
     with pytest.raises(RuntimeError, match="requires an active reset event"):
-        transaction.reset_to_default(np.array([1], dtype=np.int32), term_name="late")
+        transaction.reset_to_default(torch.tensor([1], dtype=torch.int64), term_name="late")
 
 
 @pytest.mark.parametrize(
@@ -884,9 +886,9 @@ def test_mutation_must_stay_inside_active_reset() -> None:
         ([0], TypeError, "must be torch.Tensor"),
         (torch.tensor([[0]], dtype=torch.int64), TypeError, "1-D integer"),
         (torch.tensor([True]), TypeError, "1-D integer"),
-        (np.array([-1], dtype=np.int32), IndexError, "out of range"),
-        (np.array([4], dtype=np.int32), IndexError, "out of range"),
-        (np.array([1, 1], dtype=np.int32), ValueError, "contain duplicates"),
+        (torch.tensor([-1], dtype=torch.int64), IndexError, "out of range"),
+        (torch.tensor([4], dtype=torch.int64), IndexError, "out of range"),
+        (torch.tensor([1, 1], dtype=torch.int64), ValueError, "contain duplicates"),
     ],
 )
 def test_begin_rejects_invalid_environment_ids(ids, error, match: str) -> None:
@@ -915,7 +917,7 @@ def test_backend_default_state_contract_fails_at_mutation_boundary(
     with pytest.raises(error, match=match):
         with transaction.scoped(torch.tensor([0], dtype=torch.int64)):
             transaction.reset_to_default(
-                np.array([0], dtype=np.int32),
+                torch.tensor([0], dtype=torch.int64),
                 term_name="reset_scene_to_default",
             )
     assert not transaction.active
@@ -930,7 +932,7 @@ def test_missing_default_and_set_state_capabilities_name_term_and_backend() -> N
     ):
         with transaction.scoped(torch.tensor([0], dtype=torch.int64)):
             transaction.reset_to_default(
-                np.array([0], dtype=np.int32),
+                torch.tensor([0], dtype=torch.int64),
                 term_name="reset_scene_to_default",
             )
 
@@ -942,7 +944,7 @@ def test_missing_default_and_set_state_capabilities_name_term_and_backend() -> N
     ):
         with transaction.scoped(torch.tensor([0], dtype=torch.int64)):
             transaction.reset_to_default(
-                np.array([0], dtype=np.int32),
+                torch.tensor([0], dtype=torch.int64),
                 term_name="reset_scene_to_default",
             )
     assert not transaction.active
@@ -1259,7 +1261,7 @@ def test_tensor_reset_commit_carries_randomization_payload() -> None:
 
     with transaction.scoped_device_event_tensor(rows):
         transaction.write_gravity(
-            rows.detach().cpu().numpy(),
+            rows,
             np.array([[0.0, 0.0, -9.5], [0.0, 0.0, -10.0]], dtype=np.float64),
             term_name="gravity_owner",
         )
@@ -1290,7 +1292,7 @@ def test_tensor_reset_commit_rejects_randomization_without_capability() -> None:
     with pytest.raises(NotImplementedError, match="does not support reset randomization"):
         with transaction.scoped_device_event_tensor(rows):
             transaction.write_gravity(
-                rows.detach().cpu().numpy(),
+                rows,
                 np.array([[0.0, 0.0, -9.8]], dtype=np.float64),
                 term_name="gravity_owner",
             )
@@ -1434,7 +1436,7 @@ def test_tensor_reset_rejects_mixing_host_and_device_randomization() -> None:
                 term_name="randomize_rigid_body_mass",
             )
             transaction.write_gravity(
-                np.array([0], dtype=np.int32),
+                torch.tensor([0], dtype=torch.int64),
                 np.array([[0.0, 0.0, -9.5]]),
                 term_name="gravity_owner",
             )
@@ -1460,7 +1462,7 @@ def test_host_randomization_commit_invalidates_device_committed_baseline() -> No
     # device-staged reset must rebuild from backend defaults.
     with transaction.scoped(torch.tensor([0], dtype=torch.int64)):
         transaction.write_body_mass(
-            np.array([0], dtype=np.int32),
+            torch.tensor([0], dtype=torch.int64),
             np.array([0], dtype=np.int32),
             np.array([[99.0]]),
             term_name="host_mass",
