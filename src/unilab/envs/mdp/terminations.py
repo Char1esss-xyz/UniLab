@@ -100,14 +100,29 @@ def nan_detection(
     is reduced on the Torch carrier so a non-finite physics state terminates the
     episode explicitly.
     """
-    asset = cast("Entity", env.scene[asset_cfg.name])
-    states = (
-        asset.data.root_link_pos_w,
-        asset.data.root_link_lin_vel_w,
-        asset.data.root_link_ang_vel_w,
-        asset.data.joint_pos,
-        asset.data.joint_vel,
+    asset, view = _root_body_view(env, asset_cfg)
+    read_plan = getattr(env.scene, "_tensor_read_plan", None)
+    joint_view = (
+        read_plan.joint_tensor_view(asset)
+        if read_plan is not None and getattr(asset, "_joint_names", None) is not None
+        else None
     )
+    if view is not None and joint_view is not None:
+        states = (
+            view.pos_w[:, 0, :],
+            view.lin_vel_w[:, 0, :],
+            view.ang_vel_w[:, 0, :],
+            joint_view.joint_pos,
+            joint_view.joint_vel,
+        )
+    else:
+        states = (
+            asset.data.root_link_pos_w,
+            asset.data.root_link_lin_vel_w,
+            asset.data.root_link_ang_vel_w,
+            asset.data.joint_pos,
+            asset.data.joint_vel,
+        )
     invalid = torch.zeros(env.num_envs, dtype=torch.bool, device=getattr(env, "device", "cpu"))
     for state_value in states:
         state = torch.as_tensor(state_value, dtype=torch.float32, device=invalid.device)
