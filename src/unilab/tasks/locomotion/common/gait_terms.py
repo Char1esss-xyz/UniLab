@@ -95,6 +95,30 @@ def _num_selected_bodies(asset: Entity, asset_cfg: SceneEntityCfg) -> int:
     return len(range(*body_ids.indices(asset.num_bodies)))
 
 
+def _selected_body_names(asset: Entity, asset_cfg: SceneEntityCfg) -> tuple[str, ...]:
+    body_ids = asset_cfg.body_ids
+    if isinstance(body_ids, list):
+        return tuple(asset.body_names[index] for index in body_ids)
+    return tuple(asset.body_names[body_ids])
+
+
+def _feet_body_tensor_view(
+    term: str,
+    env: ManagerBasedRlEnv,
+    asset_cfg: SceneEntityCfg,
+    body_names: tuple[str, ...],
+) -> Any:
+    read_plan = getattr(env.scene, "_tensor_read_plan", None)
+    if read_plan is None:
+        raise NotImplementedError(f"{term} requires the Manager packed foot-body read plan")
+    entity = env.scene[asset_cfg.name]
+    body = read_plan.body_tensor_view(entity, body_names)
+    expected = (env.num_envs, len(body_names), 3)
+    if tuple(body.pos_w.shape) != expected or tuple(body.lin_vel_w.shape) != expected:
+        raise ValueError(f"{term} foot body state must have shape {expected}")
+    return body
+
+
 def _feet_pos_vel(
     term: str, env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg, num_feet: int
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -152,11 +176,19 @@ class _FootContactTerm(SensorTermBase):
         return len(self._groups)
 
     @property
+    def entity_name(self) -> str:
+        return getattr(self, "_entity_name", "robot")
+
+    @property
     def tensor_sensor_names(self) -> tuple[str, ...]:
         flat = tuple(name for group in self._groups for name in group)
         if not flat:
             return ()
         return flat
+
+    @property
+    def tensor_body_names(self) -> tuple[str, ...]:
+        return getattr(self, "_body_names", ())
 
     def _contact_values(self, env: ManagerBasedRlEnv) -> np.ndarray | torch.Tensor:
         read_plan = getattr(env.scene, "_tensor_read_plan", None)
@@ -300,13 +332,15 @@ class feet_swing_height(_FootContactTerm):
         if not isinstance(asset_cfg, SceneEntityCfg):
             raise TypeError(f"{self.name} asset_cfg must be a SceneEntityCfg")
         asset = cast("Entity", env.scene[asset_cfg.name])
-        num_bodies = _num_selected_bodies(asset, asset_cfg)
-        if num_bodies != self.num_feet:
+        body_names = _selected_body_names(asset, asset_cfg)
+        if len(body_names) != self.num_feet:
             raise ValueError(
-                f"{self.name} asset_cfg selects {num_bodies} foot bodies but "
+                f"{self.name} asset_cfg selects {len(body_names)} foot bodies but "
                 f"sensor_groups declares {self.num_feet} feet"
             )
         self._asset_cfg = asset_cfg
+        self._entity_name = asset_cfg.name
+        self._body_names = body_names
         self._peak_heights = torch.zeros(
             (env.num_envs, self.num_feet), dtype=torch.float32, device=env.device
         )
@@ -322,8 +356,8 @@ class feet_swing_height(_FootContactTerm):
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
         del params
         contact = self._contact(env)
-        positions, _ = _feet_pos_vel(self.name, env, self._asset_cfg, self.num_feet)
-        positions = torch.as_tensor(positions, device=contact.device, dtype=torch.float32)
+        body = _feet_body_tensor_view(self.name, env, self._asset_cfg, self._body_names)
+        positions = body.pos_w.to(device=contact.device, dtype=torch.float32)
         in_air = ~contact
         self._peak_heights = torch.where(
             in_air, torch.maximum(self._peak_heights, positions[:, :, 2]), self._peak_heights
@@ -362,19 +396,21 @@ class feet_slip(_FootContactTerm):
         if not isinstance(asset_cfg, SceneEntityCfg):
             raise TypeError(f"{self.name} asset_cfg must be a SceneEntityCfg")
         asset = cast("Entity", env.scene[asset_cfg.name])
-        num_bodies = _num_selected_bodies(asset, asset_cfg)
-        if num_bodies != self.num_feet:
+        body_names = _selected_body_names(asset, asset_cfg)
+        if len(body_names) != self.num_feet:
             raise ValueError(
-                f"{self.name} asset_cfg selects {num_bodies} foot bodies but "
+                f"{self.name} asset_cfg selects {len(body_names)} foot bodies but "
                 f"sensor_groups declares {self.num_feet} feet"
             )
         self._asset_cfg = asset_cfg
+        self._entity_name = asset_cfg.name
+        self._body_names = body_names
 
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
         del params
         contact = self._contact(env)
-        _, velocities = _feet_pos_vel(self.name, env, self._asset_cfg, self.num_feet)
-        velocities = torch.as_tensor(velocities, device=contact.device, dtype=torch.float32)
+        body = _feet_body_tensor_view(self.name, env, self._asset_cfg, self._body_names)
+        velocities = body.lin_vel_w.to(device=contact.device, dtype=torch.float32)
         vel_xy_norm_sq = torch.sum(torch.square(velocities[:, :, :2]), dim=2)
         gate = _command_gate(env, self.name, self._command_name, self._command_threshold)
         cost = torch.sum(vel_xy_norm_sq * contact, dim=1)
@@ -465,7 +501,10 @@ class angular_momentum_penalty(SensorTermBase):
 
     def _read_tensor_values(self, env: ManagerBasedRlEnv) -> torch.Tensor:
         read_plan = getattr(env.scene, "_tensor_read_plan", None)
-        if read_plan is None:
+        names = self.tensor_sensor_names
+        if read_plan is None or not set(names).issubset(
+            set(read_plan.sensor_names.get("robot", ()))
+        ):
             values = _state(
                 self.name,
                 f"sensor '{self._sensor_name}'",

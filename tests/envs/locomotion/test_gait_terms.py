@@ -42,6 +42,13 @@ class _Scene:
                 body_link_lin_vel_w=np.zeros((num_envs, 2, 3), dtype=np.float32),
             ),
         )
+        self._tensor_read_plan = SimpleNamespace(
+            sensor_names={},
+            body_tensor_view=lambda entity, names=None: SimpleNamespace(
+                pos_w=torch.from_numpy(self.robot.data.body_link_pos_w).to(torch.float32),
+                lin_vel_w=torch.from_numpy(self.robot.data.body_link_lin_vel_w).to(torch.float32),
+            ),
+        )
 
     def __getitem__(self, name: str):
         if name != "robot":
