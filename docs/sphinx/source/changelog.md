@@ -46,6 +46,16 @@ PyPI 版本变更与未发布变更；发布日期采用 PyPI 上传日期。完
   唯一 NumPy leaf，base owner 只在显式 adapter/reset-host boundary 内消化
   legacy NumPy format（#2124、ADR-0015）。
 
+- The training-entry seed contract no longer mutates the legacy global NumPy RNG;
+  `algo.seed` seeds global Python and Torch RNGs only. Random interactive
+  playback also samples its actions with Torch instead of `np.random.uniform`.
+  This removes the last environment-owned global NumPy RNG semantics from
+  training (#2124).
+  训练入口 seed 契约不再修改 legacy 全局 NumPy RNG；`algo.seed` 只 seed
+  全局 Python 与 Torch RNG。随机 interactive playback 也改用 Torch 采样
+  action，不再调用 `np.random.uniform`。该变更移除训练中最后一个
+  environment-owned 全局 NumPy RNG 语义（#2124）。
+
 - Production training now enters through the sole Manager-Based factory and the
   scoped tensor backend set. Retired task owners, the WarpSAC config tree, and
   task-owned direct training environment classes were removed; fused task

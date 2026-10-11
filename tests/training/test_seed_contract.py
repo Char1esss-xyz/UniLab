@@ -35,16 +35,20 @@ def test_resolve_training_seed_prefers_algo_seed_over_legacy_training_seed():
     assert seed_info.effective_seed == 7
 
 
-def test_apply_training_seed_controls_python_numpy_and_torch_rng():
+def test_apply_training_seed_controls_python_and_torch_rng_without_numpy():
+    before = np.random.get_state()
     apply_training_seed(123, torch_runtime=True, cuda=True)
-    first = (random.random(), np.random.rand(), torch.rand(3))
+    first = (random.random(), torch.rand(3))
+    after_seed = np.random.get_state()
 
     apply_training_seed(123, torch_runtime=True, cuda=True)
-    second = (random.random(), np.random.rand(), torch.rand(3))
+    second = (random.random(), torch.rand(3))
 
     assert second[0] == first[0]
-    assert second[1] == first[1]
-    assert torch.equal(second[2], first[2])
+    assert torch.equal(second[1], first[1])
+    assert before[0] == after_seed[0]
+    np.testing.assert_array_equal(before[1], after_seed[1])
+    assert before[2:] == after_seed[2:]
 
 
 def test_apply_training_seed_rejects_negative_seed():
