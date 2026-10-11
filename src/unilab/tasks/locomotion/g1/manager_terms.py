@@ -723,15 +723,9 @@ class forward_progress(_LinVelTerm):
         linvel = self._read_linvel(env)
         command = _torch_values(command)
         linvel = _torch_values(linvel).to(device=command.device)
-        if isinstance(command, torch.Tensor):
-            if not isinstance(linvel, torch.Tensor):
-                linvel = torch.as_tensor(linvel, device=command.device)
-            commanded_speed = torch.clamp(command[:, 0], min=1e-6)
-            forward_speed = torch.clamp(linvel[:, 0], min=0.0)
-            return torch.clamp(forward_speed / commanded_speed, max=1.0).to(dtype=torch.float32)
-        commanded_speed = np.maximum(command[:, 0], 1e-6)
-        forward_speed = np.maximum(linvel[:, 0], 0.0)
-        return np.asarray(np.minimum(forward_speed / commanded_speed, 1.0), dtype=np.float32)
+        commanded_speed = torch.clamp(command[:, 0], min=1e-6)
+        forward_speed = torch.clamp(linvel[:, 0], min=0.0)
+        return torch.clamp(forward_speed / commanded_speed, max=1.0).to(dtype=torch.float32)
 
 
 def _term_command_name(term: str, params: dict[str, Any]) -> str:
@@ -751,17 +745,10 @@ class under_speed(_LinVelTerm):
         linvel = self._read_linvel(env)
         command = _torch_values(command)
         linvel = _torch_values(linvel).to(device=command.device)
-        if isinstance(command, torch.Tensor):
-            if not isinstance(linvel, torch.Tensor):
-                linvel = torch.as_tensor(linvel, device=command.device)
-            commanded_speed = torch.clamp(command[:, 0], min=1e-6)
-            forward_speed = torch.clamp(linvel[:, 0], min=0.0)
-            gap = torch.clamp(command[:, 0] - forward_speed, min=0.0)
-            return (gap / commanded_speed).to(dtype=torch.float32)
-        commanded_speed = np.maximum(command[:, 0], 1e-6)
-        forward_speed = np.maximum(linvel[:, 0], 0.0)
-        gap = np.maximum(command[:, 0] - forward_speed, 0.0)
-        return np.asarray(gap / commanded_speed, dtype=np.float32)
+        commanded_speed = torch.clamp(command[:, 0], min=1e-6)
+        forward_speed = torch.clamp(linvel[:, 0], min=0.0)
+        gap = torch.clamp(command[:, 0] - forward_speed, min=0.0)
+        return (gap / commanded_speed).to(dtype=torch.float32)
 
 
 class g1_tilt_exceeded(_UpvectorTerm):
@@ -777,11 +764,8 @@ class g1_tilt_exceeded(_UpvectorTerm):
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
         del params
         upvector = self._read_upvector(env)
-        if isinstance(upvector, torch.Tensor):
-            z = torch.clamp(upvector[:, 2], min=-1.0, max=1.0)
-            return torch.acos(z) > self._max_tilt_rad
-        tilt = np.arccos(np.clip(upvector[:, 2], -1.0, 1.0))
-        return np.asarray(tilt > self._max_tilt_rad, dtype=np.bool_)
+        z = torch.clamp(_torch_values(upvector)[:, 2], min=-1.0, max=1.0)
+        return torch.acos(z) > self._max_tilt_rad
 
 
 class g1_base_height_below_minimum(ManagerTermBase):
