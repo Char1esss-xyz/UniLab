@@ -564,19 +564,20 @@ def test_variant_ablation_table_pairs_each_head_with_preceding_base() -> None:
     assert "1.500x" in table
 
 
-def test_numpy_random_profiler_times_generator_bound_calls() -> None:
+def test_numpy_random_profiler_times_legacy_module_calls() -> None:
     import numpy as np
 
     profiler = bench._NumpyRandomProfiler()
-    generator = np.random.default_rng(17)
-    proxy = profiler.bind_generator(generator)
+    original_uniform = np.random.uniform
+    profiler.install()
 
     profiler.begin_step()
-    proxy.uniform(-1.0, 1.0, (2,))
-    proxy.integers(0, 3, (2,))
-    profiler.end_step()
+    try:
+        np.random.uniform(-1.0, 1.0, (2,))
+    finally:
+        profiler.end_step()
+        profiler.uninstall()
 
-    assert profiler.step_calls == 2
+    assert profiler.step_calls == 1
     assert profiler.step_ms >= 0.0
-    assert isinstance(proxy.bit_generator, np.random.BitGenerator)
-    assert profiler.restore_generator() is generator
+    assert np.random.uniform is original_uniform

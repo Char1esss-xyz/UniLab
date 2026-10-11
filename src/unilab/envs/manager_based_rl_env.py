@@ -341,7 +341,7 @@ class ManagerBasedRlEnv(TorchEnv):
         super().__init__(cfg, backend, num_envs, device=runtime_device)
         actual_seed = cfg.seed if cfg.seed is not None else secrets.randbits(63)
         cfg.seed = actual_seed
-        self._torch_rng_owner = TorchManagerRng(device=self.device)
+        self._torch_rng_owner = TorchManagerRng(device=self.device).manual_seed(actual_seed)
         self.torch_rng = self._torch_rng_owner
         self._torch_generator = self._torch_rng_owner.generator if self._torch_rng_owner else None
         self._reward_log_names: tuple[str, ...] = ()
