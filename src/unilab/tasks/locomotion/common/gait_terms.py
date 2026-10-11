@@ -512,13 +512,10 @@ class angular_momentum_penalty(SensorTermBase):
         if read_plan is None or not set(names).issubset(
             set(read_plan.sensor_names.get("robot", ()))
         ):
-            values = _state(
-                self.name,
-                f"sensor '{self._sensor_name}'",
-                self._read(self._sensor, self.name),
-                (env.num_envs, 3),
+            raise NotImplementedError(
+                f"Manager term '{self.name}' requires its named sensors "
+                f"{names} in the packed Torch read plan"
             )
-            return _torch_state(values)
         entity = env.scene["robot"]
         value = read_plan.sensor_tensor_views(entity, self.tensor_sensor_names).values[
             self._sensor_name
@@ -640,13 +637,10 @@ class foot_contact_forces(_FootContactTerm):
         if read_plan is None or not set(names).issubset(
             set(read_plan.sensor_names.get("robot", ()))
         ):
-            values = _state(
-                self.name,
-                "foot contact forces",
-                self._read(self._view, self.name),
-                (env.num_envs, self._flat_width),
+            raise NotImplementedError(
+                f"Manager term '{self.name}' requires its named sensors "
+                f"{names} in the packed Torch read plan"
             )
-            return _torch_state(values)
         entity = env.scene["robot"]
         values = read_plan.sensor_tensor_views(entity, names).values
         forces = torch.cat([values[name] for name in names], dim=1)

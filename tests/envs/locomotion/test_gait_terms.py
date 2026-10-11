@@ -42,6 +42,9 @@ class _Scene:
                 body_link_lin_vel_w=np.zeros((num_envs, 2, 3), dtype=np.float32),
             ),
         )
+        self.refresh_tensor_read_plan()
+
+    def refresh_tensor_read_plan(self) -> None:
         self._tensor_read_plan = SimpleNamespace(
             sensor_names={"robot": tuple(self.contacts)},
             sensor_tensor_views=lambda entity, names: SimpleNamespace(
@@ -289,6 +292,7 @@ def test_feet_slip_matches_mjlab_contact_weighted_xy_speed() -> None:
 def test_angular_momentum_penalty_matches_mjlab_squared_norm() -> None:
     scene = _Scene()
     scene.contacts["angmom"] = np.array([[1.0, 2.0, 3.0], [-0.5, 0.0, 0.25]], dtype=np.float32)
+    scene.refresh_tensor_read_plan()
     env = _env(scene)
     term = _term(gait_terms.angular_momentum_penalty, env, sensor_name="angmom")
     np.testing.assert_allclose(term(env), [14.0, 0.3125], rtol=1e-6)
@@ -302,14 +306,7 @@ def test_self_collision_cost_counts_active_pairs() -> None:
         "self_trunk_right": np.array([[0.0], [0.0]], dtype=np.float32),
         "self_legs": np.array([[1.0], [1.0]], dtype=np.float32),
     }
-    scene._tensor_read_plan = SimpleNamespace(
-        sensor_names={"robot": tuple(scene.contacts)},
-        sensor_tensor_views=lambda entity, names: SimpleNamespace(
-            values={
-                name: torch.from_numpy(scene.contacts[name]).to(torch.float32) for name in names
-            }
-        ),
-    )
+    scene.refresh_tensor_read_plan()
     env = _env(scene)
     term = _term(
         gait_terms.self_collision_cost,
@@ -521,6 +518,23 @@ def test_foot_contact_forces_log_compressed_in_group_order() -> None:
     np.testing.assert_allclose(values[0, 3:6], 0.0, atol=1e-8)
     np.testing.assert_allclose(values[0, 6:9], [0.0, np.log1p(2.0), 0.0], rtol=1e-6)
     np.testing.assert_allclose(values[1], 0.0, atol=1e-8)
+
+
+def test_common_gait_terms_fail_closed_without_packed_sensor_reads() -> None:
+    scene = _Scene()
+    scene.contacts["angmom"] = np.zeros((2, 3), dtype=np.float32)
+    for name in (*LEFT, *RIGHT):
+        scene.contacts[name] = np.zeros((2, 3), dtype=np.float32)
+    scene.refresh_tensor_read_plan()
+    env = _env(scene)
+    angular = _term(gait_terms.angular_momentum_penalty, env, sensor_name="angmom")
+    forces = _term(gait_terms.foot_contact_forces, env, sensor_groups=GROUPS)
+    scene._tensor_read_plan.sensor_names = {"robot": ("unrelated",)}
+
+    with pytest.raises(NotImplementedError, match="named sensors"):
+        angular(env)
+    with pytest.raises(NotImplementedError, match="named sensors"):
+        forces(env)
 
 
 def test_foot_contact_forces_rejects_scalar_found_sensors() -> None:
