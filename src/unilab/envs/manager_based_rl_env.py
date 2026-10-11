@@ -1116,16 +1116,30 @@ class ManagerBasedRlEnv(TorchEnv):
                 "declare a post-substep hook."
             )
 
-        if self._cfg.sim_substeps > 1 and self.action_manager.requires_substep_state_feedback:
-            raise NotImplementedError(
-                "ManagerBasedRlEnv Torch lifecycle P1 does not support state-feedback "
-                "actions on every physics substep"
-            )
-
     def _configure_action_control(self) -> None:
-        # Tensor Manager stepping consumes one control tensor per control step in
-        # P1; multi-substep state feedback fails closed during validation.
         return
+
+    def _step_physics(self, ctrl: torch.Tensor) -> dict | None:
+        if not self.action_manager.requires_substep_state_feedback:
+            return super()._step_physics(ctrl)
+        result: dict | None = None
+        timing: dict[str, float] = {}
+        for substep in range(self._cfg.sim_substeps):
+            if substep:
+                self.scene._invalidate_state_reads()
+                read_plan = self.scene._tensor_read_plan
+                if read_plan is not None and self.action_manager.uses_tensor_state_packet:
+                    read_plan.refresh()
+                self.action_manager.apply_action()
+                ctrl = self._control_to_backend_boundary()
+                self._validate_control(ctrl)
+            result = self._backend.step_tensor(ctrl, 1)
+            if result is not None:
+                for name, value in result.get("timing", {}).items():
+                    timing[name] = timing.get(name, 0.0) + value
+        if result is not None:
+            result["timing"] = timing
+        return result
 
     def _control_to_backend_boundary(self) -> torch.Tensor:
         """Return the contiguous authoritative Torch control tensor."""

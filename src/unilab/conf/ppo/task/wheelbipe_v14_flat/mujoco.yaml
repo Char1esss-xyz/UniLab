@@ -1,0 +1,332 @@
+# @package _global_
+training:
+  task_name: WheelbipeV14Flat
+  sim_backend: mujoco
+env:
+  scene:
+    model_file: src/unilab/assets/robots/wheelbipe_v14/scene_flat.xml
+    default_keyframe_name: home
+    entities:
+      robot:
+        root_body_name: base_link
+        body_names:
+        - base_link
+        - gimbal_yaw_link
+        - gimbal_pitch_link
+        - left_bottom1_guide_link
+        - left_bottom2_guide_link
+        - left_bottom3_guide_link
+        - left_bottom4_guide_link
+        - left_front1_guide_link
+        - left_front1_link
+        - left_front2_link
+        - left_front3_link
+        - left_front4_link
+        - left_front_guide_link
+        - left_rear1_link
+        - left_rear2_link
+        - left_rear2_guide_link
+        - left_wheel_link
+        - left_spring1_link
+        - left_spring2_link
+        - left_rear_guide_link
+        - right_bottom1_guide_link
+        - right_bottom2_guide_link
+        - right_bottom3_guide_link
+        - right_bottom4_guide_link
+        - right_front1_guide_link
+        - right_front1_link
+        - right_front2_link
+        - right_front3_link
+        - right_front4_link
+        - right_front_guide_link
+        - right_rear1_link
+        - right_rear2_link
+        - right_rear2_guide_link
+        - right_wheel_link
+        - right_spring1_link
+        - right_spring2_link
+        - right_rear_guide_link
+        joint_names:
+        - gimbal_yaw_joint
+        - gimbal_pitch_joint
+        - left_bottom1_guide_joint
+        - left_bottom2_guide_joint
+        - left_bottom3_guide_joint
+        - left_bottom4_guide_joint
+        - left_front1_guide_joint
+        - left_front1_joint
+        - left_front2_joint
+        - left_front3_joint
+        - left_front4_joint
+        - left_front_guide_joint
+        - left_rear1_joint
+        - left_rear2_joint
+        - left_rear2_guide_joint
+        - left_wheel_joint
+        - left_spring1_joint
+        - left_spring2_joint
+        - left_rear_guide_joint
+        - right_bottom1_guide_joint
+        - right_bottom2_guide_joint
+        - right_bottom3_guide_joint
+        - right_bottom4_guide_joint
+        - right_front1_guide_joint
+        - right_front1_joint
+        - right_front2_joint
+        - right_front3_joint
+        - right_front4_joint
+        - right_front_guide_joint
+        - right_rear1_joint
+        - right_rear2_joint
+        - right_rear2_guide_joint
+        - right_wheel_joint
+        - right_spring1_joint
+        - right_spring2_joint
+        - right_rear_guide_joint
+        actuator_names:
+        - gimbal_yaw_joint
+        - gimbal_pitch_joint
+        - left_bottom1_guide_joint
+        - left_bottom2_guide_joint
+        - left_bottom3_guide_joint
+        - left_bottom4_guide_joint
+        - left_front1_guide_joint
+        - left_front1_joint
+        - left_front2_joint
+        - left_front3_joint
+        - left_front4_joint
+        - left_front_guide_joint
+        - left_rear1_joint
+        - left_rear2_joint
+        - left_rear2_guide_joint
+        - left_wheel_joint
+        - left_spring1_joint
+        - left_spring2_joint
+        - left_rear_guide_joint
+        - right_bottom1_guide_joint
+        - right_bottom2_guide_joint
+        - right_bottom3_guide_joint
+        - right_bottom4_guide_joint
+        - right_front1_guide_joint
+        - right_front1_joint
+        - right_front2_joint
+        - right_front3_joint
+        - right_front4_joint
+        - right_front_guide_joint
+        - right_rear1_joint
+        - right_rear2_joint
+        - right_rear2_guide_joint
+        - right_wheel_joint
+        - right_spring1_joint
+        - right_spring2_joint
+        - right_rear_guide_joint
+        geom_names:
+        - base_link_collision_0
+        - gimbal_yaw_link_collision_0
+        - gimbal_pitch_link_collision_0
+        - left_bottom1_guide_link_collision_0
+        - left_bottom2_guide_link_collision_0
+        - left_bottom3_guide_link_collision_0
+        - left_bottom4_guide_link_collision_0
+        - left_front1_guide_link_collision_0
+        - left_front1_link_collision_0
+        - left_front2_link_collision_0
+        - left_front3_link_collision_0
+        - left_front4_link_collision_0
+        - left_front_guide_link_collision_0
+        - left_rear1_link_collision_0
+        - left_rear2_link_collision_0
+        - left_rear2_guide_link_collision_0
+        - left_wheel_link_collision_0
+        - left_spring1_link_collision_0
+        - left_spring2_link_collision_0
+        - left_rear_guide_link_collision_0
+        - right_bottom1_guide_link_collision_0
+        - right_bottom2_guide_link_collision_0
+        - right_bottom3_guide_link_collision_0
+        - right_bottom4_guide_link_collision_0
+        - right_front1_guide_link_collision_0
+        - right_front1_link_collision_0
+        - right_front2_link_collision_0
+        - right_front3_link_collision_0
+        - right_front4_link_collision_0
+        - right_front_guide_link_collision_0
+        - right_rear1_link_collision_0
+        - right_rear2_link_collision_0
+        - right_rear2_guide_link_collision_0
+        - right_wheel_link_collision_0
+        - right_spring1_link_collision_0
+        - right_spring2_link_collision_0
+        - right_rear_guide_link_collision_0
+  sim_dt: 0.005
+  ctrl_dt: 0.02
+  max_episode_seconds: 20.0
+  manager_torch_device: cpu
+  policy_observation_group: policy
+  critic_observation_group: critic
+  actions:
+    motors:
+      _target_: unilab.tasks.locomotion.wheelbipe_v14.controller.WheelbipeMotorCfg
+      entity_name: robot
+      domain_randomization: true
+      observation_noise: true
+      delays: true
+      steps_per_iteration: ${algo.num_steps_per_env}
+  observations:
+    policy:
+      terms:
+        state:
+          func: unilab.tasks.locomotion.wheelbipe_v14.controller.observe
+          params:
+            group: policy
+    critic:
+      terms:
+        state:
+          func: unilab.tasks.locomotion.wheelbipe_v14.controller.observe
+          params:
+            group: critic
+  events:
+    reset_robot:
+      func: unilab.tasks.locomotion.wheelbipe_v14.controller.reset_robot
+      mode: reset
+    advance_commands:
+      func: unilab.tasks.locomotion.wheelbipe_v14.controller.advance_commands
+      mode: step
+  terminations:
+    fallen:
+      func: unilab.tasks.locomotion.wheelbipe_v14.controller.terminated
+    time_out:
+      func: unilab.tasks.locomotion.wheelbipe_v14.controller.time_out
+      time_out: true
+reward:
+  termination:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -200.0
+    params:
+      name: termination
+  leg_joint_acc:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -5.0e-07
+    params:
+      name: leg_joint_acc
+  leg_joint_vel:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -0.005
+    params:
+      name: leg_joint_vel
+  joint_torque:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -0.0001
+    params:
+      name: joint_torque
+  wheel_acc:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -1.0e-08
+    params:
+      name: wheel_acc
+  wheel_vel:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -1.0e-05
+    params:
+      name: wheel_vel
+  wheel_power:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -0.0001
+    params:
+      name: wheel_power
+  lin_vel_z:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -0.5
+    params:
+      name: lin_vel_z
+  ang_vel_xy:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -0.05
+    params:
+      name: ang_vel_xy
+  action_smoothness_leg:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -0.05
+    params:
+      name: action_smoothness_leg
+  action_rate:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -0.01
+    params:
+      name: action_rate
+  action_smoothness_wheel:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -0.01
+    params:
+      name: action_smoothness_wheel
+  flat_orientation_y_v:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -2.0
+    params:
+      name: flat_orientation_y_v
+  flat_orientation_y_exp:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: 1.0
+    params:
+      name: flat_orientation_y_exp
+  flat_orientation_x_v:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -2.0
+    params:
+      name: flat_orientation_x_v
+  flat_orientation_x_exp:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: 1.0
+    params:
+      name: flat_orientation_x_exp
+  track_lin_vel_xy:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: 1.0
+    params:
+      name: track_lin_vel_xy
+  track_lin_vel_xy_square:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -1.0
+    params:
+      name: track_lin_vel_xy_square
+  track_ang_vel_z:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: 1.0
+    params:
+      name: track_ang_vel_z
+  track_ang_vel_z_square:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -1.0
+    params:
+      name: track_ang_vel_z_square
+  stand_still_lin_vel:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -1.0
+    params:
+      name: stand_still_lin_vel
+  track_height_exp_tight:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: 1.0
+    params:
+      name: track_height_exp_tight
+  track_height_square:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -1.0
+    params:
+      name: track_height_square
+  no_fork:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -1.0
+    params:
+      name: no_fork
+  no_fork_square:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -1.0
+    params:
+      name: no_fork_square
+  undesired_contact:
+    func: unilab.tasks.locomotion.wheelbipe_v14.controller.reward
+    weight: -2.0
+    params:
+      name: undesired_contact

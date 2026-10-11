@@ -274,7 +274,7 @@ class TorchEnv(ABEnv):
 
         phase = time.perf_counter()
         phase_cpu = _cpu_time()
-        backend_result = self._backend.step_tensor(ctrl, self._cfg.sim_substeps)
+        backend_result = self._step_physics(ctrl)
         step_core_ms = (time.perf_counter() - phase) * 1000.0
         step_core_cpu_ms = (_cpu_time() - phase_cpu) * 1000.0
 
@@ -846,6 +846,9 @@ class TorchEnv(ABEnv):
 
     def close(self) -> None:
         self._backend.cleanup_scene_assets()
+
+    def _step_physics(self, ctrl: torch.Tensor) -> dict | None:
+        return cast(dict | None, self._backend.step_tensor(ctrl, self._cfg.sim_substeps))
 
     @abc.abstractmethod
     def apply_action(self, actions: torch.Tensor, state: TorchEnvState) -> torch.Tensor:

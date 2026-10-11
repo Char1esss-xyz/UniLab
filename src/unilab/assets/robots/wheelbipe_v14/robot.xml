@@ -1,0 +1,372 @@
+<mujoco model="wheelbipe_v14_2">
+  <asset>
+    <mesh name="left_spring1_link_mesh_0" file="left_spring1_link_mesh_0.obj" />
+    <mesh name="left_spring2_link_mesh_0" file="left_spring2_link_mesh_0.obj" />
+    <mesh name="right_spring1_link_mesh_0" file="right_spring1_link_mesh_0.obj" />
+    <mesh name="right_spring2_link_mesh_0" file="right_spring2_link_mesh_0.obj" />
+  </asset>
+  <compiler angle="radian" autolimits="true" inertiafromgeom="false" />
+  <default>
+    <geom contype="2" conaffinity="1" condim="3" friction="0.8 0.005 0.0001" rgba="0.35 0.42 0.48 1" />
+  </default>
+  <worldbody>
+    <body name="base_link" pos="0 0 0" quat="1 0 0 0">
+      <inertial pos="0.005821189843 0.001681759953 -0.04109210148" quat="0.9998155236 0.001654887223 0.01696489193 0.008861424401" mass="15.96301746" diaginertia="0.1986725777 0.2984277606 0.3741846681" />
+      <freejoint name="root" />
+      <site name="imu" size="0.001" />
+      <geom name="base_link_collision_0" pos="0.005111100152 0.001173999975 -0.04551019892" quat="-0.002401349368 0.9998765473 0.01405346554 0.006604823136" type="box" size="0.1012499946 0.04500000358 0.0200000006" />
+      <body name="gimbal_yaw_link" pos="0 0 0.05494999886" quat="1 0 0 0">
+        <inertial pos="-0.03271200135 0.03968299925 0.1020879969" quat="0.9318514466 -0.1581775099 -0.3140332699 -0.08953186125" mass="1.113589406" diaginertia="0.0155639071 0.01454108302 0.002957409946" />
+        <joint name="gimbal_yaw_joint" type="hinge" pos="0 0 0" axis="0 0 1" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="gimbal_yaw_link_collision_0" pos="0 0 0.0700000003" quat="1 0 0 0" type="cylinder" size="0.05000000075 0.05000000075" />
+        <body name="gimbal_pitch_link" pos="-0.05848500133 -0.05530000106 0.1800000072" quat="1 0 0 0">
+          <inertial pos="0.0779369995 0.02220599912 -0.04392800108" quat="0.9349393845 0.09222016484 0.3270177841 0.102191925" mass="2.909481287" diaginertia="0.00998504553 0.01965145394 0.02274420299" />
+          <joint name="gimbal_pitch_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" range="-1.200000014 0" />
+          <geom name="gimbal_pitch_link_collision_0" pos="0.1222416013 0.02768480033 -0.0553651005" quat="0.9743700624 0 0.2249510649 0" type="box" size="0.06124999791 0.0200000006 0.01664374505" />
+        </body>
+      </body>
+      <body name="left_bottom1_guide_link" pos="0.125 -0.1459999979 -0.1569959968" quat="1 0 0 0">
+        <inertial pos="0 0.2829999924 -4.300000001e-06" quat="1 0 0 0" mass="0.01281149965" diaginertia="1.099999963e-06 1.600000019e-06 1.099999963e-06" />
+        <joint name="left_bottom1_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="left_bottom1_guide_link_collision_0" pos="0 0.2800000012 0" quat="0.7071068287 -0.7071067337 0 0" type="cylinder" size="0.01499999966 0.009999999776" />
+      </body>
+      <body name="left_bottom2_guide_link" pos="0.02500000037 0.1459999979 -0.1589999944" quat="1 0 0 0">
+        <inertial pos="0 -0.008999999613 0" quat="1 0 0 0" mass="0.01281149965" diaginertia="1.099999963e-06 1.600000019e-06 1.099999963e-06" />
+        <joint name="left_bottom2_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="left_bottom2_guide_link_collision_0" pos="0 -0.009999999776 0" quat="0.7071068287 -0.7071067337 0 0" type="cylinder" size="0.01499999966 0.009999999776" />
+      </body>
+      <body name="left_bottom3_guide_link" pos="-0.02500000037 0.1459999979 -0.1589999944" quat="1 0 0 0">
+        <inertial pos="0 -0.008999999613 0" quat="1 0 0 0" mass="0.01281149965" diaginertia="1.099999963e-06 1.600000019e-06 1.099999963e-06" />
+        <joint name="left_bottom3_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="left_bottom3_guide_link_collision_0" pos="0 -0.009999999776 0" quat="0.7071068287 -0.7071067337 0 0" type="cylinder" size="0.01499999966 0.009999999776" />
+      </body>
+      <body name="left_bottom4_guide_link" pos="-0.125 0.1459999979 -0.1570000052" quat="1 0 0 0">
+        <inertial pos="0 -0.008999999613 0" quat="1 0 0 0" mass="0.01281149965" diaginertia="1.099999963e-06 1.600000019e-06 1.099999963e-06" />
+        <joint name="left_bottom4_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="left_bottom4_guide_link_collision_0" pos="0 -0.009999999776 0" quat="0.7071068287 -0.7071067337 0 0" type="cylinder" size="0.01499999966 0.009999999776" />
+      </body>
+      <body name="left_front1_guide_link" pos="0.185709998 0.1150000021 -0.1437249929" quat="1 0 0 0">
+        <inertial pos="0 -0.008999999613 0" quat="1 0 0 0" mass="0.01281149965" diaginertia="1.099999963e-06 1.600000019e-06 1.099999963e-06" />
+        <joint name="left_front1_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="left_front1_guide_link_collision_0" pos="0 -0.009999999776 0" quat="0.7071068287 -0.7071067337 0 0" type="cylinder" size="0.01499999966 0.009999999776" />
+      </body>
+      <body name="left_front1_link" pos="0 0.1844999939 0" quat="1 0 0 0">
+        <inertial pos="0.02531605028 -0.01412400045 0.002932019997" quat="0.9943298697 -0.005198656116 -0.05740251392 0.0893651545" mass="0.1366592348" diaginertia="4.732392699e-05 0.0002399341902 0.0002235218708" />
+        <joint name="left_front1_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.015795" damping="0" frictionloss="0" limited="false" />
+        <geom name="left_front1_link_collision_0" pos="0.04704029858 -0.01250000019 6.400000075e-06" quat="1 0 0 0" type="box" size="0.01141267286 0.0003125000093 0.001619937442" />
+        <body name="left_front2_link" pos="0.1126499996 -0.009499999695 0.01304600015" quat="1 0 0 0">
+          <inertial pos="-0.05440000072 -0.004471499939 -0.03997559845" quat="0.9502049685 0 -0.3116256297 0" mass="0.03289410099" diaginertia="1.424478228e-06 8.24000017e-05 8.147551853e-05" />
+          <joint name="left_front2_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" range="-0.9999999451 0.09999999284" />
+          <geom name="left_front2_link_collision_0" pos="-0.05439310148 -0.004999999888 -0.03997049853" quat="0.6718153358 0.6719383181 -0.2203878074 0.2204365342" type="box" size="0.01273863269 0.0003133580662 5.006201513e-05" />
+          <body name="left_front3_link" pos="-0.1087900028 0.006500000134 -0.07994099706" quat="1 0 0 0">
+            <inertial pos="-0.08446089923 -0.002949000103 0.05159780011" quat="0.9585037827 0 0.2850798368 0" mass="0.04435100034" diaginertia="3.153969828e-06 0.0001642999996 0.000161346019" />
+            <joint name="left_front3_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" range="-0.09999999284 0.9999999451" />
+            <geom name="left_front3_link_collision_0" pos="-0.08613029867 -0.002974000061 0.05063819885" quat="0.6807054281 -0.671211 0.2087847726 0.2062154995" type="box" size="0.02450895859 0.0006542067496 2.140935048e-05" />
+            <body name="left_front4_link" pos="-0.16505 -0.006500000134 0.1138600037" quat="1 0 0 0">
+              <inertial pos="-0.04831729829 -0.004529499914 0" quat="1 0 0 0" mass="0.02710979991" diaginertia="1.300000008e-06 3.880000077e-05 3.790000119e-05" />
+              <joint name="left_front4_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" range="-1.99999989 0.09999999284" />
+              <geom name="left_front4_link_collision_0" pos="-0.04837390035 -0.004999999888 0" quat="1 0 0 0" type="box" size="0.007375306367 4.999999776e-05 0.0003089277583" />
+              <site name="left_f4r2_joint_0" pos="-0.09660000354 0 0" size="0.001" />
+            </body>
+            <site name="left_f3r1_joint_0" pos="-0.1172600016 -0.007499999832 0.0668900013" size="0.001" />
+          </body>
+        </body>
+      </body>
+      <body name="left_front_guide_link" pos="0.255490005 0.1150000021 -0.1319999993" quat="1 0 0 0">
+        <inertial pos="0 -0.008999999613 0" quat="1 0 0 0" mass="0.01281149965" diaginertia="1.099999963e-06 1.600000019e-06 1.099999963e-06" />
+        <joint name="left_front_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="left_front_guide_link_collision_0" pos="0 -0.009999999776 0" quat="0.7071068287 -0.7071067337 0 0" type="cylinder" size="0.01499999966 0.009999999776" />
+      </body>
+      <body name="left_rear1_link" pos="0 0.173999995 0" quat="1 0 0 0">
+        <inertial pos="-0.1187810302 -0.002794620115 0.0008622599998" quat="0.9995464087 0.005774057005 0.006733586546 -0.02878329344" mass="0.3825444281" diaginertia="0.0001229886839 0.00274748751 0.002666153479" />
+        <joint name="left_rear1_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.015795" damping="0" frictionloss="0" limited="false" />
+        <geom name="left_rear1_link_collision_0" pos="-0.09934139997 0.001000000047 -0.009739699773" quat="1 0 0 0" type="box" size="0.0350284922 0.0003380000139 0.003646016296" />
+        <body name="left_rear2_link" pos="-0.2099999934 0.01449999958 0" quat="1 0 0 0">
+          <inertial pos="0.08464615792 -0.005239550024 -0.04743406922" quat="0.9624900818 -0.01059320848 0.2711045742 -0.001719910419" mass="0.3113571703" diaginertia="0.0001169704774 0.003548780689 0.003444838803" />
+          <joint name="left_rear2_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" range="-0.01999999857 1.200000014" />
+          <geom name="left_rear2_link_collision_0" pos="0.08853899688 -0.006001300178 -0.03999999911" quat="0.6849543452 0.678498433 0.1886472514 -0.186787676" type="box" size="0.05119999771 0.00306235322 8.157604547e-05" />
+          <body name="left_rear2_guide_link" pos="-0.03746800125 0.006500000134 -0.01400600001" quat="1 0 0 0">
+            <inertial pos="0 -0.01250000019 0" quat="1 0 0 0" mass="0.0099767996" diaginertia="6.000000212e-07 1.200000042e-06 6.000000212e-07" />
+            <joint name="left_rear2_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+            <geom name="left_rear2_guide_link_collision_0" pos="-8.699999853e-06 -0.01250000019 0" quat="0.7071068287 0.7071067337 0 0" type="cylinder" size="0.01499999966 0.01499850024" />
+          </body>
+          <body name="left_wheel_link" pos="0.2166099995 0.03355000168 -0.1248300001" quat="1 0 0 0">
+            <inertial pos="0.000153489993 -0.02021921985 -0.0001146900031" quat="0.9516403675 -0.0006436031545 0.3072074652 -0.00196029176" mass="0.5120844245" diaginertia="0.0003902161552 0.0006330640754 0.0003882597084" />
+            <joint name="left_wheel_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0" damping="0" frictionloss="0" limited="false" />
+            <geom name="left_wheel_link_collision_0" pos="0 -0.01250000019 0" quat="0.7071068287 0.7071067337 0 0" type="cylinder" size="0.05999999866 0.01250000019" />
+          </body>
+          <site name="left_f4r2_joint_1" pos="-0.04777999967 -0.01350000035 0.04695999995" size="0.001" />
+          <site name="left_s2r2_joint_1" pos="0.04758000001 -0.01405000035 -0.02291999944" size="0.001" />
+        </body>
+        <body name="left_spring1_link" pos="0.002355099889 -0.002000000095 -0.04493800178" quat="1 0 0 0">
+          <inertial pos="-0.04524770007 -0.005216999911 0.006045300048" quat="0.9951205254 -0.07224339992 0.06675960124 0.007706264034" mass="0.03052180074" diaginertia="3.884602506e-07 1.780252205e-05 1.770901508e-05" />
+          <joint name="left_spring1_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" range="-0.4999999725 0.09999999284" />
+          <geom name="left_spring1_link_collision_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_spring1_link_mesh_0" />
+          <body name="left_spring2_link" pos="-0.03294999897 -0.00549999997 0.004402200226" quat="0.9977956662 0 0.06636119798 0">
+            <inertial pos="-0.06883840263 0.0001673999941 0" quat="0.9999998808 0 0 -0.0005030174507" mass="0.09239889681" diaginertia="2.499899665e-06 0.0001019000993 0.0001017000031" />
+            <joint name="left_spring2_joint" type="slide" pos="0 0 0" axis="-1 0 0" armature="0.0001" damping="0" frictionloss="0" range="-0.01499999966 0.06499999762" />
+            <geom name="left_spring2_link_collision_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_spring2_link_mesh_0" />
+            <site name="left_s2r2_joint_0" pos="-0.1330000013 0.007950000465 0" size="0.001" />
+          </body>
+        </body>
+        <site name="left_f3r1_joint_1" pos="-0.1133999974 0 0" size="0.001" />
+      </body>
+      <body name="left_rear_guide_link" pos="-0.2404700071 0.09899999946 -0.1369999945" quat="1 0 0 0">
+        <inertial pos="0 -0.008999999613 0" quat="1 0 0 0" mass="0.01281149965" diaginertia="1.099999963e-06 1.600000019e-06 1.099999963e-06" />
+        <joint name="left_rear_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="left_rear_guide_link_collision_0" pos="0 -0.009999999776 0" quat="0.7071068287 -0.7071067337 0 0" type="cylinder" size="0.01499999966 0.009999999776" />
+      </body>
+      <body name="right_bottom1_guide_link" pos="0.125 -0.1459999979 -0.1569959968" quat="1 0 0 0">
+        <inertial pos="0 0.008999999613 0" quat="1 0 0 0" mass="0.01281149965" diaginertia="1.099999963e-06 1.600000019e-06 1.099999963e-06" />
+        <joint name="right_bottom1_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="right_bottom1_guide_link_collision_0" pos="0 0.009999999776 0" quat="0.7071068287 -0.7071067337 0 0" type="cylinder" size="0.01499999966 0.009999999776" />
+      </body>
+      <body name="right_bottom2_guide_link" pos="0.02500000037 -0.1459999979 -0.1589960009" quat="1 0 0 0">
+        <inertial pos="0 0.008999999613 0" quat="1 0 0 0" mass="0.01281149965" diaginertia="1.099999963e-06 1.600000019e-06 1.099999963e-06" />
+        <joint name="right_bottom2_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="right_bottom2_guide_link_collision_0" pos="0 0.009999999776 0" quat="0.7071068287 -0.7071067337 0 0" type="cylinder" size="0.01499999966 0.009999999776" />
+      </body>
+      <body name="right_bottom3_guide_link" pos="-0.02500000037 -0.1459999979 -0.1589960009" quat="1 0 0 0">
+        <inertial pos="0 0.008999999613 0" quat="1 0 0 0" mass="0.01281149965" diaginertia="1.099999963e-06 1.600000019e-06 1.099999963e-06" />
+        <joint name="right_bottom3_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="right_bottom3_guide_link_collision_0" pos="0 0.009999999776 0" quat="0.7071068287 -0.7071067337 0 0" type="cylinder" size="0.01499999966 0.009999999776" />
+      </body>
+      <body name="right_bottom4_guide_link" pos="-0.125 -0.1459999979 -0.1569959968" quat="1 0 0 0">
+        <inertial pos="0 0.008999999613 0" quat="1 0 0 0" mass="0.01281149965" diaginertia="1.099999963e-06 1.600000019e-06 1.099999963e-06" />
+        <joint name="right_bottom4_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="right_bottom4_guide_link_collision_0" pos="0 0.009999999776 0" quat="0.7071068287 -0.7071067337 0 0" type="cylinder" size="0.01499999966 0.009999999776" />
+      </body>
+      <body name="right_front1_guide_link" pos="0.185709998 -0.1150000021 -0.1437249929" quat="1 0 0 0">
+        <inertial pos="0 0.008999999613 0" quat="1 0 0 0" mass="0.01281149965" diaginertia="1.099999963e-06 1.600000019e-06 1.099999963e-06" />
+        <joint name="right_front1_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="right_front1_guide_link_collision_0" pos="0 0.009999999776 0" quat="0.7071068287 -0.7071067337 0 0" type="cylinder" size="0.01499999966 0.009999999776" />
+      </body>
+      <body name="right_front1_link" pos="0 -0.1844999939 0" quat="1 0 0 0">
+        <inertial pos="0.02850116976 0.01065212023 0.003300909884" quat="0.9965775013 0.003482608125 -0.05752493069 -0.0592638813" mass="0.1213870421" diaginertia="3.74759511e-05 0.0002219007147 0.000198963302" />
+        <joint name="right_front1_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.015795" damping="0" frictionloss="0" limited="false" />
+        <geom name="right_front1_link_collision_0" pos="0.04704029858 0.01250000019 6.400000075e-06" quat="1 0 0 0" type="box" size="0.01141267286 0.0003125000093 0.001619937442" />
+        <body name="right_front2_link" pos="0.1126499996 0.009499999695 0.01304600015" quat="1 0 0 0">
+          <inertial pos="-0.05438610166 0.004471499939 -0.03996539861" quat="0.9502049685 0 -0.3116256297 0" mass="0.03289410099" diaginertia="1.424478228e-06 8.24000017e-05 8.147551853e-05" />
+          <joint name="right_front2_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" range="-0.9999999451 0.09999999284" />
+          <geom name="right_front2_link_collision_0" pos="-0.05439310148 0.004999999888 -0.03997049853" quat="-0.6718685031 0.6719964277 0.2202257408 0.2202592535" type="box" size="0.01273863269 0.0003133580662 5.006201513e-05" />
+          <body name="right_front3_link" pos="-0.1087900028 -0.006500000134 -0.07994099706" quat="1 0 0 0">
+            <inertial pos="-0.08446089923 0.002949000103 0.05159780011" quat="0.9585037827 0 0.2850798368 0" mass="0.04435100034" diaginertia="3.153969828e-06 0.0001642999996 0.000161346019" />
+            <joint name="right_front3_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" range="-0.09999999284 0.9999999451" />
+            <geom name="right_front3_link_collision_0" pos="-0.08619920164 0.002990199951 0.05055810139" quat="0.6807104945 0.6708122745 0.2095937659 -0.2066750306" type="box" size="0.02450878044 0.0006481907974 2.138252916e-05" />
+            <body name="right_front4_link" pos="-0.16505 0.006500000134 0.1138600037" quat="1 0 0 0">
+              <inertial pos="-0.04831729829 0.004529499914 0" quat="1 0 0 0" mass="0.02710979991" diaginertia="1.300000008e-06 3.880000077e-05 3.790000119e-05" />
+              <joint name="right_front4_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" range="-1.99999989 0.09999999284" />
+              <geom name="right_front4_link_collision_0" pos="-0.04837390035 0.004999999888 0" quat="1 0 0 0" type="box" size="0.007375306367 4.999999776e-05 0.0003089277583" />
+              <site name="right_f4r2_joint_0" pos="-0.09660000354 0 0" size="0.001" />
+            </body>
+            <site name="right_f3r1_joint_0" pos="-0.1172600016 0.007499999832 0.0668900013" size="0.001" />
+          </body>
+        </body>
+      </body>
+      <body name="right_front_guide_link" pos="0.255490005 -0.1150000021 -0.1319999993" quat="1 0 0 0">
+        <inertial pos="0 0.008999999613 0" quat="1 0 0 0" mass="0.01281149965" diaginertia="1.099999963e-06 1.600000019e-06 1.099999963e-06" />
+        <joint name="right_front_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="right_front_guide_link_collision_0" pos="0 0.009999999776 0" quat="0.7071068287 -0.7071067337 0 0" type="cylinder" size="0.01499999966 0.009999999776" />
+      </body>
+      <body name="right_rear1_link" pos="0 -0.173999995 0" quat="1 0 0 0">
+        <inertial pos="-0.1187810227 0.002794620115 0.0008622599998" quat="0.9995464087 -0.005774057005 0.006733586546 0.02878329344" mass="0.3825444281" diaginertia="0.0001229886839 0.00274748751 0.002666153479" />
+        <joint name="right_rear1_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.015795" damping="0" frictionloss="0" limited="false" />
+        <geom name="right_rear1_link_collision_0" pos="-0.09934139997 -0.001000000047 -0.009739699773" quat="1 0 0 0" type="box" size="0.0350284922 0.0003380000139 0.003646016296" />
+        <body name="right_rear2_link" pos="-0.2099999934 -0.01449999958 0" quat="1 0 0 0">
+          <inertial pos="0.0840112716 0.005456829909 -0.04698266089" quat="0.9624966383 0.01134247147 0.2710506618 0.001809380832" mass="0.3029695749" diaginertia="0.0001151063698 0.003538112622 0.00343472138" />
+          <joint name="right_rear2_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" range="-0.01999999857 1.200000014" />
+          <geom name="right_rear2_link_collision_0" pos="0.08855000138 0.006015399937 -0.03999999911" quat="0.6830726266 -0.6806999653 0.1879563852 0.1863645386" type="box" size="0.05119999771 0.003017984809 8.012640494e-05" />
+          <body name="right_rear2_guide_link" pos="-0.03746780008 -0.006500000134 -0.01400579978" quat="1 0 0 0">
+            <inertial pos="0 0.01250000019 0" quat="1 0 0 0" mass="0.0099767996" diaginertia="6.000000212e-07 1.200000042e-06 6.000000212e-07" />
+            <joint name="right_rear2_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+            <geom name="right_rear2_guide_link_collision_0" pos="-8.699999853e-06 0.01250000019 0" quat="0.7071068287 0.7071067337 0 0" type="cylinder" size="0.01499999966 0.01499850024" />
+          </body>
+          <body name="right_wheel_link" pos="0.2166099995 -0.03355000168 -0.1248300001" quat="1 0 0 0">
+            <inertial pos="0.0001778599981 0.02021921985 -7.128000289e-05" quat="0.9802502394 0.0003924518533 0.1977507174 0.002011452569" mass="0.5120844245" diaginertia="0.0003902103053 0.0006330641336 0.0003882555757" />
+            <joint name="right_wheel_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0" damping="0" frictionloss="0" limited="false" />
+            <geom name="right_wheel_link_collision_0" pos="0 0.01250000019 0" quat="0.7071068287 0.7071067337 0 0" type="cylinder" size="0.05999999866 0.01250000019" />
+          </body>
+          <site name="right_f4r2_joint_1" pos="-0.04777999967 0.01350000035 0.04695999995" size="0.001" />
+          <site name="right_s2r2_joint_1" pos="0.04758000001 0.01405000035 -0.02291999944" size="0.001" />
+        </body>
+        <body name="right_spring1_link" pos="0.002355099889 0.001949999947 -0.0449382998" quat="1 0 0 0">
+          <inertial pos="-0.04524770007 0.005216999911 0.006045300048" quat="0.9951205254 0.07224339992 0.06675960124 -0.007706264034" mass="0.03052180074" diaginertia="3.884602506e-07 1.780252205e-05 1.770901508e-05" />
+          <joint name="right_spring1_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" range="-0.4999999725 0.09999999284" />
+          <geom name="right_spring1_link_collision_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_spring1_link_mesh_0" />
+          <body name="right_spring2_link" pos="-0.03294999897 0.00549999997 0.004402200226" quat="0.9977956662 0 0.06636119798 0">
+            <inertial pos="-0.06883840263 -0.0001673999941 0" quat="0.9999998808 0 0 0.0005030174507" mass="0.09239889681" diaginertia="2.499899665e-06 0.0001019000993 0.0001017000031" />
+            <joint name="right_spring2_joint" type="slide" pos="0 0 0" axis="-1 0 0" armature="0.0001" damping="0" frictionloss="0" range="-0.01499999966 0.06499999762" />
+            <geom name="right_spring2_link_collision_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_spring2_link_mesh_0" />
+            <site name="right_s2r2_joint_0" pos="-0.1330000013 -0.007950000465 0" size="0.001" />
+          </body>
+        </body>
+        <site name="right_f3r1_joint_1" pos="-0.1133999974 0 0" size="0.001" />
+      </body>
+      <body name="right_rear_guide_link" pos="-0.2404700071 -0.09899999946 -0.1369999945" quat="1 0 0 0">
+        <inertial pos="0 0.008999999613 0" quat="1 0 0 0" mass="0.01281149965" diaginertia="1.099999963e-06 1.600000019e-06 1.099999963e-06" />
+        <joint name="right_rear_guide_joint" type="hinge" pos="0 0 0" axis="0 1 0" armature="0.0001" damping="0" frictionloss="0" limited="false" />
+        <geom name="right_rear_guide_link_collision_0" pos="0 0.009999999776 0" quat="0.7071068287 -0.7071067337 0 0" type="cylinder" size="0.01499999966 0.009999999776" />
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="gimbal_yaw_joint" joint="gimbal_yaw_joint" ctrllimited="true" ctrlrange="-2 2" />
+    <motor name="gimbal_pitch_joint" joint="gimbal_pitch_joint" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="left_bottom1_guide_joint" joint="left_bottom1_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="left_bottom2_guide_joint" joint="left_bottom2_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="left_bottom3_guide_joint" joint="left_bottom3_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="left_bottom4_guide_joint" joint="left_bottom4_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="left_front1_guide_joint" joint="left_front1_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="left_front1_joint" joint="left_front1_joint" ctrllimited="true" ctrlrange="-40 40" />
+    <motor name="left_front2_joint" joint="left_front2_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="left_front3_joint" joint="left_front3_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="left_front4_joint" joint="left_front4_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="left_front_guide_joint" joint="left_front_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="left_rear1_joint" joint="left_rear1_joint" ctrllimited="true" ctrlrange="-40 40" />
+    <motor name="left_rear2_joint" joint="left_rear2_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="left_rear2_guide_joint" joint="left_rear2_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="left_wheel_joint" joint="left_wheel_joint" ctrllimited="true" ctrlrange="-5 5" />
+    <motor name="left_spring1_joint" joint="left_spring1_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="left_spring2_joint" joint="left_spring2_joint" ctrllimited="true" ctrlrange="-1000 1000" />
+    <motor name="left_rear_guide_joint" joint="left_rear_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="right_bottom1_guide_joint" joint="right_bottom1_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="right_bottom2_guide_joint" joint="right_bottom2_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="right_bottom3_guide_joint" joint="right_bottom3_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="right_bottom4_guide_joint" joint="right_bottom4_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="right_front1_guide_joint" joint="right_front1_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="right_front1_joint" joint="right_front1_joint" ctrllimited="true" ctrlrange="-40 40" />
+    <motor name="right_front2_joint" joint="right_front2_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="right_front3_joint" joint="right_front3_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="right_front4_joint" joint="right_front4_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="right_front_guide_joint" joint="right_front_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="right_rear1_joint" joint="right_rear1_joint" ctrllimited="true" ctrlrange="-40 40" />
+    <motor name="right_rear2_joint" joint="right_rear2_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="right_rear2_guide_joint" joint="right_rear2_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="right_wheel_joint" joint="right_wheel_joint" ctrllimited="true" ctrlrange="-5 5" />
+    <motor name="right_spring1_joint" joint="right_spring1_joint" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="right_spring2_joint" joint="right_spring2_joint" ctrllimited="true" ctrlrange="-1000 1000" />
+    <motor name="right_rear_guide_joint" joint="right_rear_guide_joint" ctrllimited="true" ctrlrange="-50 50" />
+  </actuator>
+  <sensor>
+    <contact name="contact_base_link" body1="base_link" data="force" reduce="netforce" />
+    <jointpos name="pos_gimbal_yaw_joint" joint="gimbal_yaw_joint" />
+    <jointvel name="vel_gimbal_yaw_joint" joint="gimbal_yaw_joint" />
+    <contact name="contact_gimbal_yaw_link" body1="gimbal_yaw_link" data="force" reduce="netforce" />
+    <jointpos name="pos_gimbal_pitch_joint" joint="gimbal_pitch_joint" />
+    <jointvel name="vel_gimbal_pitch_joint" joint="gimbal_pitch_joint" />
+    <contact name="contact_gimbal_pitch_link" body1="gimbal_pitch_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_bottom1_guide_joint" joint="left_bottom1_guide_joint" />
+    <jointvel name="vel_left_bottom1_guide_joint" joint="left_bottom1_guide_joint" />
+    <contact name="contact_left_bottom1_guide_link" body1="left_bottom1_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_bottom2_guide_joint" joint="left_bottom2_guide_joint" />
+    <jointvel name="vel_left_bottom2_guide_joint" joint="left_bottom2_guide_joint" />
+    <contact name="contact_left_bottom2_guide_link" body1="left_bottom2_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_bottom3_guide_joint" joint="left_bottom3_guide_joint" />
+    <jointvel name="vel_left_bottom3_guide_joint" joint="left_bottom3_guide_joint" />
+    <contact name="contact_left_bottom3_guide_link" body1="left_bottom3_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_bottom4_guide_joint" joint="left_bottom4_guide_joint" />
+    <jointvel name="vel_left_bottom4_guide_joint" joint="left_bottom4_guide_joint" />
+    <contact name="contact_left_bottom4_guide_link" body1="left_bottom4_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_front1_guide_joint" joint="left_front1_guide_joint" />
+    <jointvel name="vel_left_front1_guide_joint" joint="left_front1_guide_joint" />
+    <contact name="contact_left_front1_guide_link" body1="left_front1_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_front1_joint" joint="left_front1_joint" />
+    <jointvel name="vel_left_front1_joint" joint="left_front1_joint" />
+    <contact name="contact_left_front1_link" body1="left_front1_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_front2_joint" joint="left_front2_joint" />
+    <jointvel name="vel_left_front2_joint" joint="left_front2_joint" />
+    <contact name="contact_left_front2_link" body1="left_front2_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_front3_joint" joint="left_front3_joint" />
+    <jointvel name="vel_left_front3_joint" joint="left_front3_joint" />
+    <contact name="contact_left_front3_link" body1="left_front3_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_front4_joint" joint="left_front4_joint" />
+    <jointvel name="vel_left_front4_joint" joint="left_front4_joint" />
+    <contact name="contact_left_front4_link" body1="left_front4_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_front_guide_joint" joint="left_front_guide_joint" />
+    <jointvel name="vel_left_front_guide_joint" joint="left_front_guide_joint" />
+    <contact name="contact_left_front_guide_link" body1="left_front_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_rear1_joint" joint="left_rear1_joint" />
+    <jointvel name="vel_left_rear1_joint" joint="left_rear1_joint" />
+    <contact name="contact_left_rear1_link" body1="left_rear1_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_rear2_joint" joint="left_rear2_joint" />
+    <jointvel name="vel_left_rear2_joint" joint="left_rear2_joint" />
+    <contact name="contact_left_rear2_link" body1="left_rear2_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_rear2_guide_joint" joint="left_rear2_guide_joint" />
+    <jointvel name="vel_left_rear2_guide_joint" joint="left_rear2_guide_joint" />
+    <contact name="contact_left_rear2_guide_link" body1="left_rear2_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_wheel_joint" joint="left_wheel_joint" />
+    <jointvel name="vel_left_wheel_joint" joint="left_wheel_joint" />
+    <contact name="contact_left_wheel_link" body1="left_wheel_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_spring1_joint" joint="left_spring1_joint" />
+    <jointvel name="vel_left_spring1_joint" joint="left_spring1_joint" />
+    <contact name="contact_left_spring1_link" body1="left_spring1_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_spring2_joint" joint="left_spring2_joint" />
+    <jointvel name="vel_left_spring2_joint" joint="left_spring2_joint" />
+    <contact name="contact_left_spring2_link" body1="left_spring2_link" data="force" reduce="netforce" />
+    <jointpos name="pos_left_rear_guide_joint" joint="left_rear_guide_joint" />
+    <jointvel name="vel_left_rear_guide_joint" joint="left_rear_guide_joint" />
+    <contact name="contact_left_rear_guide_link" body1="left_rear_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_bottom1_guide_joint" joint="right_bottom1_guide_joint" />
+    <jointvel name="vel_right_bottom1_guide_joint" joint="right_bottom1_guide_joint" />
+    <contact name="contact_right_bottom1_guide_link" body1="right_bottom1_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_bottom2_guide_joint" joint="right_bottom2_guide_joint" />
+    <jointvel name="vel_right_bottom2_guide_joint" joint="right_bottom2_guide_joint" />
+    <contact name="contact_right_bottom2_guide_link" body1="right_bottom2_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_bottom3_guide_joint" joint="right_bottom3_guide_joint" />
+    <jointvel name="vel_right_bottom3_guide_joint" joint="right_bottom3_guide_joint" />
+    <contact name="contact_right_bottom3_guide_link" body1="right_bottom3_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_bottom4_guide_joint" joint="right_bottom4_guide_joint" />
+    <jointvel name="vel_right_bottom4_guide_joint" joint="right_bottom4_guide_joint" />
+    <contact name="contact_right_bottom4_guide_link" body1="right_bottom4_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_front1_guide_joint" joint="right_front1_guide_joint" />
+    <jointvel name="vel_right_front1_guide_joint" joint="right_front1_guide_joint" />
+    <contact name="contact_right_front1_guide_link" body1="right_front1_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_front1_joint" joint="right_front1_joint" />
+    <jointvel name="vel_right_front1_joint" joint="right_front1_joint" />
+    <contact name="contact_right_front1_link" body1="right_front1_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_front2_joint" joint="right_front2_joint" />
+    <jointvel name="vel_right_front2_joint" joint="right_front2_joint" />
+    <contact name="contact_right_front2_link" body1="right_front2_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_front3_joint" joint="right_front3_joint" />
+    <jointvel name="vel_right_front3_joint" joint="right_front3_joint" />
+    <contact name="contact_right_front3_link" body1="right_front3_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_front4_joint" joint="right_front4_joint" />
+    <jointvel name="vel_right_front4_joint" joint="right_front4_joint" />
+    <contact name="contact_right_front4_link" body1="right_front4_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_front_guide_joint" joint="right_front_guide_joint" />
+    <jointvel name="vel_right_front_guide_joint" joint="right_front_guide_joint" />
+    <contact name="contact_right_front_guide_link" body1="right_front_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_rear1_joint" joint="right_rear1_joint" />
+    <jointvel name="vel_right_rear1_joint" joint="right_rear1_joint" />
+    <contact name="contact_right_rear1_link" body1="right_rear1_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_rear2_joint" joint="right_rear2_joint" />
+    <jointvel name="vel_right_rear2_joint" joint="right_rear2_joint" />
+    <contact name="contact_right_rear2_link" body1="right_rear2_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_rear2_guide_joint" joint="right_rear2_guide_joint" />
+    <jointvel name="vel_right_rear2_guide_joint" joint="right_rear2_guide_joint" />
+    <contact name="contact_right_rear2_guide_link" body1="right_rear2_guide_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_wheel_joint" joint="right_wheel_joint" />
+    <jointvel name="vel_right_wheel_joint" joint="right_wheel_joint" />
+    <contact name="contact_right_wheel_link" body1="right_wheel_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_spring1_joint" joint="right_spring1_joint" />
+    <jointvel name="vel_right_spring1_joint" joint="right_spring1_joint" />
+    <contact name="contact_right_spring1_link" body1="right_spring1_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_spring2_joint" joint="right_spring2_joint" />
+    <jointvel name="vel_right_spring2_joint" joint="right_spring2_joint" />
+    <contact name="contact_right_spring2_link" body1="right_spring2_link" data="force" reduce="netforce" />
+    <jointpos name="pos_right_rear_guide_joint" joint="right_rear_guide_joint" />
+    <jointvel name="vel_right_rear_guide_joint" joint="right_rear_guide_joint" />
+    <contact name="contact_right_rear_guide_link" body1="right_rear_guide_link" data="force" reduce="netforce" />
+    <gyro name="gyro" site="imu" />
+    <velocimeter name="local_linvel" site="imu" />
+    <framezaxis name="upvector" objtype="site" objname="imu" reftype="body" refname="base_link" />
+  </sensor>
+  <equality>
+    <connect name="left_f3r1_joint" site1="left_f3r1_joint_0" site2="left_f3r1_joint_1" solref="0.01 1" solimp="0.95 0.99 0.001" />
+    <connect name="left_f4r2_joint" site1="left_f4r2_joint_0" site2="left_f4r2_joint_1" solref="0.01 1" solimp="0.95 0.99 0.001" />
+    <connect name="left_s2r2_joint" site1="left_s2r2_joint_0" site2="left_s2r2_joint_1" solref="0.01 1" solimp="0.95 0.99 0.001" />
+    <connect name="right_f3r1_joint" site1="right_f3r1_joint_0" site2="right_f3r1_joint_1" solref="0.01 1" solimp="0.95 0.99 0.001" />
+    <connect name="right_f4r2_joint" site1="right_f4r2_joint_0" site2="right_f4r2_joint_1" solref="0.01 1" solimp="0.95 0.99 0.001" />
+    <connect name="right_s2r2_joint" site1="right_s2r2_joint_0" site2="right_s2r2_joint_1" solref="0.01 1" solimp="0.95 0.99 0.001" />
+  </equality>
+</mujoco>

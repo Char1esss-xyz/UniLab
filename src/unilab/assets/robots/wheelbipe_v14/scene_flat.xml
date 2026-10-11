@@ -1,0 +1,10 @@
+<mujoco model="wheelbipe_v14_flat">
+  <include file="robot.xml" />
+  <option timestep="0.005" integrator="implicitfast" iterations="100" cone="elliptic" />
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 0.1" contype="1" conaffinity="2" friction="1 0.005 0.0001" rgba="0.8 0.8 0.8 1" />
+  </worldbody>
+  <keyframe>
+    <key name="home" qpos="0 0 0.38 1 0 0 0 0 -0.5 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" />
+  </keyframe>
+</mujoco>
