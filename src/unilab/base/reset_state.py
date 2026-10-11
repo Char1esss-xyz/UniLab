@@ -41,7 +41,7 @@ from unisim.dr.types import (
 from unisim.entities import EntityStatePatch, SceneResetRequest
 from unisim.scene_layout import CompiledSceneLayout
 
-from unilab.utils.rotation import np_quat_apply_inverse
+from unilab.base.rotation import np_quat_apply_inverse
 
 _RANDOMIZATION_TERM_TAILS: dict[str, tuple[int, ...]] = {
     RESET_TERM_BODY_INERTIA: (3,),

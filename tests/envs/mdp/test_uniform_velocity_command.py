@@ -11,6 +11,7 @@ import torch
 from unisim.backend.base import SimBackend
 
 from unilab.base.entity import EntityCfg, EntityScene
+from unilab.base.rotation import np_yaw_to_quat
 from unilab.envs.mdp import UniformVelocityCommand, UniformVelocityCommandCfg
 from unilab.envs.mdp.commands import (
     UniformVelocityCommand as ExportedUniformVelocityCommand,
@@ -21,7 +22,6 @@ from unilab.envs.mdp.commands import (
 from unilab.managers import CommandManager
 from unilab.managers._types import ManagerBasedRlEnv
 from unilab.managers.torch_rng import TorchManagerRng
-from unilab.utils.rotation import np_yaw_to_quat
 
 
 class _Backend:

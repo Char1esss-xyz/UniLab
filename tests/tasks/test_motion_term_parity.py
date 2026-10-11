@@ -9,18 +9,18 @@ import numpy as np
 import pytest
 import torch
 
+from unilab.base.rotation import (
+    np_quat_apply_inverse_batched,
+    np_quat_error_magnitude_squared_batched,
+    np_quat_from_euler_xyz,
+    np_quat_mul_batched,
+)
 from unilab.managers import RewardTermCfg, TerminationTermCfg
 from unilab.tasks.motion_tracking.common import manager_terms as mt
 from unilab.tasks.motion_tracking.common.motion_math import (
     _adaptive_failure_alpha,
     _adaptive_failure_counts,
     _gravity_z_in_body,
-)
-from unilab.utils.rotation import (
-    np_quat_apply_inverse_batched,
-    np_quat_error_magnitude_squared_batched,
-    np_quat_from_euler_xyz,
-    np_quat_mul_batched,
 )
 
 
