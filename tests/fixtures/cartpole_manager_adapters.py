@@ -136,32 +136,31 @@ def reset_joints_by_offset(
     """Write uniformly offset joint defaults through the reset transaction."""
     if env_ids is None:
         raise ValueError("reset_joints_by_offset requires concrete environment IDs")
-    host_ids = env_ids.detach().cpu().numpy()
     position_lower, position_upper = numeric_range(position_range, label="position_range")
     velocity_lower, velocity_upper = numeric_range(velocity_range, label="velocity_range")
     asset = cast("Entity", env.scene[asset_cfg.name])
     joint_ids = asset_cfg.joint_ids
-    default_position = asset.data.default_joint_pos[host_ids][:, joint_ids]
-    default_velocity = asset.data.default_joint_vel[host_ids][:, joint_ids]
-    position = (
-        default_position
-        + env.torch_rng.uniform(
-            position_lower,
-            position_upper,
-            default_position.shape,
-        ).numpy()
+    default_position = asset.data.default_joint_pos_torch(env.device).index_select(0, env_ids)[
+        :, joint_ids
+    ]
+    default_velocity = asset.data.default_joint_vel_torch(env.device).index_select(0, env_ids)[
+        :, joint_ids
+    ]
+    position = default_position + env.torch_rng.uniform(
+        position_lower,
+        position_upper,
+        tuple(default_position.shape),
+        dtype=default_position.dtype,
     )
-    velocity = (
-        default_velocity
-        + env.torch_rng.uniform(
-            velocity_lower,
-            velocity_upper,
-            default_velocity.shape,
-        ).numpy()
+    velocity = default_velocity + env.torch_rng.uniform(
+        velocity_lower,
+        velocity_upper,
+        tuple(default_velocity.shape),
+        dtype=default_velocity.dtype,
     )
     asset.write_joint_state_to_sim(
-        position.astype(default_position.dtype, copy=False),
-        velocity.astype(default_velocity.dtype, copy=False),
+        position,
+        velocity,
         joint_ids=joint_ids,
         env_ids=env_ids,
     )

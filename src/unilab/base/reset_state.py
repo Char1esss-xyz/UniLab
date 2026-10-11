@@ -1247,8 +1247,8 @@ class ResetStateTransaction:
         env_ids: torch.Tensor,
         qpos_indices: np.ndarray,
         qvel_indices: np.ndarray,
-        position: np.ndarray,
-        velocity: np.ndarray,
+        position: torch.Tensor,
+        velocity: torch.Tensor,
         *,
         term_name: str,
     ) -> None:
