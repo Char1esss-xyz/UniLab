@@ -2070,7 +2070,7 @@ def reset_root_state_uniform(
     asset = cast("Entity", env.scene[asset_cfg.name])
     try:
         default_root_state = asset.data.default_root_state_torch(torch.device(env.device))
-        rows = torch.from_numpy(np.ascontiguousarray(ids, dtype=np.int64))
+        rows = ids.to(dtype=torch.int64)
         root_states = default_root_state.index_select(0, rows).clone()
     except NotImplementedError as exc:
         raise NotImplementedError(
