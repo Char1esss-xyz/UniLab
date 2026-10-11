@@ -1916,35 +1916,31 @@ class ApplyBodyImpulse(ManagerTermBase):
         # never clobbers another producer's staged forces.
         if bool(self._active.any() or expired.any()):
             self._entity.apply_body_wrench_to_sim(
-                self._active_forces.detach().cpu().numpy(),
-                self._active_torques.detach().cpu().numpy() if self._uses_torque else None,
+                self._active_forces.detach().cpu(),
+                self._active_torques.detach().cpu() if self._uses_torque else None,
                 self._backend_body_ids,
                 env_ids=None,
                 term_name="apply_body_impulse",
             )
 
     def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
-        host_ids = (
-            np.arange(self.num_envs, dtype=np.intp)
-            if env_ids is None
-            else np.arange(self.num_envs, dtype=np.intp)[env_ids]
-            if isinstance(env_ids, slice)
-            else resolve_env_ids(self._env, env_ids).numpy().astype(np.intp, copy=False)
-        )
-        active = self._active.detach().cpu().numpy()
-        was_active = np.flatnonzero(active[host_ids])
+        host_ids = resolve_env_ids(self._env, env_ids)
+        was_active = torch.nonzero(self._active.index_select(0, host_ids)).flatten()
         self._active[host_ids] = False
         self._active_forces[host_ids] = 0.0
         self._active_torques[host_ids] = 0.0
         self._time_remaining[host_ids] = 0.0
-        self._interval_time_left[host_ids] = self._sample_cooldown(host_ids.size)
-        if was_active.size:
-            zeros = np.zeros((len(was_active), self._backend_body_ids.size, 3), dtype=np.float64)
+        self._interval_time_left[host_ids] = self._sample_cooldown(host_ids.numel())
+        if was_active.numel():
+            zeros = torch.zeros(
+                (was_active.numel(), self._backend_body_ids.size, 3),
+                dtype=torch.float64,
+            )
             self._entity.apply_body_wrench_to_sim(
                 zeros,
-                zeros.copy() if self._uses_torque else None,
+                zeros.clone() if self._uses_torque else None,
                 self._backend_body_ids,
-                env_ids=torch.as_tensor(host_ids[was_active], dtype=torch.int64),
+                env_ids=host_ids.index_select(0, was_active),
                 term_name="apply_body_impulse",
             )
 
