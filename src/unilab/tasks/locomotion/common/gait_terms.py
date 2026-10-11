@@ -134,13 +134,16 @@ class _FootContactTerm(SensorTermBase):
         columns = starts
         self._flat_width = int(sum(self._view.dimensions))
         # Per-foot column groups in the flattened sensor layout.
-        self._columns: list[np.ndarray] = []
+        self._columns: list[torch.Tensor] = []
+        device = torch.device(getattr(env, "device", "cpu"))
         offset = 0
         for group in self._groups:
-            self._columns.append(columns[offset : offset + len(group)])
+            self._columns.append(
+                torch.from_numpy(columns[offset : offset + len(group)].copy()).to(device=device)
+            )
             offset += len(group)
         if len({len(group) for group in self._groups}) == 1:
-            self._group_columns = torch.from_numpy(np.stack(self._columns, axis=0))
+            self._group_columns = torch.stack(self._columns, dim=0)
         else:
             self._group_columns = None
 
@@ -190,10 +193,8 @@ class _FootContactTerm(SensorTermBase):
             contact = torch.as_tensor(contact, device=device)
         if self._group_columns is not None:
             return contact[:, self._group_columns.to(device)].any(dim=2)
-        feet = [
-            contact[:, torch.as_tensor(columns, device=device)].any(dim=1)
-            for columns in self._columns
-        ]
+        device_columns = [columns.to(device=device) for columns in self._columns]
+        feet = [contact[:, columns].any(dim=1) for columns in device_columns]
         return torch.stack(feet, dim=1)
 
 
