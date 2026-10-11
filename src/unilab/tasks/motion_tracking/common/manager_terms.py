@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Literal, cast
 
-import numpy as np
 import torch
 
 from unilab.envs.mdp.actions import JointPositionAction, JointPositionActionCfg
@@ -678,7 +678,7 @@ class MotionCommand(CommandTerm):
     def _make_motion_loader(
         self,
         motion_file: str | list[str],
-        body_indices: np.ndarray,
+        body_indices: Sequence[int],
     ) -> MotionLoader:
         """Materialize the profile-owned motion loader on the cold path."""
         return MotionLoader(motion_file, body_indices=body_indices)

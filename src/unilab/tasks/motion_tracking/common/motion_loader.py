@@ -151,7 +151,7 @@ def interpolate_motion(
 class MotionLoader:
     """Loads and provides access to motion data from NPZ files."""
 
-    def __init__(self, motion_file: str | Sequence[str], body_indices: np.ndarray | None = None):
+    def __init__(self, motion_file: str | Sequence[str], body_indices: Sequence[int] | None = None):
         """Initialize motion loader.
 
         Args:
