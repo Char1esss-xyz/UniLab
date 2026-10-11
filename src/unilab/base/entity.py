@@ -2865,7 +2865,7 @@ class Entity:
         actuator_ids: np.ndarray | Sequence[int] | slice | None = None,
         *,
         term_name: str,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, torch.Tensor, torch.Tensor]:
         """Bind selected actuator columns and immutable gain defaults on the cold path."""
         if self._reset_state is None:
             raise self._capability_error(
@@ -2890,9 +2890,7 @@ class Entity:
             backend_ids,
             term_name=f"{term_name}:{self.name}",
         )
-        bound_local_ids = np.array(local_ids, copy=True)
-        bound_local_ids.setflags(write=False)
-        return bound_local_ids, default_kp, default_kd
+        return local_ids, default_kp, default_kd
 
     def write_actuator_gains_to_sim(
         self,
@@ -3345,7 +3343,7 @@ class Entity:
         body_ids: np.ndarray | Sequence[int] | slice | None = None,
         *,
         term_name: str,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, torch.Tensor]:
         """Bind entity-local body columns and immutable default masses."""
         reset_state, local_ids, backend_ids = self._bind_body_randomization(
             body_ids,
@@ -3355,7 +3353,7 @@ class Entity:
             backend_ids,
             term_name=f"{term_name}:{self.name}",
         )
-        return self._readonly_local_binding(local_ids, defaults)
+        return local_ids, defaults
 
     def write_body_mass_to_sim(
         self,
@@ -3433,7 +3431,7 @@ class Entity:
         body_ids: np.ndarray | Sequence[int] | slice | None = None,
         *,
         term_name: str,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, torch.Tensor]:
         """Bind entity-local body columns and immutable inertial positions."""
         reset_state, local_ids, backend_ids = self._bind_body_randomization(
             body_ids,
@@ -3443,7 +3441,7 @@ class Entity:
             backend_ids,
             term_name=f"{term_name}:{self.name}",
         )
-        return self._readonly_local_binding(local_ids, defaults)
+        return local_ids, defaults
 
     def write_body_ipos_to_sim(
         self,
@@ -3521,7 +3519,7 @@ class Entity:
         body_ids: np.ndarray | Sequence[int] | slice | None = None,
         *,
         term_name: str,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, torch.Tensor]:
         """Bind entity-local body columns and authoritative default inertias.
 
         The backend returns either canonical or per-environment default rows;
@@ -3535,7 +3533,7 @@ class Entity:
             backend_ids,
             term_name=f"{term_name}:{self.name}",
         )
-        return self._readonly_local_binding(local_ids, defaults)
+        return local_ids, defaults
 
     def write_body_inertia_to_sim(
         self,

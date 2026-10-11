@@ -738,7 +738,7 @@ class ResetStateTransaction:
         body_ids: np.ndarray,
         *,
         term_name: str,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, torch.Tensor]:
         """Bind body-mass columns and immutable backend defaults on the cold path."""
         default = self._materialize_randomization_default(
             RESET_TERM_BODY_MASS,
@@ -756,14 +756,14 @@ class ResetStateTransaction:
             columns,
             field=RESET_TERM_BODY_MASS,
         )
-        return self._readonly_binding(columns, selected)
+        return columns, self._torch_default_table(selected)
 
     def bind_body_ipos_write(
         self,
         body_ids: np.ndarray,
         *,
         term_name: str,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, torch.Tensor]:
         """Bind body inertial-position columns and immutable backend defaults."""
         default = self._materialize_randomization_default(
             RESET_TERM_BODY_IPOS,
@@ -781,14 +781,14 @@ class ResetStateTransaction:
             columns,
             field=RESET_TERM_BODY_IPOS,
         )
-        return self._readonly_binding(columns, selected)
+        return columns, self._torch_default_table(selected)
 
     def bind_body_inertia_write(
         self,
         body_ids: np.ndarray,
         *,
         term_name: str,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, torch.Tensor]:
         """Bind body-inertia columns and authoritative backend defaults.
 
         UniSim returns either a canonical ``(nbody, 3)`` table or a per-world
@@ -815,7 +815,7 @@ class ResetStateTransaction:
             columns,
             field=RESET_TERM_BODY_INERTIA,
         )
-        return self._readonly_binding(columns, selected)
+        return columns, self._torch_default_table(selected)
 
     def bind_gravity_write(self, *, term_name: str) -> np.ndarray:
         """Bind the immutable backend gravity vector on the cold path."""
@@ -1014,7 +1014,7 @@ class ResetStateTransaction:
         actuator_ids: np.ndarray,
         *,
         term_name: str,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, torch.Tensor, torch.Tensor]:
         """Resolve gain mutation capability and immutable defaults on the cold path."""
         columns = self._validate_columns(
             actuator_ids,
@@ -1025,21 +1025,21 @@ class ResetStateTransaction:
         self._materialize_default_actuator_gains(term_name)
         assert self._default_kp is not None
         assert self._default_kd is not None
-        selected_kp = _readonly_array(
+        selected_kp = self._torch_default_table(
             self._select_randomization_default_columns(
                 self._default_kp,
                 columns,
                 field=RESET_TERM_KP,
             )
         )
-        selected_kd = _readonly_array(
+        selected_kd = self._torch_default_table(
             self._select_randomization_default_columns(
                 self._default_kd,
                 columns,
                 field=RESET_TERM_KD,
             )
         )
-        return _readonly_array(columns), selected_kp, selected_kd
+        return columns, selected_kp, selected_kd
 
     def write_actuator_gains(
         self,
