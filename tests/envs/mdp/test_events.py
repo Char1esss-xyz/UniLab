@@ -1404,18 +1404,22 @@ def test_uniform_root_state_invalid_ranges_fail_before_write(
 
 
 class _BiasEntity:
-    def __init__(self, num_envs: int, num_joints: int) -> None:
+    def __init__(self, num_envs: int, num_joints: int, *, tensor_control: bool) -> None:
         self.num_joints = num_joints
         self.joint_names = [f"joint_{index}" for index in range(num_joints)]
         self._bias = np.zeros((num_envs, num_joints), dtype=np.float32)
+        self._bias_tensor = torch.from_numpy(self._bias)
+        self.control_buffer = (
+            torch.zeros((num_envs, num_joints), dtype=torch.float32) if tensor_control else None
+        )
         self.data = self
+
+    def update_encoder_bias_tensor(self, rows, columns, values) -> None:
+        self._bias_tensor[rows[:, None], columns[None, :]] = values
 
     @property
     def encoder_bias(self) -> np.ndarray:
-        return self._bias
-
-    def update_encoder_bias(self, rows, columns, values) -> None:
-        self._bias[np.ix_(rows, np.asarray(columns, dtype=np.intp))] = values
+        return self._bias_tensor.numpy()
 
     def find_joints(self, names: list[str]) -> list[int]:
         return [self.joint_names.index(name) for name in names]
@@ -1431,14 +1435,20 @@ class _BiasScene:
         return self._entity
 
 
-def _bias_env(num_envs: int = 3, num_joints: int = 4, seed: int = 7) -> ManagerBasedRlEnv:
+def _bias_env(
+    num_envs: int = 3,
+    num_joints: int = 4,
+    seed: int = 7,
+    *,
+    tensor_control: bool = True,
+) -> ManagerBasedRlEnv:
     return cast(
         ManagerBasedRlEnv,
         SimpleNamespace(
             num_envs=num_envs,
             device=torch.device("cpu"),
             torch_rng=TorchManagerRng.seeded(seed),
-            scene=_BiasScene(_BiasEntity(num_envs, num_joints)),
+            scene=_BiasScene(_BiasEntity(num_envs, num_joints, tensor_control=tensor_control)),
         ),
     )
 
@@ -1471,6 +1481,30 @@ def test_randomize_encoder_bias_samples_selected_joints_within_range() -> None:
     np.testing.assert_array_equal(bias[:, [0, 2]], np.zeros((3, 2)))
     assert np.all(np.abs(bias[[0, 2]][:, [1, 3]]) <= 0.02)
     assert np.any(bias[[0, 2]][:, [1, 3]] != 0.0)
+
+
+def test_randomize_encoder_bias_fails_closed_without_torch_control_plane() -> None:
+    env = _bias_env(tensor_control=False)
+    manager = EventManager(
+        {
+            "bias": EventTermCfg(
+                func=mdp.randomize_encoder_bias,
+                mode="reset",
+                params={
+                    "bias_range": (-0.02, 0.02),
+                    "asset_cfg": SceneEntityCfg("robot", joint_ids=[1, 3]),
+                },
+            )
+        },
+        env,
+    )
+
+    with pytest.raises(NotImplementedError, match="Torch control plane"):
+        manager.apply(
+            mode="reset",
+            env_ids=torch.tensor([0, 2], dtype=torch.int64),
+            global_env_step_count=0,
+        )
 
 
 def test_randomize_encoder_bias_rejects_invalid_cfg_at_construction() -> None:
