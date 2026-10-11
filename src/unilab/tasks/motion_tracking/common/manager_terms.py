@@ -423,30 +423,33 @@ _RANGE_KEYS = ("x", "y", "z", "roll", "pitch", "yaw")
 _DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
 
 
-def _range_matrix(value: dict[str, tuple[float, float]], *, name: str) -> np.ndarray:
+def _range_matrix(value: dict[str, tuple[float, float]], *, name: str) -> torch.Tensor:
     unknown = sorted(set(value) - set(_RANGE_KEYS))
     if unknown:
         raise ValueError(f"{name} has unknown axes {unknown}")
     try:
-        ranges = np.asarray([value.get(key, (0.0, 0.0)) for key in _RANGE_KEYS], dtype=np.float64)
+        ranges = torch.tensor(
+            [value.get(key, (0.0, 0.0)) for key in _RANGE_KEYS],
+            dtype=torch.float64,
+        )
     except (TypeError, ValueError) as exc:
         raise TypeError(f"{name} must map axes to numeric (min, max) pairs") from exc
-    if ranges.shape != (6, 2) or not np.isfinite(ranges).all():
+    if tuple(ranges.shape) != (6, 2) or not bool(torch.isfinite(ranges).all()):
         raise ValueError(f"{name} must contain six finite (min, max) pairs")
-    if np.any(ranges[:, 0] > ranges[:, 1]):
+    if bool((ranges[:, 0] > ranges[:, 1]).any()):
         raise ValueError(f"{name} contains a minimum greater than its maximum")
-    ranges.setflags(write=False)
-    return ranges
+    return ranges.clone()
 
 
 def _pair(value: tuple[float, float], *, name: str) -> tuple[float, float]:
     try:
-        values = np.asarray(value, dtype=np.float64)
+        if isinstance(value, (str, bytes)) or len(tuple(value)) != 2:
+            raise ValueError(f"{name} must be a finite (min, max) pair")
+        lower, upper = float(value[0]), float(value[1])
     except (TypeError, ValueError) as exc:
         raise TypeError(f"{name} must be a numeric (min, max) pair") from exc
-    if values.shape != (2,) or not np.isfinite(values).all():
+    if not (math.isfinite(lower) and math.isfinite(upper)):
         raise ValueError(f"{name} must be a finite (min, max) pair")
-    lower, upper = float(values[0]), float(values[1])
     if lower > upper:
         raise ValueError(f"{name} minimum {lower} exceeds maximum {upper}")
     return lower, upper
@@ -605,18 +608,11 @@ class MotionCommand(CommandTerm):
             (self.num_envs, num_joints), dtype=torch.float32, device=self._device
         )
         self._env_origins = self._env.scene.env_origins_torch(self._device)
-        self._soft_joint_limits = torch.from_numpy(
-            np.ascontiguousarray(
-                self.robot.data.soft_joint_pos_limits,
-                dtype=np.float32,
-            )
-        ).to(device=self._device)
-        self._pose_range_torch = torch.from_numpy(
-            np.ascontiguousarray(self._pose_range, dtype=np.float32)
-        ).to(device=self._device)
-        self._velocity_range_torch = torch.from_numpy(
-            np.ascontiguousarray(self._velocity_range, dtype=np.float32)
-        ).to(device=self._device)
+        self._soft_joint_limits = self.robot.data.soft_joint_pos_limits_torch(self._device)
+        self._pose_range_torch = self._pose_range.to(device=self._device, dtype=torch.float32)
+        self._velocity_range_torch = self._velocity_range.to(
+            device=self._device, dtype=torch.float32
+        )
         self._joint_position_range_torch = torch.as_tensor(
             self._joint_position_range, device=self._device
         )
