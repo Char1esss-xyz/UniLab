@@ -128,6 +128,12 @@ def _exp(value: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
     return np.exp(value)
 
 
+def _torch_values(value: np.ndarray | torch.Tensor) -> torch.Tensor:
+    if isinstance(value, torch.Tensor):
+        return value.to(dtype=torch.float32)
+    return torch.from_numpy(np.ascontiguousarray(value)).to(dtype=torch.float32)
+
+
 def _values(value: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
     if isinstance(value, torch.Tensor):
         return value.to(dtype=torch.float32)
@@ -715,6 +721,8 @@ class forward_progress(_LinVelTerm):
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
         command = _command(env, self.name, _term_command_name(self.name, params))
         linvel = self._read_linvel(env)
+        command = _torch_values(command)
+        linvel = _torch_values(linvel).to(device=command.device)
         if isinstance(command, torch.Tensor):
             if not isinstance(linvel, torch.Tensor):
                 linvel = torch.as_tensor(linvel, device=command.device)
@@ -741,6 +749,8 @@ class under_speed(_LinVelTerm):
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
         command = _command(env, self.name, _term_command_name(self.name, params))
         linvel = self._read_linvel(env)
+        command = _torch_values(command)
+        linvel = _torch_values(linvel).to(device=command.device)
         if isinstance(command, torch.Tensor):
             if not isinstance(linvel, torch.Tensor):
                 linvel = torch.as_tensor(linvel, device=command.device)
