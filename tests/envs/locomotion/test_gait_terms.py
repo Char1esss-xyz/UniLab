@@ -83,20 +83,20 @@ class _Scene:
 
 
 class _Commands:
-    def __init__(self, command: np.ndarray | None = None) -> None:
+    def __init__(self, command: torch.Tensor | None = None) -> None:
         self.command = (
-            np.array([[0.8, 0.0, 0.0], [0.8, 0.0, 0.0]], dtype=np.float32)
+            torch.tensor([[0.8, 0.0, 0.0], [0.8, 0.0, 0.0]], dtype=torch.float32)
             if command is None
             else command
         )
 
-    def get_command(self, name: str) -> np.ndarray:
+    def get_command(self, name: str) -> torch.Tensor:
         if name != "twist":
             raise KeyError(name)
         return self.command
 
 
-def _env(scene: _Scene | None = None, command: np.ndarray | None = None) -> ManagerBasedRlEnv:
+def _env(scene: _Scene | None = None, command: torch.Tensor | None = None) -> ManagerBasedRlEnv:
     return cast(
         ManagerBasedRlEnv,
         SimpleNamespace(
@@ -166,7 +166,7 @@ def test_feet_air_time_window_excludes_long_flight() -> None:
 
 def test_feet_air_time_command_gate_and_reset() -> None:
     scene = _Scene()
-    standing = np.zeros((2, 3), dtype=np.float32)
+    standing = torch.zeros((2, 3), dtype=torch.float32)
     env = _env(scene, command=standing)
     term = _term(
         gait_terms.feet_air_time,
@@ -219,7 +219,7 @@ def test_feet_clearance_matches_mjlab_velocity_weighted_error() -> None:
     expected = np.abs(np.array([0.12, 0.05]) - 0.1) * np.array([0.5, 0.5])
     np.testing.assert_allclose(cost, [np.sum(expected)] * 2, rtol=1e-6)
 
-    standing = _env(scene, command=np.zeros((2, 3), dtype=np.float32))
+    standing = _env(scene, command=torch.zeros((2, 3), dtype=torch.float32))
     standing_term = _term(
         gait_terms.feet_clearance,
         standing,
@@ -259,7 +259,7 @@ def test_feet_swing_height_charges_peak_error_at_landing() -> None:
     np.testing.assert_allclose(term(env), [0.0, 0.0])
 
     term.reset()
-    standing = _env(scene, command=np.zeros((2, 3), dtype=np.float32))
+    standing = _env(scene, command=torch.zeros((2, 3), dtype=torch.float32))
     scene.set_foot_contact(0, False)
     scene.set_foot_contact(1, False)
     scene.robot.data.body_link_pos_w[:, 0, 2] = 0.15
@@ -285,7 +285,7 @@ def test_feet_slip_matches_mjlab_contact_weighted_xy_speed() -> None:
     # Only the left foot is in contact; z velocity is ignored.
     np.testing.assert_allclose(term(env), [0.3**2 + 0.4**2] * 2, rtol=1e-6)
 
-    standing = _env(scene, command=np.zeros((2, 3), dtype=np.float32))
+    standing = _env(scene, command=torch.zeros((2, 3), dtype=torch.float32))
     np.testing.assert_allclose(term(standing), [0.0, 0.0])
 
 

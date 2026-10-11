@@ -55,10 +55,10 @@ class _Scene:
 
 
 class _Commands:
-    def __init__(self, command: np.ndarray) -> None:
+    def __init__(self, command: torch.Tensor) -> None:
         self.command = command
 
-    def get_command(self, name: str) -> np.ndarray:
+    def get_command(self, name: str) -> torch.Tensor:
         if name != "twist":
             raise KeyError(name)
         return self.command
@@ -66,7 +66,7 @@ class _Commands:
 
 def _env(
     sensors: dict[str, np.ndarray] | None = None,
-    command: np.ndarray | None = None,
+    command: torch.Tensor | None = None,
 ) -> tuple[ManagerBasedRlEnv, _Scene]:
     scene = _Scene(
         sensors
@@ -77,7 +77,7 @@ def _env(
         }
     )
     if command is None:
-        command = np.array([[0.5, -0.2, 0.3], [-0.1, 0.4, -0.2]], dtype=np.float32)
+        command = torch.tensor([[0.5, -0.2, 0.3], [-0.1, 0.4, -0.2]], dtype=torch.float32)
     env = cast(
         ManagerBasedRlEnv,
         SimpleNamespace(num_envs=2, scene=scene, command_manager=_Commands(command)),
