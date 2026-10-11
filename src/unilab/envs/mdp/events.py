@@ -1075,7 +1075,7 @@ class RandomizeRigidBodyMass(ManagerTermBase):
         if isinstance(min_mass, bool) or not isinstance(min_mass, (int, float)):
             raise TypeError(f"EventManager term '{term_name}' min_mass must be numeric")
         self._min_mass = float(min_mass)
-        if not np.isfinite(self._min_mass) or self._min_mass < 1e-6:
+        if not math.isfinite(self._min_mass) or self._min_mass < 1e-6:
             raise ValueError(
                 f"EventManager term '{term_name}' min_mass must be finite and at least 1e-6"
             )
@@ -1724,21 +1724,17 @@ def _time_range(
     name: str,
 ) -> tuple[float, float]:
     try:
-        bounds = np.asarray(value, dtype=np.float64)
+        if isinstance(value, (str, bytes)) or len(tuple(value)) != 2:
+            raise ValueError
+        lower, upper = float(value[0]), float(value[1])
     except (TypeError, ValueError) as exc:
         raise TypeError(
             f"EventManager term '{term_name}' parameter '{name}' must be a numeric (min, max) pair"
         ) from exc
-    if bounds.shape != (2,):
-        raise ValueError(
-            f"EventManager term '{term_name}' parameter '{name}' must have shape (2,), "
-            f"got {bounds.shape}"
-        )
-    if not np.isfinite(bounds).all():
+    if not (math.isfinite(lower) and math.isfinite(upper)):
         raise ValueError(
             f"EventManager term '{term_name}' parameter '{name}' must contain only finite values"
         )
-    lower, upper = float(bounds[0]), float(bounds[1])
     if lower < 0.0 or lower > upper:
         raise ValueError(
             f"EventManager term '{term_name}' parameter '{name}' must satisfy "
@@ -1811,13 +1807,20 @@ class ApplyBodyImpulse(ManagerTermBase):
             )
         offset = cfg.params.get("body_point_offset")
         if offset is not None:
-            offset_array = np.asarray(offset, dtype=np.float64)
-            if offset_array.shape != (3,) or not np.isfinite(offset_array).all():
+            try:
+                if isinstance(offset, (str, bytes)) or len(tuple(offset)) != 3:
+                    raise ValueError
+                x, y, z = (float(component) for component in offset)
+            except (TypeError, ValueError) as exc:
+                raise TypeError(
+                    f"EventManager term '{term_name}' body_point_offset must be numeric"
+                ) from exc
+            if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
                 raise ValueError(
                     f"EventManager term '{term_name}' body_point_offset must be a finite "
                     f"(x, y, z) triple, got {offset!r}"
                 )
-            self._body_point_offset: np.ndarray | None = np.array(offset_array)
+            self._body_point_offset: tuple[float, float, float] | None = (x, y, z)
         else:
             self._body_point_offset = None
 
@@ -1831,7 +1834,7 @@ class ApplyBodyImpulse(ManagerTermBase):
             term_name=term_name,
         )
         self._step_dt = float(env.step_dt)
-        if not np.isfinite(self._step_dt) or self._step_dt <= 0.0:
+        if not math.isfinite(self._step_dt) or self._step_dt <= 0.0:
             raise ValueError(
                 f"EventManager term '{term_name}' requires a positive env step_dt, "
                 f"got {self._step_dt}"
@@ -1900,7 +1903,7 @@ class ApplyBodyImpulse(ManagerTermBase):
                 quats = self._entity.data.body_link_quat_w
                 quat_rows = self._selected_body_quats(quats, trigger_ids)
                 offsets = (
-                    torch.from_numpy(self._body_point_offset)
+                    torch.tensor(self._body_point_offset)
                     .to(dtype=quat_rows.dtype)
                     .expand(count * num_bodies, 3)
                 )
