@@ -21,6 +21,37 @@ _TASK_REGISTRY_MODULES = (
 _RUNTIME_NUMPY_ALLOWLIST = {
     "src/unilab/tasks/motion_tracking/common/motion_loader.py",
 }
+_PRODUCTION_NUMPY_IMPORT_ALLOWLIST = {
+    # Base-owner adapter/reset-host boundary. These modules negotiate CPU
+    # backend host formats and legacy play APIs; they are not Manager runtime.
+    "src/unilab/base/base.py",
+    "src/unilab/base/entity.py",
+    "src/unilab/base/reset_state.py",
+    "src/unilab/base/rotation.py",
+    "src/unilab/base/scene.py",
+    "src/unilab/base/torch_env.py",
+    "src/unilab/base/variants.py",
+    # Cold asset/materialization leaves.
+    "src/unilab/terrains/heightfield_terrains.py",
+    "src/unilab/terrains/utils.py",
+    # Serialization and external interop.
+    "src/unilab/training/onnx_export.py",
+    "src/unilab/training/tensor_diagnostics.py",
+    "src/unilab/utils/nan_viz.py",
+    # Playback/rendering/visualization host formats.
+    "src/unilab/scripts/play_interactive.py",
+    "src/unilab/scripts/train_rsl_rl.py",
+    "src/unilab/visualization/debug_primitives.py",
+    "src/unilab/visualization/interactive_playback.py",
+    "src/unilab/visualization/playback.py",
+    "src/unilab/visualization/playback_session.py",
+    "src/unilab/visualization/playback_state.py",
+    "src/unilab/visualization/render_many.py",
+    "src/unilab/visualization/viser_playback.py",
+    "src/unilab/visualization/viser_scene.py",
+    # Cold NPZ motion ingestion.
+    *_RUNTIME_NUMPY_ALLOWLIST,
+}
 
 
 def _imports(path: Path) -> set[str]:
@@ -301,3 +332,16 @@ def test_production_source_does_not_seed_global_numpy_rng() -> None:
     ]
 
     assert offenders == [], f"global NumPy RNG seeding remains: {offenders}"
+
+
+def test_production_numpy_imports_are_explicit_leaves() -> None:
+    source_root = _REPO_ROOT / "src" / "unilab"
+    violations = [
+        (path.relative_to(_REPO_ROOT).as_posix(), module)
+        for path in sorted(source_root.rglob("*.py"))
+        for module in sorted(_imports(path))
+        if (module == "numpy" or module.startswith("numpy."))
+        and path.relative_to(_REPO_ROOT).as_posix() not in _PRODUCTION_NUMPY_IMPORT_ALLOWLIST
+    ]
+
+    assert violations == [], f"unallowlisted production NumPy imports remain: {violations}"

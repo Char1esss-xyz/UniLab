@@ -11,7 +11,7 @@ ranks' pinned physics workers.
 the env-construction cold path, before managers and backend materialization:
 
 - ``os.sched_setaffinity`` pins the calling thread to the block, and every
-  already-running thread (e.g. BLAS pools spawned at ``import numpy``) is
+  already-running thread (e.g. BLAS pools spawned by a backend dependency) is
   pinned individually via ``/proc/self/task``; threads spawned later inherit
   the mask.
 
@@ -31,10 +31,10 @@ _PROC_TASK_DIR = "/proc/self/task"
 def _confine_existing_threads(ids: set[int]) -> None:
     """Pin already-running threads; later threads inherit the caller's mask.
 
-    Native pools spawned before env construction (OpenBLAS spawns its workers
-    at ``import numpy``) would otherwise keep the host-wide mask and compete
-    with sibling ranks' pinned CPUs. Threads may exit between listing and
-    pinning; those races are ignored.
+    Native pools spawned before env construction (for example, OpenBLAS workers
+    started by a backend dependency) would otherwise keep the host-wide mask and
+    compete with sibling ranks' pinned CPUs. Threads may exit between listing
+    and pinning; those races are ignored.
     """
     # Resolved at call time (not import) so tests can monkeypatch the seam;
     # ``getattr`` keeps this checkable on platforms where typeshed hides the

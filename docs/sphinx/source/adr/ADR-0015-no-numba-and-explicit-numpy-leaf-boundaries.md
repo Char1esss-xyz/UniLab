@@ -82,10 +82,12 @@ dual-path compatibility layer.
 
 Outside the concrete CPU backend adapter, NumPy may appear only in:
 
-1. cold asset/materialization work, such as NPZ motion ingestion and terrain
+1. the base-owner adapter/reset-host boundary, where public CPU backend and
+   play APIs still exchange host formats;
+2. cold asset/materialization work, such as NPZ motion ingestion and terrain
    generation;
-2. serialization and external interop, such as ONNX Runtime and diagnostic NPZ;
-3. playback/rendering/visualization host formats.
+3. serialization and external interop, such as ONNX Runtime and diagnostic NPZ;
+4. playback/rendering/visualization host formats.
 
 Those leaves own their imports and conversions internally. They must not return
 mutable NumPy authoritative carriers to the Manager runtime or training hot
