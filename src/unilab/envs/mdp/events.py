@@ -187,18 +187,14 @@ def _sample_distribution(
 
 
 def _selected_reset_defaults_tensor(
-    defaults: np.ndarray | torch.Tensor,
+    defaults: torch.Tensor,
     env_ids: torch.Tensor,
     *,
     canonical_ndim: int,
     device: torch.device,
 ) -> torch.Tensor:
     """Select entity-local event defaults without a host row conversion."""
-    table = (
-        defaults
-        if isinstance(defaults, torch.Tensor)
-        else torch.from_numpy(np.ascontiguousarray(defaults))
-    )
+    table = defaults
     rows = env_ids.to(dtype=torch.int64, device=device)
     selected = table.to(dtype=torch.float64, device=device)
     if table.ndim == canonical_ndim:
@@ -335,9 +331,9 @@ def _device_reset_randomization_active(
     )
 
 
-def _device_reset_table(values: np.ndarray, device: torch.device) -> torch.Tensor:
-    """Materialize one immutable NumPy default/parameter table on a device."""
-    return torch.as_tensor(np.array(values, dtype=np.float32, copy=True), device=device)
+def _device_reset_table(values: torch.Tensor, device: torch.device) -> torch.Tensor:
+    """Materialize one immutable default/parameter table on a device."""
+    return values.to(device=device, dtype=torch.float32)
 
 
 def _sample_distribution_tensor(

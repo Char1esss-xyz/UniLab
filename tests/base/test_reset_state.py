@@ -398,13 +398,13 @@ def test_startup_model_field_baseline_promotion_is_deferred_until_commit() -> No
     with pytest.raises(NotImplementedError, match="reset upload disabled"):
         with transaction.scoped(torch.arange(backend.num_envs)):
             transaction.write_body_mass(
-                rows, columns, selected_defaults.copy(), term_name="startup_mass"
+                rows, columns, selected_defaults.clone(), term_name="startup_mass"
             )
             transaction.record_startup_randomization(
                 RESET_TERM_BODY_MASS,
                 rows,
                 columns,
-                selected_defaults.copy(),
+                selected_defaults.clone(),
                 term_name="startup_mass",
             )
 
