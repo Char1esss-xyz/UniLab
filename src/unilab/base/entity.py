@@ -3685,7 +3685,7 @@ class Entity:
         *,
         torque: bool,
         term_name: str,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[torch.Tensor, np.ndarray]:
         """Resolve entity-local and backend body columns for interval wrench writes.
 
         Returns readonly ``(local_ids, backend_ids)``; ``local_ids`` index the
@@ -3716,7 +3716,7 @@ class Entity:
                 f"EventManager term '{term_name}' requested an unsupported backend "
                 "capability: interval body torque",
             )
-        return self._readonly_local_binding(local_ids, self._body_ids[local_ids])
+        return torch.as_tensor(local_ids), self._body_ids[local_ids]
 
     def apply_body_wrench_to_sim(
         self,
