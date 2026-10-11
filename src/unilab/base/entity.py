@@ -2977,7 +2977,7 @@ class Entity:
 
     def write_geom_size_to_sim(
         self,
-        values: np.ndarray,
+        values: torch.Tensor,
         geom_ids: np.ndarray | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
@@ -3016,7 +3016,7 @@ class Entity:
 
     def write_geom_solref_to_sim(
         self,
-        values: np.ndarray,
+        values: torch.Tensor,
         geom_ids: np.ndarray | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
@@ -3055,7 +3055,7 @@ class Entity:
 
     def write_geom_solimp_to_sim(
         self,
-        values: np.ndarray,
+        values: torch.Tensor,
         geom_ids: np.ndarray | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
@@ -3094,7 +3094,7 @@ class Entity:
 
     def write_joint_damping_to_sim(
         self,
-        values: np.ndarray,
+        values: torch.Tensor,
         joint_ids: np.ndarray | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
@@ -3133,7 +3133,7 @@ class Entity:
 
     def write_joint_frictionloss_to_sim(
         self,
-        values: np.ndarray,
+        values: torch.Tensor,
         joint_ids: np.ndarray | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
