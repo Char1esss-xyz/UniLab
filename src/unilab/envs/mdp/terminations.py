@@ -80,10 +80,13 @@ def root_height_below_minimum(
         raise TypeError("root_height_below_minimum minimum_height must be a real number")
     if not math.isfinite(minimum_height):
         raise ValueError("root_height_below_minimum minimum_height must be finite")
-    asset = cast("Entity", env.scene[asset_cfg.name])
-    root_pos_w = _state_tensor(
-        "root_height_below_minimum", asset.data.root_link_pos_w, env.num_envs, width=3
-    )
+    asset, view = _root_body_view(env, asset_cfg)
+    if view is not None:
+        root_pos_w = view.pos_w[:, 0, :]
+    else:
+        root_pos_w = _state_tensor(
+            "root_height_below_minimum", asset.data.root_link_pos_w, env.num_envs, width=3
+        )
     return root_pos_w[:, 2] < minimum_height
 
 

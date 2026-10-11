@@ -536,8 +536,10 @@ class ManagerBasedRlEnv(TorchEnv):
                 if term in (
                     mdp.bad_orientation,
                     mdp.flat_orientation_l2,
+                    mdp.root_height,
                     mdp.track_linear_velocity,
                     mdp.track_angular_velocity,
+                    mdp.root_height_below_minimum,
                 ):
                     entity_name = self._manager_term_entity_name(manager, name)
                     if not self._entity_declares_packed_root(entity_name):
