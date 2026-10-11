@@ -271,3 +271,21 @@ def test_task_runtime_numpy_is_limited_to_cold_npz_loader() -> None:
     ]
 
     assert violations == [], f"unallowlisted task NumPy imports remain: {violations}"
+
+
+def test_manager_env_and_task_runtime_have_no_numpy_conversion() -> None:
+    runtime_roots = (
+        _REPO_ROOT / "src" / "unilab" / "managers",
+        _REPO_ROOT / "src" / "unilab" / "envs",
+        _REPO_ROOT / "src" / "unilab" / "tasks",
+    )
+    offenders = [
+        (path.relative_to(_REPO_ROOT).as_posix(), line_number, line.strip())
+        for root in runtime_roots
+        for path in sorted(root.rglob("*.py"))
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if (".numpy()" in line or ".cpu().numpy()" in line or "torch.from_numpy(" in line)
+        and path.relative_to(_REPO_ROOT).as_posix() not in _RUNTIME_NUMPY_ALLOWLIST
+    ]
+
+    assert offenders == [], f"runtime NumPy conversions remain: {offenders}"
