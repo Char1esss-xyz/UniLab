@@ -1394,7 +1394,7 @@ class RandomizeRigidBodyCom(ManagerTermBase):
         self._device_dr_capable = _probe_device_reset_randomization(env)
         self._device_default_ipos: torch.Tensor | None = None
         self._startup = cfg.mode == "startup"
-        self._startup_values: np.ndarray | None = None
+        self._startup_values: torch.Tensor | None = None
 
     def _apply_startup(
         self,
