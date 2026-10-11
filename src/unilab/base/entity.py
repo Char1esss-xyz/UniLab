@@ -959,9 +959,14 @@ class EntityData:
             self._default_root_state_tensor is None
             or self._default_root_state_tensor.device != resolved
         ):
-            self._default_root_state_tensor = torch.from_numpy(
-                np.array(self.default_root_state, copy=True)
-            ).to(device=resolved, dtype=torch.float32)
+            source = self.default_root_state
+            self._default_root_state_tensor = (
+                source.to(device=resolved, dtype=torch.float32)
+                if isinstance(source, torch.Tensor)
+                else torch.from_numpy(np.array(source, copy=True)).to(
+                    device=resolved, dtype=torch.float32
+                )
+            )
         return self._default_root_state_tensor
 
     @property
@@ -989,8 +994,13 @@ class EntityData:
         resolved = torch.device(device)
         cached = self._default_joint_pos_tensor
         if cached is None or cached.device != resolved:
-            cached = torch.from_numpy(np.ascontiguousarray(self.default_joint_pos)).to(
-                device=resolved, dtype=torch.float32
+            source = self.default_joint_pos
+            cached = (
+                source.to(device=resolved, dtype=torch.float32)
+                if isinstance(source, torch.Tensor)
+                else torch.from_numpy(np.ascontiguousarray(source)).to(
+                    device=resolved, dtype=torch.float32
+                )
             )
             self._default_joint_pos_tensor = cached
         return cached
@@ -1005,8 +1015,13 @@ class EntityData:
         resolved = torch.device(device)
         cached = self._default_joint_vel_tensor
         if cached is None or cached.device != resolved:
-            cached = torch.from_numpy(np.ascontiguousarray(self.default_joint_vel)).to(
-                device=resolved, dtype=torch.float32
+            source = self.default_joint_vel
+            cached = (
+                source.to(device=resolved, dtype=torch.float32)
+                if isinstance(source, torch.Tensor)
+                else torch.from_numpy(np.ascontiguousarray(source)).to(
+                    device=resolved, dtype=torch.float32
+                )
             )
             self._default_joint_vel_tensor = cached
         return cached
