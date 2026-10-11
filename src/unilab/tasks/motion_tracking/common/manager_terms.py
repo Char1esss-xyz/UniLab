@@ -1583,23 +1583,6 @@ class motion_global_body_angular_velocity_error_exp(_BodyTerm):
         return self._body_reduce(command, "body_ang_vel_w", "robot_body_ang_vel_w", scale)
 
 
-class motion_relative_body_position_z_error_exp(_BodyTerm):
-    def __call__(
-        self,
-        env: ManagerBasedRlEnv,
-        command_name: str,
-        std: float,
-        body_names: tuple[str, ...] | None = None,
-    ) -> torch.Tensor:
-        del env, body_names
-        command, scale = self._validate(command_name, std)
-        delta = (
-            cast(torch.Tensor, command.body_pos_relative_w)[:, self._body_ids, 2]
-            - cast(torch.Tensor, command.robot_body_pos_w)[:, self._body_ids, 2]
-        )
-        return torch.exp(-delta.square().mean(dim=-1) / (scale * scale))
-
-
 def motion_joint_position_error_exp(
     env: ManagerBasedRlEnv, command_name: str, std: float
 ) -> torch.Tensor:
@@ -1729,20 +1712,6 @@ class bad_motion_body_pos_z_only(_BodyTerm):
         return torch.any(error > threshold, dim=-1)
 
 
-class bad_undesired_body_contacts(_BodyTerm):
-    def __call__(
-        self,
-        env: ManagerBasedRlEnv,
-        command_name: str,
-        threshold: float,
-        body_names: tuple[str, ...] | None = None,
-    ) -> torch.Tensor:
-        del env, body_names
-        command = _command(self._env, command_name)
-        robot_body_pos = cast(torch.Tensor, command.robot_body_pos_w)
-        return torch.any(robot_body_pos[:, self._body_ids, 2] < threshold, dim=-1)
-
-
 def motion_clip_end(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
     command = _command(env, command_name)
     current_clip_ends = getattr(command, "tensor_current_clip_end_frames", None)
@@ -1851,7 +1820,6 @@ __all__ = [
     "bad_anchor_ori",
     "bad_anchor_pos_z_only",
     "bad_motion_body_pos_z_only",
-    "bad_undesired_body_contacts",
     "joint_pos_limits",
     "motion_anchor_ori_b",
     "motion_anchor_pos_b",
@@ -1866,7 +1834,6 @@ __all__ = [
     "motion_joint_velocity_error_exp",
     "motion_relative_body_orientation_error_exp",
     "motion_relative_body_position_error_exp",
-    "motion_relative_body_position_z_error_exp",
     "robot_body_ori_b",
     "robot_body_pos_b",
     "undesired_body_contacts",
