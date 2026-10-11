@@ -22,7 +22,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-import numpy as np
 import torch
 
 from unilab.managers.manager_base import ManagerTermBase, ManagerTermBaseCfg
@@ -49,12 +48,8 @@ def _reset_rows(value: torch.Tensor | slice | None, device: torch.device) -> tor
     return value
 
 
-def _torch_state(
-    value: np.ndarray | torch.Tensor, *, dtype: torch.dtype = torch.float32
-) -> torch.Tensor:
-    if isinstance(value, torch.Tensor):
-        return value.to(dtype=dtype)
-    return torch.from_numpy(np.ascontiguousarray(value)).to(dtype=dtype)
+def _torch_state(value: torch.Tensor, *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+    return value.to(dtype=dtype)
 
 
 def _sensor_groups(term: str, value: Any) -> tuple[tuple[str, ...], ...]:
@@ -262,7 +257,7 @@ class feet_air_time(_FootContactTerm):
         rows = _reset_rows(env_ids, self._air_time.device)
         self._air_time[rows] = 0.0
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         contact = self._contact_feet(env)
         step_dt = _real(self.name, "step_dt", env.step_dt, minimum=0.0, strict_minimum=True)
@@ -336,7 +331,7 @@ class feet_swing_height(_FootContactTerm):
         self._peak_heights[rows] = 0.0
         self._was_in_air[rows] = False
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         contact = self._contact(env)
         body = _feet_body_tensor_view(self.name, env, self._asset_cfg, self._body_names)
@@ -389,7 +384,7 @@ class feet_slip(_FootContactTerm):
         self._entity_name = asset_cfg.name
         self._body_names = body_names
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         contact = self._contact(env)
         body = _feet_body_tensor_view(self.name, env, self._asset_cfg, self._body_names)
@@ -458,9 +453,7 @@ class feet_clearance(ManagerTermBase):
         cost = (delta * vel_norm).sum(dim=1)
         gate = _command_gate(env, self.name, self._command_name, self._command_threshold)
         if gate is not None:
-            gate_tensor = (
-                gate if isinstance(gate, torch.Tensor) else _torch_state(gate, dtype=torch.bool)
-            )
+            gate_tensor = _torch_state(gate, dtype=torch.bool)
             cost = cost * gate_tensor
         return cost.to(dtype=torch.float32)
 
@@ -475,7 +468,7 @@ class self_collision_cost(_FootContactTerm):
     does not enable, so it is not ported.
     """
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         return torch.sum(self._contact(env), dim=1).to(dtype=torch.float32)
 
@@ -502,7 +495,7 @@ class angular_momentum_penalty(SensorTermBase):
     def tensor_sensor_names(self) -> tuple[str, ...]:
         return (self._sensor_name,)
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         return self._read_tensor_values(env).square().sum(dim=1)
 
@@ -589,7 +582,7 @@ class foot_air_time(_FootContactTerm):
         rows = _reset_rows(env_ids, self._air_time.device)
         self._air_time[rows] = 0.0
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         contact = self._contact_feet(env)
         step_dt = _real(self.name, "step_dt", env.step_dt, minimum=0.0, strict_minimum=True)
