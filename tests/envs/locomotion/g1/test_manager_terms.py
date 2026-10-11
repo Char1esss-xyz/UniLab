@@ -68,9 +68,13 @@ class _FakeEnv:
         *,
         num_envs: int = 2,
         counter: int = 0,
-        command: np.ndarray | None = None,
+        command: torch.Tensor | None = None,
     ) -> None:
-        commands = {"twist": command if command is not None else np.zeros((num_envs, 3))}
+        commands = {
+            "twist": command
+            if command is not None
+            else torch.zeros((num_envs, 3), dtype=torch.float32)
+        }
         self.num_envs = num_envs
         self.common_step_counter = counter
         self.step_dt = 0.02
@@ -144,7 +148,7 @@ def test_gait_phase_reset_fails_closed_without_torch_rng() -> None:
 
 
 def test_bezier_targets_match_legacy_reference_values():
-    phase = np.array([[0.0, np.pi], [np.pi / 2.0, 3.0 * np.pi / 2.0]])
+    phase = torch.tensor([[0.0, torch.pi], [torch.pi / 2.0, 3.0 * torch.pi / 2.0]])
     left, right = compute_feet_phase_height_targets(phase, 0.09)
     # phi=0 -> x=0.5 boundary -> stance peak; phi=pi -> x=0 -> zero;
     # phi=pi/2 -> x=0.75 -> swing midpoint 0.045.
@@ -228,7 +232,7 @@ def test_feet_double_stance_masks_on_forward_command():
         **{f"left_foot_contact_{i}": np.ones((2, 1)) for i in range(4)},
         **{f"right_foot_contact_{i}": np.ones((2, 1)) for i in range(4)},
     }
-    command = np.array([[0.5, 0.0, 0.0], [0.0, 0.0, 0.0]])
+    command = torch.tensor([[0.5, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=torch.float32)
     env = _fake_env(sensors, command=command)
     term = g1_terms.feet_double_stance(
         RewardTermCfg(
