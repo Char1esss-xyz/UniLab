@@ -1045,8 +1045,8 @@ class ResetStateTransaction:
         self,
         env_ids: torch.Tensor,
         actuator_ids: np.ndarray,
-        kp: np.ndarray,
-        kd: np.ndarray,
+        kp: torch.Tensor,
+        kd: torch.Tensor,
         *,
         term_name: str,
     ) -> None:
@@ -1324,8 +1324,18 @@ class ResetStateTransaction:
             capability="root state",
             term_name=term_name,
         )
-        self.write_root_pose(env_ids, layout, values[:, :7], term_name=term_name)
-        self.write_root_velocity(env_ids, layout, values[:, 7:], term_name=term_name)
+        self.write_root_pose(
+            env_ids,
+            layout,
+            torch.from_numpy(values[:, :7]),
+            term_name=term_name,
+        )
+        self.write_root_velocity(
+            env_ids,
+            layout,
+            torch.from_numpy(values[:, 7:]),
+            term_name=term_name,
+        )
 
     def write_root_state_tensor(
         self,
@@ -1538,7 +1548,7 @@ class ResetStateTransaction:
         self,
         env_ids: torch.Tensor,
         layout: BackendRootStateLayout,
-        pose: np.ndarray,
+        pose: torch.Tensor,
         *,
         term_name: str,
     ) -> None:
@@ -1561,7 +1571,7 @@ class ResetStateTransaction:
         self,
         env_ids: torch.Tensor,
         layout: BackendRootStateLayout,
-        velocity_w: np.ndarray,
+        velocity_w: torch.Tensor,
         *,
         term_name: str,
     ) -> None:
