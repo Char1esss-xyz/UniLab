@@ -1,8 +1,8 @@
 """Task-owned Manager-Based terms for G1 biped locomotion.
 
 The equations come from UniLab's legacy G1Walk joystick tasks.  The adaptation
-uses community ``func + params`` terms, NumPy, cached cold-path sensor bindings,
-and the base-owned entity facade; hot paths never parse assets or probe backend
+uses community ``func + params`` terms, Torch state carriers, and cached
+cold-path sensor bindings; hot paths never parse assets or probe backend
 privates.
 """
 
@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 from weakref import WeakKeyDictionary
 
-import numpy as np
 import torch
 
 from unilab.base.backend_factory import create_backend, env_backend_kwargs
@@ -50,14 +49,6 @@ if TYPE_CHECKING:
         def active_terms(self) -> list[str]: ...
 
         def get_term_cfg(self, term_name: str) -> _RewardTermCfgView: ...
-
-    class _EntityDataView(Protocol):
-        @property
-        def root_link_pos_w(self) -> np.ndarray: ...
-
-    class _EntityView(Protocol):
-        @property
-        def data(self) -> _EntityDataView: ...
 
     class _G1Env(ManagerBasedRlEnv, Protocol):
         @property
@@ -116,36 +107,19 @@ def _weights(term: str, name: str, value: Any) -> torch.Tensor:
     return result
 
 
-def _square(value: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
+def _square(value: torch.Tensor) -> torch.Tensor:
     return torch.square(_torch_values(value))
 
 
-def _exp(value: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
+def _exp(value: torch.Tensor) -> torch.Tensor:
     return torch.exp(_torch_values(value))
 
 
-def _torch_values(value: np.ndarray | torch.Tensor) -> torch.Tensor:
-    if isinstance(value, torch.Tensor):
-        return value.to(dtype=torch.float32)
-    return torch.from_numpy(np.ascontiguousarray(value)).to(dtype=torch.float32)
+def _torch_values(value: torch.Tensor) -> torch.Tensor:
+    return value.to(dtype=torch.float32)
 
 
-def _values(value: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
-    return _torch_values(value)
-
-
-def _state(term: str, capability: str, value: Any, shape: tuple[int, ...]) -> np.ndarray:
-    if not isinstance(value, np.ndarray):
-        raise TypeError(f"{term} {capability} must be an np.ndarray")
-    if value.shape != shape:
-        raise ValueError(f"{term} {capability} must have shape {shape}, got {value.shape}")
-    if not np.isfinite(value).all():
-        env_ids = np.flatnonzero(~np.isfinite(value).reshape(shape[0], -1).all(axis=1)).tolist()
-        raise ValueError(f"{term} {capability} contains NaN or Inf for environments {env_ids[:10]}")
-    return value
-
-
-def _command(env: ManagerBasedRlEnv, term: str, command_name: str) -> np.ndarray | torch.Tensor:
+def _command(env: ManagerBasedRlEnv, term: str, command_name: str) -> torch.Tensor:
     if not isinstance(command_name, str) or not command_name:
         raise ValueError(f"{term} command_name must be a non-empty string")
     try:
@@ -176,7 +150,7 @@ class _SensorTerm(SensorTermBase):
         capability: str,
         binding: tuple[Any, tuple[str, ...]],
         shape: tuple[int, ...],
-    ) -> np.ndarray | torch.Tensor:
+    ) -> torch.Tensor:
         view, sensor_names = binding
         read_plan = getattr(env.scene, "_tensor_read_plan", None)
         owner_sensors = set(getattr(read_plan, "sensor_names", {}).get("robot", ()))
@@ -208,7 +182,7 @@ class _SensorTerm(SensorTermBase):
 
 
 def compute_feet_phase_height_targets(
-    gait_phase: np.ndarray | torch.Tensor, swing_height: float
+    gait_phase: torch.Tensor, swing_height: float
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Cubic-Bézier per-foot height targets, ported from the legacy G1 task."""
 
@@ -230,7 +204,7 @@ def compute_feet_phase_height_targets(
 
 
 def compute_feet_phase_contact_targets(
-    gait_phase: np.ndarray | torch.Tensor, swing_height: float
+    gait_phase: torch.Tensor, swing_height: float
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Expected per-foot contact flags derived from the Bézier height targets."""
     left_target, right_target = compute_feet_phase_height_targets(gait_phase, swing_height)
@@ -280,7 +254,7 @@ def _gait_context(env: _G1Env, term: str, frequency: float, init_mode: str) -> _
     return context
 
 
-def _advance_gait(env: _G1Env, context: _G1GaitContext) -> np.ndarray | torch.Tensor:
+def _advance_gait(env: _G1Env, context: _G1GaitContext) -> torch.Tensor:
     counter = env.common_step_counter
     if isinstance(counter, bool) or not isinstance(counter, int):
         raise TypeError("G1 gait terms require an integer common_step_counter")
@@ -294,7 +268,7 @@ def _advance_gait(env: _G1Env, context: _G1GaitContext) -> np.ndarray | torch.Te
     return context.phase
 
 
-def _cached_gait_phase(env: _G1Env, context: _G1GaitContext) -> np.ndarray | torch.Tensor:
+def _cached_gait_phase(env: _G1Env, context: _G1GaitContext) -> torch.Tensor:
     """Return the phase already advanced for this env and step.
 
     Gait rewards are semantically pure in the phase for a given counter:
@@ -350,7 +324,7 @@ class G1GaitPhase(ManagerTermBase):
             raise ValueError(f"{self.name} init_mode must be one of {_GAIT_INIT_MODES}")
         self._context = _gait_context(env, self.name, frequency, init_mode)
 
-    def __call__(self, env: _G1Env, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: _G1Env, **params: Any) -> torch.Tensor:
         del params
         phase = _advance_gait(env, self._context)
         if isinstance(phase, torch.Tensor):
@@ -421,13 +395,11 @@ class _GaitRewardTerm(_SensorTerm):
     def tensor_sensor_names(self) -> tuple[str, ...]:
         return (*_FOOT_POS_SENSORS, "pelvis_local_linvel")
 
-    def _targets(self, env: _G1Env) -> tuple[np.ndarray | torch.Tensor, np.ndarray | torch.Tensor]:
+    def _targets(self, env: _G1Env) -> tuple[torch.Tensor, torch.Tensor]:
         phase = _cached_gait_phase(env, self._context)
         return compute_feet_phase_height_targets(phase, self._swing_height)
 
-    def _foot_heights(
-        self, env: _G1Env
-    ) -> tuple[np.ndarray | torch.Tensor, np.ndarray | torch.Tensor]:
+    def _foot_heights(self, env: _G1Env) -> tuple[torch.Tensor, torch.Tensor]:
         values = self._read_state_tensor(
             env, "foot position", (self._feet_pos, _FOOT_POS_SENSORS), (self.num_envs, 6)
         )
@@ -443,7 +415,7 @@ class _GaitRewardTerm(_SensorTerm):
         forward_speed = torch.clamp(_torch_values(linvel)[:, 0], min=0.0)
         return (forward_speed >= self._min_forward_speed).to(dtype=torch.float32)
 
-    def _gate_from_forward_speed(self, forward_speed: np.ndarray | torch.Tensor) -> torch.Tensor:
+    def _gate_from_forward_speed(self, forward_speed: torch.Tensor) -> torch.Tensor:
         positive_speed = torch.clamp(_torch_values(forward_speed), min=0.0)
         return (positive_speed >= self._min_forward_speed).to(dtype=torch.float32)
 
@@ -465,40 +437,32 @@ class _GaitRewardTerm(_SensorTerm):
         )
         phase = _cached_gait_phase(env, self._context)
         left_target, right_target = compute_feet_phase_height_targets(phase, self._swing_height)
-        if not isinstance(left_target, torch.Tensor):
-            left_target = torch.as_tensor(left_target, device=values.device)
-        if not isinstance(right_target, torch.Tensor):
-            right_target = torch.as_tensor(right_target, device=values.device)
-        if not isinstance(values, torch.Tensor):
-            values = torch.from_numpy(np.ascontiguousarray(values)).to(
-                device=left_target.device, dtype=left_target.dtype
-            )
         return values[:, 2], values[:, 5], values[:, 6], left_target, right_target
 
 
 class feet_phase(_GaitRewardTerm):
     """Reward gait phase tracking by encouraging the expected swing-foot height."""
 
-    def __call__(self, env: _G1Env, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: _G1Env, **params: Any) -> torch.Tensor:
         del params
         left_height, right_height, forward_speed, left_target, right_target = (
             self._phase_reward_inputs(env)
         )
         error = _square(left_height - left_target) + _square(right_height - right_target)
         reward = _exp(-error / self._tracking_sigma)
-        return _values(reward * self._gate_from_forward_speed(forward_speed))
+        return reward * self._gate_from_forward_speed(forward_speed)
 
 
 class feet_phase_contrast(_GaitRewardTerm):
     """Reward left/right foot-height contrast against the gait-phase targets."""
 
-    def __call__(self, env: _G1Env, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: _G1Env, **params: Any) -> torch.Tensor:
         del params
         left_target, right_target = self._targets(env)
         left_height, right_height = self._foot_heights(env)
         error = _square((left_height - right_height) - (left_target - right_target))
         reward = _exp(-error / self._tracking_sigma)
-        return _values(reward * self._gate(env))
+        return reward * self._gate(env)
 
 
 class _FootContactTerm(_GaitRewardTerm):
@@ -528,7 +492,7 @@ class _FootContactTerm(_GaitRewardTerm):
 class feet_phase_contact(_FootContactTerm):
     """Reward foot contact matching the expected stance phase of the gait."""
 
-    def __call__(self, env: _G1Env, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: _G1Env, **params: Any) -> torch.Tensor:
         del params
         phase = _cached_gait_phase(env, self._context)
         left_target, right_target = compute_feet_phase_contact_targets(phase, self._swing_height)
@@ -543,7 +507,7 @@ class feet_phase_contact(_FootContactTerm):
 class feet_double_stance(_FootContactTerm):
     """Penalize double-stance contact while a forward command is active."""
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         command = _command(env, self.name, self._command_name)
         left_contact, right_contact = self._contact_pair(env)
@@ -567,7 +531,7 @@ class feet_air_time(_FootContactTerm):
     def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
         self._air_time[env_ids if env_ids is not None else slice(None)] = 0.0
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         left_contact, right_contact = self._contact_pair(env)
         contact = torch.stack(
@@ -601,7 +565,7 @@ class _LinVelTerm(_SensorTerm):
     def tensor_sensor_names(self) -> tuple[str, ...]:
         return ("pelvis_local_linvel",)
 
-    def _read_linvel(self, env: ManagerBasedRlEnv) -> np.ndarray | torch.Tensor:
+    def _read_linvel(self, env: ManagerBasedRlEnv) -> torch.Tensor:
         return self._read_state_tensor(
             env,
             "pelvis linear velocity",
@@ -619,7 +583,7 @@ class _GyroTerm(_SensorTerm):
     def tensor_sensor_names(self) -> tuple[str, ...]:
         return ("torso_gyro",)
 
-    def _read_gyro(self, env: ManagerBasedRlEnv) -> np.ndarray | torch.Tensor:
+    def _read_gyro(self, env: ManagerBasedRlEnv) -> torch.Tensor:
         return self._read_state_tensor(
             env, "torso gyro", (self._gyro, ("torso_gyro",)), (env.num_envs, 3)
         )
@@ -634,7 +598,7 @@ class _UpvectorTerm(_SensorTerm):
     def tensor_sensor_names(self) -> tuple[str, ...]:
         return ("torso_upvector",)
 
-    def _read_upvector(self, env: ManagerBasedRlEnv) -> np.ndarray | torch.Tensor:
+    def _read_upvector(self, env: ManagerBasedRlEnv) -> torch.Tensor:
         return self._read_state_tensor(
             env, "torso upvector", (self._upvector, ("torso_upvector",)), (env.num_envs, 3)
         )
@@ -645,7 +609,7 @@ class forward_progress(_LinVelTerm):
 
     _allowed_params = frozenset({"command_name"})
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         command = _command(env, self.name, _term_command_name(self.name, params))
         linvel = self._read_linvel(env)
         command = _torch_values(command)
@@ -667,7 +631,7 @@ class under_speed(_LinVelTerm):
 
     _allowed_params = frozenset({"command_name"})
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         command = _command(env, self.name, _term_command_name(self.name, params))
         linvel = self._read_linvel(env)
         command = _torch_values(command)
@@ -688,7 +652,7 @@ class g1_tilt_exceeded(_UpvectorTerm):
         max_tilt_deg = _real(self.name, "max_tilt_deg", cfg.params.get("max_tilt_deg"), minimum=0.0)
         self._max_tilt_rad = math.radians(max_tilt_deg)
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         upvector = self._read_upvector(env)
         z = torch.clamp(_torch_values(upvector)[:, 2], min=-1.0, max=1.0)
@@ -726,7 +690,7 @@ class g1_base_height_below_minimum(ManagerTermBase):
     def entity_name(self) -> str:
         return self._entity_name
 
-    def __call__(self, env: _G1Env, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: _G1Env, **params: Any) -> torch.Tensor:
         del params
         read_plan = getattr(env.scene, "_tensor_read_plan", None)
         if read_plan is None:
@@ -753,7 +717,7 @@ class penalty_feet_ori(_SensorTerm):
     def tensor_sensor_names(self) -> tuple[str, ...]:
         return _FOOT_QUAT_SENSORS
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         values = self._read_state_tensor(
             env,
@@ -763,7 +727,7 @@ class penalty_feet_ori(_SensorTerm):
         )
         penalty = _square(values[:, 1]) + _square(values[:, 2])
         penalty = penalty + _square(values[:, 5]) + _square(values[:, 6])
-        return _values(penalty)
+        return penalty
 
 
 class penalty_close_feet_xy(_SensorTerm):
@@ -787,7 +751,7 @@ class penalty_close_feet_xy(_SensorTerm):
     def tensor_sensor_names(self) -> tuple[str, ...]:
         return _FOOT_POS_SENSORS
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
         del params
         values = self._read_state_tensor(
             env,
