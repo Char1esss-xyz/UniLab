@@ -198,6 +198,33 @@ def _selected_reset_defaults_tensor(
     return torch.from_numpy(np.ascontiguousarray(selected)).to(dtype=torch.float64, device=device)
 
 
+def _model_field_default_rows(
+    defaults: np.ndarray,
+    env_ids: torch.Tensor,
+    *,
+    field_width: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Select entity-local model-field defaults without a host row conversion."""
+    table = torch.from_numpy(np.ascontiguousarray(defaults))
+    canonical_ndim = 1 if field_width == 1 else 2
+    canonical = table.ndim == canonical_ndim
+    rows = env_ids.to(dtype=torch.int64, device=device)
+    if canonical:
+        selected = table.to(device=device, dtype=torch.float64)
+    elif table.ndim == canonical_ndim + 1:
+        selected = table.to(device=device, dtype=torch.float64).index_select(0, rows)
+    else:
+        raise ValueError(
+            f"Selected model-field default table has shape {tuple(table.shape)}; expected "
+            f"a {canonical_ndim}-D canonical table or a per-environment "
+            f"(*, {canonical_ndim}) table"
+        )
+    if canonical:
+        return selected.expand((rows.numel(), *selected.shape)).clone()
+    return selected
+
+
 def _apply_randomization_operation(
     default: np.ndarray,
     samples: np.ndarray,
@@ -746,13 +773,16 @@ class _ModelFieldRandomizer(ManagerTermBase):
             self._apply_device(env, cast(torch.Tensor, env_ids))
             return
         ids = resolve_env_ids(env, env_ids)
-        canonical_ndim = 1 if self._field_width == 1 else 2
-        sampled_axis = self._sample_axis(env, self._axes[0], ids.numel()) if self._axes else None
-        default_values = _selected_reset_defaults_tensor(
+        default_values = _model_field_default_rows(
             self._defaults,
             ids,
-            canonical_ndim=canonical_ndim,
-            device=sampled_axis.device if sampled_axis is not None else self._sample_device(env),
+            field_width=self._field_width,
+            device=self._sample_device(env),
+        )
+        sampled_axis = (
+            self._sample_axis(env, self._axes[0], ids.numel()).to(device=default_values.device)
+            if self._axes
+            else None
         )
         values = default_values.clone()
         for index, axis in enumerate(self._axes):
