@@ -154,14 +154,13 @@ def _command(env: ManagerBasedRlEnv, term: str, command_name: str) -> np.ndarray
         raise KeyError(f"{term} command capability '{command_name}' is unavailable") from exc
     if command is None:
         raise KeyError(f"{term} command capability '{command_name}' is unavailable")
-    if isinstance(command, torch.Tensor):
-        if command.shape != (env.num_envs, 3):
-            raise ValueError(
-                f"{term} command '{command_name}' must have shape "
-                f"{(env.num_envs, 3)}; got {tuple(command.shape)}"
-            )
-        return command
-    return _state(term, f"command '{command_name}'", command, (env.num_envs, 3))
+    command_tensor = _torch_values(command)
+    if tuple(command_tensor.shape) != (env.num_envs, 3):
+        raise ValueError(
+            f"{term} command '{command_name}' must have shape "
+            f"{(env.num_envs, 3)}; got {tuple(command_tensor.shape)}"
+        )
+    return command_tensor
 
 
 def _asset(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg) -> Entity:
