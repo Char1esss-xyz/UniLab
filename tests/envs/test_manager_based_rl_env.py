@@ -735,8 +735,8 @@ class _StateWritingCommand(_Command):
     def _resample_command(self, env_ids: torch.Tensor) -> None:
         self._command[env_ids, 0] = 0.75
         self._env.scene["robot"].write_joint_state_to_sim(
-            np.full((len(env_ids), 1), 0.75, dtype=np.float32),
-            np.full((len(env_ids), 1), -0.75, dtype=np.float32),
+            torch.full((len(env_ids), 1), 0.75, dtype=torch.float32),
+            torch.full((len(env_ids), 1), -0.75, dtype=torch.float32),
             env_ids=env_ids,
         )
 
@@ -971,8 +971,8 @@ def _write_reset_joint_state(env: _TestEnv, env_ids: np.ndarray | None) -> None:
     assert env_ids is not None
     count = len(env_ids)
     env.scene["robot"].write_joint_state_to_sim(
-        np.full((count, 1), 0.25, dtype=np.float32),
-        np.full((count, 1), -0.5, dtype=np.float32),
+        torch.full((count, 1), 0.25, dtype=torch.float32),
+        torch.full((count, 1), -0.5, dtype=torch.float32),
         env_ids=env_ids,
     )
 

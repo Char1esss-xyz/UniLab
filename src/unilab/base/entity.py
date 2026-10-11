@@ -3875,9 +3875,9 @@ class Entity:
 
     def write_joint_state_to_sim(
         self,
-        position: np.ndarray,
-        velocity: np.ndarray,
-        joint_ids: np.ndarray | Sequence[int] | slice | None = None,
+        position: torch.Tensor,
+        velocity: torch.Tensor,
+        joint_ids: torch.Tensor | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
     ) -> None:
         """Stage community-style joint state writes in the active reset transaction."""
