@@ -818,6 +818,7 @@ class EntityData:
         self._default_joint_pos_tensor: torch.Tensor | None = None
         self._default_joint_vel_tensor: torch.Tensor | None = None
         self._soft_joint_pos_limits = soft_joint_pos_limits
+        self._soft_joint_pos_limits_tensor: torch.Tensor | None = None
         self._gravity_vec_w = gravity_vec_w
         self._encoder_bias = (
             None
@@ -1014,6 +1015,17 @@ class EntityData:
     def soft_joint_pos_limits(self) -> np.ndarray:
         """Read-only joint position limits in the declared entity joint order."""
         return self._require(self._soft_joint_pos_limits, "joint position limits")
+
+    def soft_joint_pos_limits_torch(self, device: str | torch.device) -> torch.Tensor:
+        """Return the cold-path joint position limits as a cached Torch tensor."""
+        resolved = torch.device(device)
+        cached = self._soft_joint_pos_limits_tensor
+        if cached is None or cached.device != resolved:
+            cached = torch.from_numpy(np.array(self.soft_joint_pos_limits, copy=True)).to(
+                device=resolved, dtype=torch.float32
+            )
+            self._soft_joint_pos_limits_tensor = cached
+        return cached
 
     @property
     def encoder_bias(self) -> np.ndarray:

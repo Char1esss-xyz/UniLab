@@ -342,6 +342,10 @@ def test_backend_profiles_materialize_identical_local_entity_contract(backend_ty
     np.testing.assert_array_equal(robot.data.joint_vel, backend.dof_vel[:, [4, 2]])
     np.testing.assert_array_equal(robot.data.default_joint_vel, 0.0)
     np.testing.assert_array_equal(robot.data.soft_joint_pos_limits, backend.joint_range[[4, 2]])
+    soft_limits = robot.data.soft_joint_pos_limits_torch(torch.device("cpu"))
+    torch.testing.assert_close(soft_limits, torch.from_numpy(backend.joint_range[[4, 2]]))
+    assert soft_limits.dtype == torch.float32
+    assert robot.data.soft_joint_pos_limits_torch(torch.device("cpu")) is soft_limits
     np.testing.assert_array_equal(robot.data.gravity_vec_w, [[0.0, 0.0, -1.0]] * 3)
     np.testing.assert_array_equal(robot.data.joint_pos_biased, backend.dof_pos[:, [4, 2]])
     np.testing.assert_array_equal(robot.data.body_link_pos_w, backend.body_pos[:, [7, 4]])
