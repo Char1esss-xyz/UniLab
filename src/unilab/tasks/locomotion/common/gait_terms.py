@@ -38,7 +38,11 @@ if TYPE_CHECKING:
 _DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
 
 
-def _torch_state(value: np.ndarray, *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+def _torch_state(
+    value: np.ndarray | torch.Tensor, *, dtype: torch.dtype = torch.float32
+) -> torch.Tensor:
+    if isinstance(value, torch.Tensor):
+        return value.to(dtype=dtype)
     return torch.from_numpy(np.ascontiguousarray(value)).to(dtype=dtype)
 
 
@@ -66,16 +70,14 @@ def _command_gate(
     term: str,
     command_name: str | None,
     command_threshold: float,
-) -> np.ndarray | None:
+) -> torch.Tensor | None:
     """mjlab command gate: planar norm plus yaw magnitude above the threshold."""
     if command_name is None:
         return None
     command = _command(env, term, command_name)
-    if isinstance(command, torch.Tensor):
-        total = torch.linalg.vector_norm(command[:, :2], dim=1) + torch.abs(command[:, 2])
-        return total > command_threshold
-    total = np.linalg.norm(command[:, :2], axis=1) + np.abs(command[:, 2])
-    return np.asarray(total > command_threshold)
+    command_tensor = _torch_state(command)
+    total = torch.linalg.vector_norm(command_tensor[:, :2], dim=1) + torch.abs(command_tensor[:, 2])
+    return total > command_threshold
 
 
 def _command_name_param(term: str, value: Any, *, required: bool) -> str | None:
@@ -171,19 +173,16 @@ class _FootContactTerm(SensorTermBase):
     def tensor_body_names(self) -> tuple[str, ...]:
         return getattr(self, "_body_names", ())
 
-    def _contact_values(self, env: ManagerBasedRlEnv) -> np.ndarray | torch.Tensor:
+    def _contact_values(self, env: ManagerBasedRlEnv) -> torch.Tensor:
         read_plan = getattr(env.scene, "_tensor_read_plan", None)
         names = self.tensor_sensor_names
         if read_plan is None or not set(names).issubset(
             set(read_plan.sensor_names.get("robot", ()))
         ):
-            values = _state(
-                self.name,
-                "foot contact",
-                self._read(self._view, self.name),
-                (env.num_envs, self._flat_width),
+            raise NotImplementedError(
+                f"Manager term '{self.name}' requires its named sensors "
+                f"{names} in the packed Torch read plan"
             )
-            return np.asarray(values > self._contact_threshold)
         entity = env.scene["robot"]
         values = read_plan.sensor_tensor_views(entity, names).values
         ordered = torch.cat([values[name] for name in names], dim=1)
@@ -199,11 +198,7 @@ class _FootContactTerm(SensorTermBase):
 
     def _contact_feet(self, env: ManagerBasedRlEnv) -> torch.Tensor:
         contact = self._contact_values(env)
-        if isinstance(contact, torch.Tensor):
-            device = contact.device
-        else:
-            device = getattr(env, "device", torch.device("cpu"))
-            contact = torch.as_tensor(contact, device=device)
+        device = contact.device
         if self._group_columns is not None:
             return contact[:, self._group_columns.to(device)].any(dim=2)
         device_columns = [columns.to(device=device) for columns in self._columns]

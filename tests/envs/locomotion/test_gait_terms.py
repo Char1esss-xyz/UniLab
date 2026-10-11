@@ -43,7 +43,12 @@ class _Scene:
             ),
         )
         self._tensor_read_plan = SimpleNamespace(
-            sensor_names={},
+            sensor_names={"robot": tuple(self.contacts)},
+            sensor_tensor_views=lambda entity, names: SimpleNamespace(
+                values={
+                    name: torch.from_numpy(self.contacts[name]).to(torch.float32) for name in names
+                }
+            ),
             body_tensor_view=lambda entity, names=None: SimpleNamespace(
                 pos_w=torch.from_numpy(self.robot.data.body_link_pos_w).to(torch.float32),
                 lin_vel_w=torch.from_numpy(self.robot.data.body_link_lin_vel_w).to(torch.float32),
@@ -297,6 +302,14 @@ def test_self_collision_cost_counts_active_pairs() -> None:
         "self_trunk_right": np.array([[0.0], [0.0]], dtype=np.float32),
         "self_legs": np.array([[1.0], [1.0]], dtype=np.float32),
     }
+    scene._tensor_read_plan = SimpleNamespace(
+        sensor_names={"robot": tuple(scene.contacts)},
+        sensor_tensor_views=lambda entity, names: SimpleNamespace(
+            values={
+                name: torch.from_numpy(scene.contacts[name]).to(torch.float32) for name in names
+            }
+        ),
+    )
     env = _env(scene)
     term = _term(
         gait_terms.self_collision_cost,
