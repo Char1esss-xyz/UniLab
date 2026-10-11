@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
-import numpy as np
 import torch
 from unisim.backend.base import SimBackend
 
@@ -135,16 +134,16 @@ class ManagerEntity(Protocol):
 
     def write_joint_state_to_sim(
         self,
-        position: np.ndarray,
-        velocity: np.ndarray,
-        joint_ids: np.ndarray | Sequence[int] | slice | None = None,
-        env_ids: np.ndarray | slice | None = None,
+        position: torch.Tensor,
+        velocity: torch.Tensor,
+        joint_ids: torch.Tensor | Sequence[int] | slice | None = None,
+        env_ids: torch.Tensor | slice | None = None,
     ) -> None: ...
 
     def write_root_state_tensor_to_sim(
         self,
         root_state: torch.Tensor,
-        env_ids: torch.Tensor | np.ndarray | slice | None = None,
+        env_ids: torch.Tensor,
     ) -> None: ...
 
     def write_motion_state_tensor_to_sim(
@@ -168,10 +167,7 @@ class ManagerSensorView(Protocol):
     @property
     def dimensions(self) -> tuple[int, ...]: ...
 
-    @property
-    def data(self) -> np.ndarray: ...
-
-    def read(self) -> np.ndarray: ...
+    def read(self) -> Any: ...
 
 
 class ManagerScene(Protocol):
@@ -182,19 +178,20 @@ class ManagerScene(Protocol):
 
     def compile_tensor_reads(self, device: str | torch.device, specs: Sequence[Any]) -> Any: ...
 
-    @property
-    def env_origins(self) -> np.ndarray: ...
+    def env_origins_torch(self, device: str | torch.device) -> torch.Tensor: ...
 
     def __getitem__(self, name: str) -> ManagerEntity: ...
 
     def bind_sensor_data(self, names: Sequence[str]) -> ManagerSensorView: ...
 
-    def reset_to_default(self, env_ids: np.ndarray, *, term_name: str) -> None: ...
+    def reset_to_default(self, env_ids: torch.Tensor, *, term_name: str) -> None: ...
 
-    def bind_gravity_write(self, *, term_name: str) -> np.ndarray: ...
+    def bind_gravity_write_torch(
+        self, *, term_name: str, device: str | torch.device
+    ) -> torch.Tensor: ...
 
     def write_gravity_to_sim(
-        self, values: np.ndarray, env_ids: np.ndarray, *, term_name: str
+        self, values: torch.Tensor, env_ids: torch.Tensor, *, term_name: str
     ) -> None: ...
 
     @property
@@ -203,9 +200,9 @@ class ManagerScene(Protocol):
 
 class ManagerActionTerm(Protocol):
     @property
-    def raw_action(self) -> np.ndarray | torch.Tensor: ...
+    def raw_action(self) -> torch.Tensor: ...
 
-    def process_actions(self, actions: np.ndarray | torch.Tensor) -> None: ...
+    def process_actions(self, actions: torch.Tensor) -> None: ...
 
 
 class ManagerActionManager(Protocol):
@@ -262,10 +259,7 @@ class ManagerBasedRlEnv(Protocol):
     def device(self) -> torch.device: ...
 
     @property
-    def rng(self) -> np.random.Generator: ...
-
-    @property
-    def torch_rng(self) -> TorchManagerRng | None: ...
+    def torch_rng(self) -> TorchManagerRng: ...
 
     @property
     def cfg(self) -> Any: ...
@@ -273,10 +267,9 @@ class ManagerBasedRlEnv(Protocol):
     @property
     def backend(self) -> SimBackend: ...
 
-    _tensor_reset_default_root_state: torch.Tensor | None
-    _tensor_reset_env_origins: torch.Tensor | None
     _tensor_reset_pose_bounds: torch.Tensor | None
     _tensor_reset_velocity_bounds: torch.Tensor | None
+    _tensor_reset_bounds_key: tuple[Any, ...] | None
 
     @property
     def physics_dt(self) -> float: ...
@@ -309,7 +302,7 @@ class ManagerBasedRlEnv(Protocol):
     def episode_length_buf(self) -> torch.Tensor: ...
 
     @property
-    def reset_buf(self) -> np.ndarray: ...
+    def reset_buf(self) -> torch.Tensor: ...
 
     @property
     def common_step_counter(self) -> int: ...

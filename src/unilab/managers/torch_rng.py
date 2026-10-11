@@ -1,18 +1,15 @@
-"""Torch-native RNG adapter for explicit device-resident Manager owners.
+"""Torch-native RNG adapter for Manager owners.
 
-The generic Manager seam remains NumPy-owned: ``ManagerBasedRlEnv.rng`` is still
-an ``np.random.Generator`` and its exact stream semantics are covered by tests.
-This adapter is deliberately opt-in for narrow tensor-native owners whose cold
-contract extraction does not execute generic random Manager terms. It never
-converts drawn tensors back to NumPy, so a CUDA owner can keep randomization on
-its declared device.
+The Manager environment owns one explicit CPU or CUDA ``torch.Generator`` and
+publishes this adapter as ``ManagerBasedRlEnv.torch_rng``. It never converts
+drawn tensors back to NumPy, so a CUDA owner can keep randomization on its
+declared device.
 """
 
 from __future__ import annotations
 
 from typing import cast
 
-import numpy as np
 import torch
 
 
@@ -29,7 +26,7 @@ def _shape(size: int | tuple[int, ...]) -> tuple[int, ...]:
 
 
 def _bounds(
-    value: float | int | np.ndarray | torch.Tensor,
+    value: float | int | torch.Tensor,
     *,
     name: str,
     device: torch.device,
@@ -37,14 +34,10 @@ def _bounds(
 ) -> torch.Tensor | float:
     if isinstance(value, (float, int)) and not isinstance(value, bool):
         return float(value)
-    if isinstance(value, np.ndarray):
-        tensor = torch.as_tensor(np.ascontiguousarray(value), dtype=dtype, device=device)
-    elif isinstance(value, torch.Tensor):
+    if isinstance(value, torch.Tensor):
         tensor = value.to(device=device, dtype=dtype)
     else:
-        raise TypeError(
-            f"TorchManagerRng {name} must be a scalar or ndarray/Tensor bounds, got {value!r}"
-        )
+        raise TypeError(f"TorchManagerRng {name} must be a scalar or Tensor bounds, got {value!r}")
     if tensor.numel() == 0:
         raise ValueError(f"TorchManagerRng {name} cannot be empty")
     return tensor
@@ -104,7 +97,7 @@ class TorchManagerRng:
         return cls(device=device).manual_seed(seed)
 
     def manual_seed(self, seed: int) -> TorchManagerRng:
-        if isinstance(seed, bool) or not isinstance(seed, (int, np.integer)) or int(seed) < 0:
+        if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
             raise ValueError(f"TorchManagerRng seed must be a non-negative integer, got {seed!r}")
         self.generator.manual_seed(int(seed))
         return self
@@ -116,8 +109,8 @@ class TorchManagerRng:
 
     def uniform(
         self,
-        low: float | int | np.ndarray | torch.Tensor,
-        high: float | int | np.ndarray | torch.Tensor,
+        low: float | int | torch.Tensor,
+        high: float | int | torch.Tensor,
         size: int | tuple[int, ...],
         *,
         dtype: torch.dtype = torch.float32,
@@ -136,8 +129,8 @@ class TorchManagerRng:
 
     def normal(
         self,
-        mean: float | int | np.ndarray | torch.Tensor,
-        std: float | int | np.ndarray | torch.Tensor,
+        mean: float | int | torch.Tensor,
+        std: float | int | torch.Tensor,
         size: int | tuple[int, ...],
         *,
         dtype: torch.dtype = torch.float32,
@@ -151,21 +144,17 @@ class TorchManagerRng:
 
     def integers(
         self,
-        low: int | np.integer,
-        high: int | np.integer,
+        low: int,
+        high: int,
         size: int | tuple[int, ...],
         *,
         dtype: torch.dtype = torch.int64,
     ) -> torch.Tensor:
-        if isinstance(low, bool) or not isinstance(low, (int, np.integer)) or int(low) < 0:
+        if isinstance(low, bool) or not isinstance(low, int) or low < 0:
             raise ValueError(
                 f"TorchManagerRng integers low must be a non-negative integer, got {low!r}"
             )
-        if (
-            isinstance(high, bool)
-            or not isinstance(high, (int, np.integer))
-            or int(high) <= int(low)
-        ):
+        if isinstance(high, bool) or not isinstance(high, int) or high <= low:
             raise ValueError(
                 f"TorchManagerRng integers high must be greater than low, got {low!r}, {high!r}"
             )

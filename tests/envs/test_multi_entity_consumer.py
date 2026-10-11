@@ -210,7 +210,8 @@ def test_registry_factory_mujoco_multi_entity_reset_isolation(num_envs):
         object_before = env.scene["object"].data.root_link_pose_w.copy()
         with env._reset_state.scoped(torch.tensor([1], dtype=torch.int64)):
             env.scene["object"].write_root_link_pose_to_sim(
-                np.array([[0.3, 0.4, 2.0, 1.0, 0.0, 0.0, 0.0]]), env_ids=np.array([1])
+                np.array([[0.3, 0.4, 2.0, 1.0, 0.0, 0.0, 0.0]]),
+                env_ids=torch.tensor([1], dtype=torch.int64),
             )
         np.testing.assert_array_equal(env.scene["robot"].data.joint_pos, robot_before)
         np.testing.assert_array_equal(
@@ -221,7 +222,9 @@ def test_registry_factory_mujoco_multi_entity_reset_isolation(num_envs):
             pytest.raises(ValueError),
             env._reset_state.scoped(torch.tensor([1], dtype=torch.int64)),
         ):
-            env.scene["object"].write_root_link_pose_to_sim(np.zeros((1, 7)), env_ids=np.array([1]))
+            env.scene["object"].write_root_link_pose_to_sim(
+                np.zeros((1, 7)), env_ids=torch.tensor([1], dtype=torch.int64)
+            )
         np.testing.assert_array_equal(env.scene["robot"].data.joint_pos, robot_before)
     finally:
         env.close()
@@ -243,7 +246,8 @@ def test_registry_factory_mujoco_consumes_portable_profile_operation_fixture():
         mirror_before = env.scene["target"].data.root_link_pose_w.copy()
         with env._reset_state.scoped(torch.tensor([3], dtype=torch.int64)):
             env.scene["object"].write_root_link_pose_to_sim(
-                np.array([[0.4, -0.2, 1.5, 1.0, 0.0, 0.0, 0.0]]), env_ids=np.array([3])
+                np.array([[0.4, -0.2, 1.5, 1.0, 0.0, 0.0, 0.0]]),
+                env_ids=torch.tensor([3], dtype=torch.int64),
             )
         np.testing.assert_allclose(env.scene["object"].data.root_link_pos_w[3], [0.4, -0.2, 1.5])
         np.testing.assert_array_equal(env.scene["target"].data.root_link_pose_w, mirror_before)
@@ -325,13 +329,15 @@ def test_native_isaacsim_same_manager_task(passive, tmp_path):
         before = env.scene["robot"].data.joint_pos.copy()
         with env._reset_state.scoped(torch.tensor([1], dtype=torch.int64)):
             env.scene["object"].write_root_link_pose_to_sim(
-                np.array([[0.3, 0.4, 2.0, 1.0, 0.0, 0.0, 0.0]]), env_ids=np.array([1])
+                np.array([[0.3, 0.4, 2.0, 1.0, 0.0, 0.0, 0.0]]),
+                env_ids=torch.tensor([1], dtype=torch.int64),
             )
         np.testing.assert_array_equal(env.scene["robot"].data.joint_pos, before)
         if not passive:
             with env._reset_state.scoped(torch.tensor([1], dtype=torch.int64)):
                 env.scene["target"].write_root_link_pose_to_sim(
-                    np.array([[3.0, 2.0, 1.0, 1.0, 0.0, 0.0, 0.0]]), env_ids=np.array([1])
+                    np.array([[3.0, 2.0, 1.0, 1.0, 0.0, 0.0, 0.0]]),
+                    env_ids=torch.tensor([1], dtype=torch.int64),
                 )
             np.testing.assert_allclose(env.scene["target"].data.root_link_pos_w[1], [3, 2, 1])
         (tmp_path / "evidence.json").write_text(

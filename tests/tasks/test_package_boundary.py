@@ -18,6 +18,41 @@ _TASK_REGISTRY_MODULES = (
     "unilab.tasks.motion_tracking.g1",
 )
 
+_RUNTIME_NUMPY_ALLOWLIST = {
+    "src/unilab/tasks/motion_tracking/common/motion_loader.py",
+}
+_PRODUCTION_NUMPY_IMPORT_ALLOWLIST = {
+    # Base-owner adapter/reset-host boundary. These modules negotiate CPU
+    # backend host formats and legacy play APIs; they are not Manager runtime.
+    "src/unilab/base/base.py",
+    "src/unilab/base/entity.py",
+    "src/unilab/base/reset_state.py",
+    "src/unilab/base/rotation.py",
+    "src/unilab/base/scene.py",
+    "src/unilab/base/torch_env.py",
+    "src/unilab/base/variants.py",
+    # Cold asset/materialization leaves.
+    "src/unilab/terrains/heightfield_terrains.py",
+    "src/unilab/terrains/utils.py",
+    # Serialization and external interop.
+    "src/unilab/training/onnx_export.py",
+    "src/unilab/training/tensor_diagnostics.py",
+    "src/unilab/utils/nan_viz.py",
+    # Playback/rendering/visualization host formats.
+    "src/unilab/scripts/play_interactive.py",
+    "src/unilab/scripts/train_rsl_rl.py",
+    "src/unilab/visualization/debug_primitives.py",
+    "src/unilab/visualization/interactive_playback.py",
+    "src/unilab/visualization/playback.py",
+    "src/unilab/visualization/playback_session.py",
+    "src/unilab/visualization/playback_state.py",
+    "src/unilab/visualization/render_many.py",
+    "src/unilab/visualization/viser_playback.py",
+    "src/unilab/visualization/viser_scene.py",
+    # Cold NPZ motion ingestion.
+    *_RUNTIME_NUMPY_ALLOWLIST,
+}
+
 
 def _imports(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -75,6 +110,161 @@ def test_tensor_runtime_switch_is_absent_from_source_and_owner_configs() -> None
     assert offenders == [], f"tensor-runtime switch references remain: {offenders}"
 
 
+def test_production_source_does_not_import_or_configure_numba() -> None:
+    source_root = _REPO_ROOT / "src" / "unilab"
+    import_violations = [
+        (path.relative_to(_REPO_ROOT).as_posix(), module)
+        for path in sorted(source_root.rglob("*.py"))
+        for module in sorted(_imports(path))
+        if module == "numba" or module.startswith("numba.")
+    ]
+    configuration_violations = [
+        (path.relative_to(_REPO_ROOT).as_posix(), line_number, line.strip())
+        for path in sorted(source_root.rglob("*.py"))
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if "NUMBA_" in line or "set_num_threads" in line
+    ]
+
+    assert import_violations == [], f"production Numba imports remain: {import_violations}"
+    assert configuration_violations == [], (
+        f"production Numba configuration remains: {configuration_violations}"
+    )
+
+
+def test_manager_base_curriculum_and_event_core_do_not_import_numpy() -> None:
+    manager_core_paths = (
+        _REPO_ROOT / "src" / "unilab" / "managers" / "manager_base.py",
+        _REPO_ROOT / "src" / "unilab" / "managers" / "curriculum_manager.py",
+        _REPO_ROOT / "src" / "unilab" / "managers" / "event_manager.py",
+    )
+    violations = [
+        (path.relative_to(_REPO_ROOT).as_posix(), module)
+        for path in manager_core_paths
+        for module in sorted(_imports(path))
+        if module == "numpy" or module.startswith("numpy.")
+    ]
+
+    assert violations == [], f"manager core NumPy imports remain: {violations}"
+
+
+def test_manager_scheduling_has_no_numpy_rng_fallback() -> None:
+    paths = (
+        _REPO_ROOT / "src" / "unilab" / "managers" / "command_manager.py",
+        _REPO_ROOT / "src" / "unilab" / "managers" / "event_manager.py",
+    )
+    offenders = [
+        (path.relative_to(_REPO_ROOT).as_posix(), line_number, line.strip())
+        for path in paths
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if ".rng.uniform" in line
+    ]
+
+    assert offenders == [], f"Manager scheduling NumPy RNG fallbacks remain: {offenders}"
+
+
+def test_generic_event_terms_do_not_use_environment_numpy_rng() -> None:
+    path = _REPO_ROOT / "src" / "unilab" / "envs" / "mdp" / "events.py"
+    offenders = [
+        line_number
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if "env.rng" in line or "self._env.rng" in line
+    ]
+
+    assert offenders == [], f"generic event NumPy RNG references remain at lines: {offenders}"
+
+
+def test_manager_noise_and_temporal_buffers_do_not_import_numpy() -> None:
+    source_root = _REPO_ROOT / "src" / "unilab" / "managers"
+    owner_paths = (
+        *sorted((source_root / "_buffers").glob("*.py")),
+        *sorted((source_root / "_noise").glob("*.py")),
+    )
+    violations = [
+        (path.relative_to(_REPO_ROOT).as_posix(), module)
+        for path in owner_paths
+        for module in sorted(_imports(path))
+        if module == "numpy" or module.startswith("numpy.")
+    ]
+
+    assert violations == [], f"buffer/noise NumPy imports remain: {violations}"
+
+
+def test_locomotion_runtime_terms_do_not_use_environment_numpy_rng() -> None:
+    paths = (_REPO_ROOT / "src" / "unilab" / "tasks" / "locomotion" / "g1" / "manager_terms.py",)
+    offenders = [
+        (path.relative_to(_REPO_ROOT).as_posix(), line_number)
+        for path in paths
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if "env.rng" in line or "self._env.rng" in line
+    ]
+
+    assert offenders == [], f"locomotion NumPy RNG references remain: {offenders}"
+
+
+def test_reward_and_termination_managers_do_not_import_numpy() -> None:
+    paths = (
+        _REPO_ROOT / "src" / "unilab" / "managers" / "reward_manager.py",
+        _REPO_ROOT / "src" / "unilab" / "managers" / "termination_manager.py",
+    )
+    violations = [
+        (path.relative_to(_REPO_ROOT).as_posix(), module)
+        for path in paths
+        for module in sorted(_imports(path))
+        if module == "numpy" or module.startswith("numpy.")
+    ]
+
+    assert violations == [], f"reward/termination NumPy imports remain: {violations}"
+
+
+def test_observation_manager_has_no_numpy_result_conversion() -> None:
+    path = _REPO_ROOT / "src" / "unilab" / "managers" / "observation_manager.py"
+    text = path.read_text(encoding="utf-8")
+    offenders = [
+        pattern
+        for pattern in ("np.ndarray | torch.Tensor", "torch.from_numpy", "expected np.ndarray")
+        if pattern in text
+    ]
+
+    assert offenders == [], f"observation NumPy result conversion remains: {offenders}"
+
+
+def test_manager_publication_boundary_has_no_numpy_conversion() -> None:
+    path = _REPO_ROOT / "src" / "unilab" / "envs" / "manager_based_rl_env.py"
+    offenders = [
+        line_number
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if "np.array(values" in line or "torch.from_numpy(host)" in line
+    ]
+
+    assert offenders == [], f"Manager publication NumPy conversion remains: {offenders}"
+
+
+def test_metrics_and_recorder_managers_do_not_import_numpy() -> None:
+    paths = (
+        _REPO_ROOT / "src" / "unilab" / "managers" / "metrics_manager.py",
+        _REPO_ROOT / "src" / "unilab" / "managers" / "recorder_manager.py",
+    )
+    violations = [
+        (path.relative_to(_REPO_ROOT).as_posix(), module)
+        for path in paths
+        for module in sorted(_imports(path))
+        if module == "numpy" or module.startswith("numpy.")
+    ]
+
+    assert violations == [], f"metrics/recorder NumPy imports remain: {violations}"
+
+
+def test_manager_env_protocol_reset_buffer_is_torch() -> None:
+    path = _REPO_ROOT / "src" / "unilab" / "managers" / "_types.py"
+    offenders = [
+        line_number
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if "def reset_buf(self) -> np.ndarray" in line
+    ]
+
+    assert offenders == [], f"Manager reset buffer remains NumPy-typed: {offenders}"
+
+
 def test_flashsac_motion_owner_uses_generic_manager_runtime() -> None:
     registry.ensure_registries()
     assert "motrix" in registry._envs["G1MotionTracking"].env_factory_dict
@@ -83,3 +273,75 @@ def test_flashsac_motion_owner_uses_generic_manager_runtime() -> None:
 def test_motion_direct_runtime_is_removed() -> None:
     direct_runtime = _REPO_ROOT / "src/unilab/tasks/motion_tracking/g1/torch_flashsac_env.py"
     assert not direct_runtime.exists()
+
+
+def test_manager_and_env_runtime_do_not_import_numpy() -> None:
+    runtime_roots = (
+        _REPO_ROOT / "src" / "unilab" / "managers",
+        _REPO_ROOT / "src" / "unilab" / "envs",
+    )
+    violations = [
+        (path.relative_to(_REPO_ROOT).as_posix(), module)
+        for root in runtime_roots
+        for path in sorted(root.rglob("*.py"))
+        for module in sorted(_imports(path))
+        if module == "numpy" or module.startswith("numpy.")
+    ]
+
+    assert violations == [], f"Manager/env NumPy imports remain: {violations}"
+
+
+def test_task_runtime_numpy_is_limited_to_cold_npz_loader() -> None:
+    task_root = _REPO_ROOT / "src" / "unilab" / "tasks"
+    violations = [
+        (path.relative_to(_REPO_ROOT).as_posix(), module)
+        for path in sorted(task_root.rglob("*.py"))
+        for module in sorted(_imports(path))
+        if (module == "numpy" or module.startswith("numpy."))
+        and path.relative_to(_REPO_ROOT).as_posix() not in _RUNTIME_NUMPY_ALLOWLIST
+    ]
+
+    assert violations == [], f"unallowlisted task NumPy imports remain: {violations}"
+
+
+def test_manager_env_and_task_runtime_have_no_numpy_conversion() -> None:
+    runtime_roots = (
+        _REPO_ROOT / "src" / "unilab" / "managers",
+        _REPO_ROOT / "src" / "unilab" / "envs",
+        _REPO_ROOT / "src" / "unilab" / "tasks",
+    )
+    offenders = [
+        (path.relative_to(_REPO_ROOT).as_posix(), line_number, line.strip())
+        for root in runtime_roots
+        for path in sorted(root.rglob("*.py"))
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if (".numpy()" in line or ".cpu().numpy()" in line or "torch.from_numpy(" in line)
+        and path.relative_to(_REPO_ROOT).as_posix() not in _RUNTIME_NUMPY_ALLOWLIST
+    ]
+
+    assert offenders == [], f"runtime NumPy conversions remain: {offenders}"
+
+
+def test_production_source_does_not_seed_global_numpy_rng() -> None:
+    source_root = _REPO_ROOT / "src" / "unilab"
+    offenders = [
+        (path.relative_to(_REPO_ROOT).as_posix(), line_number, line.strip())
+        for path in sorted(source_root.rglob("*.py"))
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if "np.random.seed(" in line or "numpy.random.seed(" in line
+    ]
+
+    assert offenders == [], f"global NumPy RNG seeding remains: {offenders}"
+
+
+def test_production_numpy_imports_are_explicit_leaves() -> None:
+    source_root = _REPO_ROOT / "src" / "unilab"
+    violations = [
+        (path.relative_to(_REPO_ROOT).as_posix(), module)
+        for path in sorted(source_root.rglob("*.py"))
+        for module in sorted(_imports(path))
+        if (module == "numpy" or module.startswith("numpy."))
+        and path.relative_to(_REPO_ROOT).as_posix() not in _PRODUCTION_NUMPY_IMPORT_ALLOWLIST
+    ]
+
+    assert violations == [], f"unallowlisted production NumPy imports remain: {violations}"

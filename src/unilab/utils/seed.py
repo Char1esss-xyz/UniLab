@@ -6,7 +6,6 @@ import random
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 from omegaconf import OmegaConf
 
 
@@ -76,7 +75,6 @@ def apply_training_seed(
         raise ValueError(f"seed must be non-negative, got {effective_seed}")
 
     random.seed(effective_seed)
-    np.random.seed(effective_seed)
 
     if torch_runtime:
         try:

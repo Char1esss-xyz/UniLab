@@ -223,6 +223,7 @@ ENV_STEP_COUNT_KEYS = (
     "reset_done_command_term_count",
     "reset_done_manager_reset_count",
     "reset_done_observation_term_count",
+    "reset_done_sampler_dispatch_count",
     "reset_done_sampler_host_transfer_count",
 )
 ENV_STEP_SAMPLE_KEYS = (*ENV_STEP_TIMING_KEYS, *ENV_STEP_COUNT_KEYS)
@@ -374,8 +375,9 @@ class CollectorResult:
     env_step_overhead_ms_per_vector_step: TimingStats | None = None
     # System-wide CPU utilization (%) over the measured window. NaN if unknown.
     cpu_util_pct: float = float("nan")
-    # NumPy random time measured inside collector env.step() only. This is an
-    # optional benchmark-side monkeypatch used for RNG/noise-buffer profiling.
+    # Legacy NumPy random time measured inside collector env.step() only. The
+    # Manager training RNG is Torch-owned; this remains useful for cold terrain
+    # and external NumPy leaves during benchmark windows.
     numpy_random_ms_per_vector_step: TimingStats | None = None
     numpy_random_calls_per_vector_step: TimingStats | None = None
     # Public backend runtime diagnostics, captured after construction and before
@@ -463,28 +465,15 @@ def _cleanup() -> None:
 class _NumpyRandomProfiler:
     """Measure selected NumPy RNG calls inside a benchmark window.
 
-    Legacy ``np.random`` module functions are patched directly. NumPy's
-    built-in Generator type is immutable, so an optional ``bind_generator``
-    proxy provides equivalent timing for an environment-owned Generator during
-    measured steps; every delegated call and state accessor still uses the
-    original generator.
+    Legacy ``np.random`` module functions are patched directly. The Manager
+    training RNG is Torch-owned and is intentionally not proxied by this tool.
     """
-
-    GENERATOR_PROFILE_METHODS = (
-        "random",
-        "uniform",
-        "integers",
-        "normal",
-        "standard_normal",
-        "choice",
-    )
 
     def __init__(self) -> None:
         self.enabled = False
         self.step_ms = 0.0
         self.step_calls = 0
         self._originals: dict[tuple[type, str], Any] = {}
-        self._generator: np.random.Generator | None = None
 
     def install(self) -> None:
         if self._originals:
@@ -501,60 +490,6 @@ class _NumpyRandomProfiler:
             setattr(owner, name, original)
         self._originals.clear()
         self.enabled = False
-        self._generator = None
-
-    def bind_generator(self, generator: Any) -> Any:
-        """Return a timing proxy for one env-owned NumPy Generator."""
-        if not isinstance(generator, np.random.Generator):
-            raise TypeError(f"expected np.random.Generator, got {type(generator).__name__}")
-        if self._generator is not None and self._generator is not generator:
-            raise RuntimeError("NumpyRandomProfiler already owns a different Generator")
-        self._generator = generator
-        profiler = self
-
-        class _GeneratorProxy:
-            def __getattr__(self, name: str) -> Any:
-                return getattr(profiler._require_generator(), name)
-
-            def random(self, *args: Any, **kwargs: Any) -> Any:
-                return profiler._timed_generator("random", *args, **kwargs)
-
-            def uniform(self, *args: Any, **kwargs: Any) -> Any:
-                return profiler._timed_generator("uniform", *args, **kwargs)
-
-            def integers(self, *args: Any, **kwargs: Any) -> Any:
-                return profiler._timed_generator("integers", *args, **kwargs)
-
-            def normal(self, *args: Any, **kwargs: Any) -> Any:
-                return profiler._timed_generator("normal", *args, **kwargs)
-
-            def standard_normal(self, *args: Any, **kwargs: Any) -> Any:
-                return profiler._timed_generator("standard_normal", *args, **kwargs)
-
-            def choice(self, *args: Any, **kwargs: Any) -> Any:
-                return profiler._timed_generator("choice", *args, **kwargs)
-
-        return _GeneratorProxy()
-
-    def restore_generator(self) -> Any:
-        generator = self._generator
-        self._generator = None
-        return generator
-
-    def _require_generator(self) -> np.random.Generator:
-        if self._generator is None:
-            raise RuntimeError("Generator proxy was used before bind_generator()")
-        return self._generator
-
-    def _timed_generator(self, name: str, *args: Any, **kwargs: Any) -> Any:
-        if not self.enabled:
-            return getattr(self._require_generator(), name)(*args, **kwargs)
-        started = time.perf_counter_ns()
-        try:
-            return getattr(self._require_generator(), name)(*args, **kwargs)
-        finally:
-            self.step_ms += (time.perf_counter_ns() - started) / 1e6
-            self.step_calls += 1
 
     def begin_step(self) -> None:
         self.step_ms = 0.0
@@ -853,14 +788,11 @@ def _run_active_window_case(
 
     if random_profiler is not None:
         random_profiler.install()
-        owner_rng = getattr(env, "rng", None)
-        if owner_rng is not None:
-            if not isinstance(owner_rng, np.random.Generator):
-                raise TypeError(
-                    "profile-numpy-random expected env.rng to be np.random.Generator, "
-                    f"got {type(owner_rng).__name__}"
-                )
-            env.rng = random_profiler.bind_generator(owner_rng)
+        if hasattr(env, "rng"):
+            raise TypeError(
+                "profile-numpy-random no longer binds environment RNG; Manager "
+                "training randomness is Torch-owned"
+            )
     try:
         for step_idx in range(total_steps):
             record = step_idx >= warmup_steps
@@ -982,9 +914,6 @@ def _run_active_window_case(
                         env_step_timing_samples.setdefault(key, []).append(value)
     finally:
         if random_profiler is not None:
-            original_rng = random_profiler.restore_generator()
-            if original_rng is not None:
-                env.rng = original_rng
             random_profiler.uninstall()
 
     # Measured-window system CPU utilization (see cpu_probe_start comment).

@@ -68,6 +68,12 @@ class _Entity:
                 dtype=np.float32,
             ),
             gravity_vec_w=np.asarray([0.0, 0.0, -1.0], dtype=np.float32),
+            default_joint_pos_torch=lambda device: torch.as_tensor(
+                [[0.1, 0.0, 0.2]] * 3, dtype=torch.float32, device=device
+            ),
+            soft_joint_pos_limits_torch=lambda device: torch.as_tensor(
+                [[-0.15, 0.15], [-0.3, 0.3], [-0.4, 0.4]], dtype=torch.float32, device=device
+            ),
         )
 
     def find_joints(self, keys, preserve_order: bool = False):
@@ -89,10 +95,7 @@ class _CommandManager:
 
 
 def _env() -> ManagerBasedRlEnv:
-    action = np.asarray(
-        [[1.0, 2.0], [0.5, -0.5], [-1.0, 0.25]],
-        dtype=np.float32,
-    )
+    action = torch.tensor([[1.0, 2.0], [0.5, -0.5], [-1.0, 0.25]], dtype=torch.float32)
     return cast(
         ManagerBasedRlEnv,
         SimpleNamespace(
@@ -104,9 +107,7 @@ def _env() -> ManagerBasedRlEnv:
                 prev_prev_action=action - 0.75,
             ),
             command_manager=_CommandManager(),
-            termination_manager=SimpleNamespace(
-                terminated=np.asarray([False, True, False], dtype=np.bool_)
-            ),
+            termination_manager=SimpleNamespace(terminated=torch.tensor([False, True, False])),
             max_episode_length_s=2.0,
         ),
     )
@@ -173,10 +174,12 @@ def test_velocity_tracking_terms_match_pinned_equations() -> None:
     np.testing.assert_allclose(
         mdp.track_linear_velocity(env, std=0.5, command_name="twist"),
         np.exp(-linear_error / 0.5**2),
+        rtol=2e-6,
     )
     np.testing.assert_allclose(
         mdp.track_angular_velocity(env, std=0.4, command_name="twist"),
         np.exp(-angular_error / 0.4**2),
+        rtol=2e-6,
     )
 
 
@@ -237,7 +240,7 @@ def test_posture_matches_mjlab_per_joint_std_kernel() -> None:
         scale_by_dt=False,
     )
     expected = _posture_expected(entity, np.asarray([0.5, 0.35, 0.25]), [0, 1, 2])
-    np.testing.assert_allclose(manager.compute(dt=0.02), expected)
+    np.testing.assert_allclose(manager.compute(dt=0.02), expected, rtol=2e-6)
 
 
 def test_variable_posture_selects_std_by_command_speed_regime() -> None:
@@ -265,7 +268,7 @@ def test_variable_posture_selects_std_by_command_speed_regime() -> None:
             _posture_expected(entity, np.full(3, 0.1), [0, 1, 2])[2],
         ]
     )
-    np.testing.assert_allclose(manager.compute(dt=0.02), expected)
+    np.testing.assert_allclose(manager.compute(dt=0.02), expected, rtol=2e-6)
 
 
 def test_posture_std_mapping_fail_closed() -> None:
@@ -327,7 +330,7 @@ def test_terms_integrate_with_reward_manager_and_cold_selector_resolution() -> N
     result = manager.compute(dt=0.02)
     entity = cast(Any, env.scene["robot"])
     expected = -0.5 * np.sum(np.square(entity.data.joint_vel[:, [2, 0]]), axis=1)
-    expected += 2.0 * mdp.track_linear_velocity(env, std=0.5, command_name="twist")
+    expected += 2.0 * mdp.track_linear_velocity(env, std=0.5, command_name="twist").detach().numpy()
     np.testing.assert_allclose(result, expected)
     resolved = manager.get_term_cfg("joint_velocity").params["asset_cfg"]
     assert resolved.joint_ids == [2, 0]

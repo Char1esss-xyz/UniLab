@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 import gymnasium as gym
-import numpy as np
 import torch
 from unisim.backend.base import (
     DebugOverlayGetter,
@@ -74,6 +73,10 @@ from unilab.managers import (
     TorchManagerRng,
 )
 from unilab.managers.scene_entity_config import SceneEntityCfg
+
+
+def _finite_real(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _manager_terms_field() -> Any:
@@ -138,29 +141,25 @@ class ManagerBasedRlEnvCfg(EnvCfg):
                     f"None; got {self.manager_torch_device!r}"
                 )
         for name, value in (("sim_dt", self.sim_dt), ("ctrl_dt", self.ctrl_dt)):
-            if isinstance(value, bool) or not isinstance(value, (int, float, np.number)):
+            if not _finite_real(value):
                 raise TypeError(f"ManagerBasedRlEnvCfg {name} must be a real number")
-            if not np.isfinite(value) or value <= 0.0:
+            if value <= 0.0:
                 raise ValueError(f"ManagerBasedRlEnvCfg {name} must be finite and positive")
         super().validate()
         ratio = self.ctrl_dt / self.sim_dt
-        if not np.isclose(ratio, round(ratio), rtol=0.0, atol=1e-9):
+        if not math.isclose(ratio, round(ratio), rel_tol=0.0, abs_tol=1e-9):
             raise ValueError(
                 "ManagerBasedRlEnvCfg ctrl_dt must be an integer multiple of sim_dt; "
                 f"received ctrl_dt={self.ctrl_dt}, sim_dt={self.sim_dt}"
             )
         if self.max_episode_seconds is None:
             raise ValueError("ManagerBasedRlEnvCfg max_episode_seconds must be finite and positive")
-        if isinstance(self.max_episode_seconds, bool) or not isinstance(
-            self.max_episode_seconds, (int, float, np.number)
-        ):
+        if not _finite_real(self.max_episode_seconds):
             raise TypeError("ManagerBasedRlEnvCfg max_episode_seconds must be a real number")
-        if not np.isfinite(self.max_episode_seconds) or self.max_episode_seconds <= 0.0:
+        if self.max_episode_seconds <= 0.0:
             raise ValueError("ManagerBasedRlEnvCfg max_episode_seconds must be finite and positive")
         if self.seed is not None and (
-            isinstance(self.seed, bool)
-            or not isinstance(self.seed, (int, np.integer))
-            or self.seed < 0
+            isinstance(self.seed, bool) or not isinstance(self.seed, int) or self.seed < 0
         ):
             raise ValueError("ManagerBasedRlEnvCfg seed must be a non-negative integer or None")
         if self.seed is not None:
@@ -313,12 +312,11 @@ class ManagerBasedRlEnv(TorchEnv):
     metrics_manager: MetricsManager | NullMetricsManager
     recorder_manager: RecorderManager | NullRecorderManager
     _tensor_read_plan: SceneTensorReadPlan | None
-    _tensor_reset_default_root_state: torch.Tensor | None
     _last_reset_manager_timing_ms: dict[str, float]
-    _tensor_reset_env_origins: torch.Tensor | None
     _tensor_reset_env_origins_nonzero: bool | None
     _tensor_reset_pose_bounds: torch.Tensor | None
     _tensor_reset_velocity_bounds: torch.Tensor | None
+    _tensor_reset_bounds_key: tuple[Any, ...] | None
 
     def __init__(self, cfg: ManagerBasedRlEnvCfg, backend: SimBackend, num_envs: int):
         if not isinstance(cfg, ManagerBasedRlEnvCfg):
@@ -343,18 +341,16 @@ class ManagerBasedRlEnv(TorchEnv):
         super().__init__(cfg, backend, num_envs, device=runtime_device)
         actual_seed = cfg.seed if cfg.seed is not None else secrets.randbits(63)
         cfg.seed = actual_seed
-        self.rng = np.random.default_rng(actual_seed)
-        self._torch_rng_owner = TorchManagerRng(device=self.device)
+        self._torch_rng_owner = TorchManagerRng(device=self.device).manual_seed(actual_seed)
         self.torch_rng = self._torch_rng_owner
         self._torch_generator = self._torch_rng_owner.generator if self._torch_rng_owner else None
         self._reward_log_names: tuple[str, ...] = ()
         self._reward_log_means = torch.empty(0, dtype=torch.float32, device=self.device)
         self._last_reset_manager_timing_ms = {}
-        self._tensor_reset_default_root_state = None
-        self._tensor_reset_env_origins = None
         self._tensor_reset_env_origins_nonzero = None
         self._tensor_reset_pose_bounds = None
         self._tensor_reset_velocity_bounds = None
+        self._tensor_reset_bounds_key = None
 
         assert cfg.scene is not None
         default_qpos = resolve_scene_default_qpos(cfg.scene, backend)
@@ -480,7 +476,7 @@ class ManagerBasedRlEnv(TorchEnv):
                             sensor_names=tuple(sensor_names),
                         )
                     )
-                if self.device.type != "cpu" and term_cfg.func in (
+                if term_cfg.func in (
                     mdp.joint_pos_rel,
                     mdp.joint_vel_rel,
                 ):
@@ -520,6 +516,8 @@ class ManagerBasedRlEnv(TorchEnv):
         narrow = (
             self._backend.get_tensor_capabilities().execution is TensorExecution.DEVICE_RESIDENT
         )
+        for name, term_cfg in self.event_manager.term_cfgs.items():
+            specs.extend(self._manager_term_body_read_specs("event", name, term_cfg.func))
         for manager_name, manager in (
             ("reward", self.reward_manager),
             ("termination", self.termination_manager),
@@ -533,10 +531,48 @@ class ManagerBasedRlEnv(TorchEnv):
                         narrow=narrow,
                     )
                 )
-                if manager_name == "termination":
-                    term = manager.get_term_cfg(name).func
-                    specs.extend(self._manager_term_body_read_specs(manager_name, name, term))
+                term = manager.get_term_cfg(name).func
+                specs.extend(self._manager_term_body_read_specs(manager_name, name, term))
+                if term in (
+                    mdp.bad_orientation,
+                    mdp.flat_orientation_l2,
+                    mdp.root_height,
+                    mdp.track_linear_velocity,
+                    mdp.track_angular_velocity,
+                    mdp.root_height_below_minimum,
+                    mdp.nan_detection,
+                ):
+                    entity_name = self._manager_term_entity_name(manager, name)
+                    if not self._entity_declares_packed_root(entity_name):
+                        continue
+                    specs.append(
+                        SceneTensorReadSpec(
+                            entity=entity_name,
+                            body_names=(self._term_root_body_name(entity_name),),
+                        )
+                    )
         return specs
+
+    def _term_root_body_name(self, entity_name: str) -> str:
+        entity = self.scene[entity_name]
+        root_body_name = getattr(entity, "_root_body_name", None)
+        if not isinstance(root_body_name, str) or not root_body_name:
+            raise TypeError(
+                "ManagerBasedRlEnv tensor root-state term for entity "
+                f"'{entity_name}' requires a declared root_body_name"
+            )
+        return root_body_name
+
+    def _entity_declares_packed_root(self, entity_name: str) -> bool:
+        entity = self.scene[entity_name]
+        root_body_name = getattr(entity, "_root_body_name", None)
+        body_names = getattr(entity, "_body_names", None)
+        return isinstance(root_body_name, str) and bool(root_body_name) and body_names is not None
+
+    @staticmethod
+    def _manager_term_entity_name(manager: RewardManager | TerminationManager, name: str) -> str:
+        asset_cfg = manager.get_term_cfg(name).params.get("asset_cfg")
+        return asset_cfg.name if isinstance(asset_cfg, SceneEntityCfg) else "robot"
 
     def _task_tensor_state_read_specs(self) -> list[SceneTensorReadSpec]:
         """Collect explicit task-owned state-only packed reads."""
@@ -602,6 +638,11 @@ class ManagerBasedRlEnv(TorchEnv):
             )
         params = getattr(getattr(term, "cfg", None), "params", {})
         entity_name = params.get("entity_name") if isinstance(params, dict) else None
+        if not isinstance(entity_name, str) or not entity_name:
+            asset_cfg = params.get("asset_cfg") if isinstance(params, dict) else None
+            entity_name = getattr(asset_cfg, "name", None)
+        if not isinstance(entity_name, str) or not entity_name:
+            entity_name = getattr(term, "entity_name", None)
         if not isinstance(entity_name, str) or not entity_name:
             entity_name = "robot"
         return [SceneTensorReadSpec(entity=entity_name, body_names=tuple(body_names))]
@@ -698,7 +739,7 @@ class ManagerBasedRlEnv(TorchEnv):
             unpublished: list[str] = []
             for name in sensor_names:
                 try:
-                    backend.get_sensor_data(name)
+                    backend.bind_sensor_data((name,))
                 except (KeyError, ValueError):
                     unpublished.append(name)
                 except (TypeError, NotImplementedError, AttributeError) as exc:
@@ -763,7 +804,7 @@ class ManagerBasedRlEnv(TorchEnv):
         available: set[str] = set()
         for name in names:
             try:
-                self._backend.get_sensor_data(name)
+                self._backend.bind_sensor_data((name,))
             except KeyError:
                 continue
             except (TypeError, ValueError, NotImplementedError, AttributeError) as exc:
@@ -778,7 +819,7 @@ class ManagerBasedRlEnv(TorchEnv):
         self,
         manager_name: str,
         term_name: str,
-        term_cfg: RewardTermCfg | TerminationTermCfg,
+        term_cfg: EventTermCfg | RewardTermCfg | TerminationTermCfg,
         *,
         narrow: bool = False,
     ) -> list[SceneTensorReadSpec]:
@@ -936,10 +977,10 @@ class ManagerBasedRlEnv(TorchEnv):
     @property
     def action_space(self) -> gym.Space:
         return gym.spaces.Box(
-            low=-np.inf,
-            high=np.inf,
+            low=-float("inf"),
+            high=float("inf"),
             shape=(self.action_manager.total_action_dim,),
-            dtype=get_global_dtype(),
+            dtype="float32",
         )
 
     @property
@@ -1090,16 +1131,16 @@ class ManagerBasedRlEnv(TorchEnv):
         """Return the contiguous authoritative Torch control tensor."""
         return self._control
 
-    def _manager_tensor(
-        self, values: np.ndarray | torch.Tensor, *, dtype: torch.dtype
-    ) -> torch.Tensor:
+    def _manager_tensor(self, values: torch.Tensor, *, dtype: torch.dtype) -> torch.Tensor:
         """Publish one completed Manager result on the public Torch carrier."""
-        if isinstance(values, torch.Tensor):
-            if values.device == self.device and values.dtype == dtype and values.is_contiguous():
-                return values
-            return values.to(device=self.device, dtype=dtype, copy=True)
-        host = np.array(values, order="C", copy=True)
-        return torch.from_numpy(host).to(device=self.device, dtype=dtype, copy=True)
+        if not isinstance(values, torch.Tensor):
+            raise TypeError(
+                f"ManagerBasedRlEnv public results must be torch.Tensor, "
+                f"got {type(values).__name__}"
+            )
+        if values.device == self.device and values.dtype == dtype and values.is_contiguous():
+            return values
+        return values.to(device=self.device, dtype=dtype, copy=True)
 
     def _initial_episode_steps(self) -> torch.Tensor:
         max_steps = self._cfg.max_episode_steps
@@ -1110,9 +1151,9 @@ class ManagerBasedRlEnv(TorchEnv):
                 "ManagerBasedRlEnv randomized initial episode counters require "
                 f"max_episode_steps > 1; got {max_steps}"
             )
-        return torch.from_numpy(
-            self.rng.integers(0, max_steps, size=self.num_envs, dtype=np.int64)
-        ).to(device=self.device, dtype=torch.int64)
+        return self.torch_rng.integers(0, max_steps, self.num_envs, dtype=torch.int64).to(
+            device=self.device, dtype=torch.int64
+        )
 
     def init_state(self) -> TorchEnvState:
         state = super().init_state()
@@ -1255,7 +1296,19 @@ class ManagerBasedRlEnv(TorchEnv):
         if self._uses_device_resident_reset(step_read_plan, step_reset_capabilities):
             assert step_read_plan is not None
             self._reset_state.declare_packed_reset_device(step_read_plan.device)
-            step_reset_context = self._reset_state.scoped_device_tensor(self._all_env_rows)
+            step_reset_context = self._reset_state.scoped_device_owner_tensor(self._all_env_rows)
+        elif (
+            step_read_plan is not None
+            and step_read_plan.host_plan is not None
+            and self._reset_state.can_commit_packed(term_name="command_owner")
+        ):
+            assert step_read_plan is not None
+            assert step_read_plan.host_plan is not None
+            self._reset_state.declare_packed_reset_device(step_read_plan.device)
+            step_reset_context = self._reset_state.scoped_device_owner_tensor_with_host_commit(
+                self._all_env_rows,
+                step_read_plan.host_plan,
+            )
         else:
             step_reset_context = self._reset_state.scoped(self._all_env_rows)
         timing["update_state_command_preflight_ms"] = (
@@ -1681,8 +1734,6 @@ class ManagerBasedRlEnv(TorchEnv):
             seed = secrets.randbits(63)
         if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
             raise ValueError(f"ManagerBasedRlEnv seed must be a non-negative integer, got {seed!r}")
-        replacement = np.random.default_rng(seed)
-        self.rng.bit_generator.state = replacement.bit_generator.state
         if self._torch_rng_owner is not None:
             self._torch_rng_owner.manual_seed(seed)
         self._cfg.seed = seed

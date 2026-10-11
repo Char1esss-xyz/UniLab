@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import cast
 
-import numpy as np
 import torch
 from unisim.backend.base import (
     HostBridgeTransferPlan,
@@ -29,10 +28,10 @@ class TensorDeviceStateStore:
         backend: SimBackend,
         device: torch.device,
         num_envs: int,
-        joint_qpos_ids: np.ndarray,
-        joint_qvel_ids: np.ndarray,
+        joint_qpos_ids: torch.Tensor,
+        joint_qvel_ids: torch.Tensor,
         body_names: tuple[str, ...],
-        body_ids: np.ndarray,
+        body_ids: torch.Tensor,
     ) -> None:
         if min(num_envs, len(body_names)) <= 0:
             raise ValueError("tensor state store dimensions must be positive")
@@ -43,10 +42,10 @@ class TensorDeviceStateStore:
         self.backend = backend
         self.device = torch.device(device)
         self.num_envs = int(num_envs)
-        self.joint_qpos_ids = np.asarray(joint_qpos_ids, dtype=np.int64)
-        self.joint_qvel_ids = np.asarray(joint_qvel_ids, dtype=np.int64)
+        self.joint_qpos_ids = joint_qpos_ids.to(device=torch.device("cpu"), dtype=torch.int64)
+        self.joint_qvel_ids = joint_qvel_ids.to(device=torch.device("cpu"), dtype=torch.int64)
         self.body_names = tuple(body_names)
-        self.body_ids = np.asarray(body_ids, dtype=np.intp)
+        self.body_ids = body_ids.to(device=torch.device("cpu"), dtype=torch.int64)
 
         self.device = torch.device(device)
         if self.device.type == "cuda":
@@ -67,7 +66,7 @@ class TensorDeviceStateStore:
                 f"supported devices are {capabilities.torch_devices}"
             )
 
-        joint_shape = (self.num_envs, self.joint_qpos_ids.size)
+        joint_shape = (self.num_envs, self.joint_qpos_ids.numel())
         body_shape = (self.num_envs, len(self.body_names))
         self.qpos: torch.Tensor | None = None
         self.qvel: torch.Tensor | None = None
@@ -223,94 +222,33 @@ class TensorDeviceStateStore:
                 destination.index_copy_(0, rows, selected)
 
     def _read_host_bridge(self, rows: torch.Tensor | None) -> None:
-        if self._host_bridge_plan is not None:
-            values = (
-                self._host_bridge_plan.read_state_sensors()
-                if rows is None
-                else self._host_bridge_plan.read_selected_state_sensors()
+        assert self._host_bridge_plan is not None
+        values = (
+            self._host_bridge_plan.read_state_sensors()
+            if rows is None
+            else self._host_bridge_plan.read_selected_state_sensors()
+        )
+        self.qpos = values["qpos"]
+        self.qvel = values["qvel"]
+        qpos, qvel = self._validate_qviews()
+        self.joint_pos = qpos[:, self.joint_qpos_ids]
+        self.joint_vel = qvel[:, self.joint_qvel_ids]
+        self.linvel = values["pelvis_local_linvel"]
+        self.gyro = values["torso_gyro"]
+        destinations = (
+            self.robot_body_pos,
+            self.robot_body_quat,
+            self.robot_body_lin_vel,
+            self.robot_body_ang_vel,
+        )
+        prefixes = ("track_pos_w", "track_quat_w", "track_linvel_w", "track_angvel_w")
+        for destination, prefix in zip(destinations, prefixes, strict=True):
+            torch.stack(
+                tuple(values[f"{prefix}_{name}"] for name in self.body_names),
+                dim=1,
+                out=destination,
             )
-            self.qpos = values["qpos"]
-            self.qvel = values["qvel"]
-            qpos, qvel = self._validate_qviews()
-            self.joint_pos = qpos[:, self.joint_qpos_ids]
-            self.joint_vel = qvel[:, self.joint_qvel_ids]
-            self.linvel = values["pelvis_local_linvel"]
-            self.gyro = values["torso_gyro"]
-            destinations = (
-                self.robot_body_pos,
-                self.robot_body_quat,
-                self.robot_body_lin_vel,
-                self.robot_body_ang_vel,
-            )
-            prefixes = ("track_pos_w", "track_quat_w", "track_linvel_w", "track_angvel_w")
-            for destination, prefix in zip(destinations, prefixes, strict=True):
-                torch.stack(
-                    tuple(values[f"{prefix}_{name}"] for name in self.body_names),
-                    dim=1,
-                    out=destination,
-                )
-            self.last_backend_result = {"timing": dict(self._host_bridge_plan.last_timing)}
-            return
-
-        if rows is None:
-            state = self.backend.get_state_views(("qpos", "qvel"), device=self.device)
-            self.qpos = state["qpos"]
-            self.qvel = state["qvel"]
-            qpos, qvel = self._validate_qviews()
-            self.joint_pos = qpos[:, self.joint_qpos_ids]
-            self.joint_vel = qvel[:, self.joint_qvel_ids]
-            self.linvel = self.backend.get_sensor_view("pelvis_local_linvel", device=self.device)
-            self.gyro = self.backend.get_sensor_view("torso_gyro", device=self.device)
-        else:
-            self._validate_qviews()
-            host_rows = rows.detach().cpu().numpy()
-            linvel = self.backend.get_sensor_data_rows("pelvis_local_linvel", host_rows)
-            gyro = self.backend.get_sensor_data_rows("torso_gyro", host_rows)
-            self.linvel[rows] = torch.as_tensor(
-                np.ascontiguousarray(linvel), dtype=torch.float32, device=self.device
-            )
-            self.gyro[rows] = torch.as_tensor(
-                np.ascontiguousarray(gyro), dtype=torch.float32, device=self.device
-            )
-
-        for name, value in (("linvel", self.linvel), ("gyro", self.gyro)):
-            if not isinstance(value, torch.Tensor) or value.shape != (self.num_envs, 3):
-                raise RuntimeError(f"backend scalar sensor {name!r} has an invalid view")
-
-        if rows is None:
-            values = (
-                self.backend.get_body_pos_w(self.body_ids),
-                self.backend.get_body_quat_w(self.body_ids),
-                self.backend.get_body_lin_vel_w(self.body_ids),
-                self.backend.get_body_ang_vel_w(self.body_ids),
-            )
-            destinations = (
-                self.robot_body_pos,
-                self.robot_body_quat,
-                self.robot_body_lin_vel,
-                self.robot_body_ang_vel,
-            )
-            for destination, value in zip(destinations, values, strict=True):
-                destination.copy_(
-                    torch.as_tensor(
-                        np.ascontiguousarray(value), dtype=torch.float32, device=self.device
-                    )
-                )
-        else:
-            host_rows = rows.detach().cpu().numpy()
-            pos, quat = self.backend.get_body_pose_w_rows(host_rows, self.body_ids)
-            lin_vel = self.backend.get_body_lin_vel_w_rows(host_rows, self.body_ids)
-            ang_vel = self.backend.get_body_ang_vel_w_rows(host_rows, self.body_ids)
-            destinations = (
-                self.robot_body_pos,
-                self.robot_body_quat,
-                self.robot_body_lin_vel,
-                self.robot_body_ang_vel,
-            )
-            for destination, value in zip(destinations, (pos, quat, lin_vel, ang_vel), strict=True):
-                destination[rows] = torch.as_tensor(
-                    np.ascontiguousarray(value), dtype=torch.float32, device=self.device
-                )
+        self.last_backend_result = {"timing": dict(self._host_bridge_plan.last_timing)}
 
     def read(self, rows: torch.Tensor | None = None) -> None:
         selected_rows = self._validate_rows(rows)

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import numpy as np
+import torch
 
-from unilab.tasks.motion_tracking.common.motion_loader import MotionLoader, MotionSampler
+from unilab.tasks.motion_tracking.common.motion_loader import MotionLoader
 
 
 def _write_motion_npz(
@@ -13,8 +14,6 @@ def _write_motion_npz(
     num_joints: int = 2,
     num_bodies: int = 3,
     fps: int = 30,
-    with_torque: bool = False,
-    torque_limit: tuple[float, ...] | None = None,
 ) -> None:
     frame_values = np.arange(num_frames, dtype=np.float32)[:, None]
     joint_pos = base_value + np.repeat(frame_values, num_joints, axis=1)
@@ -30,14 +29,6 @@ def _write_motion_npz(
     body_lin_vel_w = body_pos_w + 10.0
     body_ang_vel_w = body_pos_w + 20.0
 
-    extra = {}
-    if with_torque:
-        extra["joint_torque"] = (joint_pos - base_value).astype(np.float32) + 7.0
-        extra["joint_torque_limit"] = np.asarray(
-            torque_limit if torque_limit is not None else (10.0,) * num_joints,
-            dtype=np.float32,
-        )
-
     np.savez(
         path,
         fps=np.array([fps], dtype=np.int32),
@@ -47,7 +38,6 @@ def _write_motion_npz(
         body_quat_w=body_quat_w.astype(np.float32),
         body_lin_vel_w=body_lin_vel_w.astype(np.float32),
         body_ang_vel_w=body_ang_vel_w.astype(np.float32),
-        **extra,
     )
 
 
@@ -70,8 +60,21 @@ def test_motion_loader_accepts_single_path_or_path_list(tmp_path):
     np.testing.assert_array_equal(multi_loader.clip_offsets, np.array([0, 2], dtype=np.int32))
     np.testing.assert_array_equal(multi_loader.clip_end_frames, np.array([1, 4], dtype=np.int32))
 
-    sampled = multi_loader.get_motion_at_frame(np.array([0, 1, 2, 4], dtype=np.int32))
-    np.testing.assert_array_equal(sampled.joint_pos[:, 0], np.array([0.0, 1.0, 10.0, 12.0]))
+
+def test_motion_loader_publishes_immutable_torch_feature_table(tmp_path):
+    motion_a = tmp_path / "motion_a.npz"
+    motion_b = tmp_path / "motion_b.npz"
+    _write_motion_npz(motion_a, base_value=0.0, num_frames=2)
+    _write_motion_npz(motion_b, base_value=10.0, num_frames=3)
+    loader = MotionLoader([str(motion_a), str(motion_b)])
+
+    features = loader.motion_features_torch(torch.device("cpu"))
+
+    expected_width = 2 * loader.num_joints + loader.num_bodies * (3 + 4 + 3 + 3)
+    assert features.shape == (loader.num_frames, expected_width)
+    assert features.dtype == torch.float32
+    assert features.is_contiguous()
+    torch.testing.assert_close(features[:, : loader.num_joints], torch.from_numpy(loader.joint_pos))
 
 
 def test_motion_loader_rejects_mismatched_multi_clip_metadata(tmp_path):
@@ -82,204 +85,3 @@ def test_motion_loader_rejects_mismatched_multi_clip_metadata(tmp_path):
 
     with np.testing.assert_raises(ValueError):
         MotionLoader([str(motion_a), str(motion_b)])
-
-
-def test_motion_sampler_start_mode_preserves_global_zero_frame(tmp_path):
-    motion_a = tmp_path / "motion_a.npz"
-    motion_b = tmp_path / "motion_b.npz"
-    _write_motion_npz(motion_a, base_value=0.0, num_frames=2)
-    _write_motion_npz(motion_b, base_value=10.0, num_frames=3)
-
-    np.random.seed(0)
-    loader = MotionLoader([str(motion_a), str(motion_b)])
-    sampler = MotionSampler(loader, mode="start", num_envs=16)
-
-    env_ids = np.arange(16, dtype=np.int32)
-    frames = sampler.sample_frames(env_ids)
-
-    np.testing.assert_array_equal(frames, np.zeros(16, dtype=np.int32))
-    np.testing.assert_array_equal(sampler.current_clip_indices, np.zeros(16, dtype=np.int32))
-    np.testing.assert_array_equal(sampler.current_clip_end_frames, np.full(16, 1, dtype=np.int32))
-
-
-def test_motion_sampler_clip_start_mode_uses_clip_starts_for_multi_clip_loader(tmp_path):
-    motion_a = tmp_path / "motion_a.npz"
-    motion_b = tmp_path / "motion_b.npz"
-    _write_motion_npz(motion_a, base_value=0.0, num_frames=2)
-    _write_motion_npz(motion_b, base_value=10.0, num_frames=3)
-
-    np.random.seed(0)
-    loader = MotionLoader([str(motion_a), str(motion_b)])
-    sampler = MotionSampler(loader, mode="clip_start", num_envs=16)
-
-    env_ids = np.arange(16, dtype=np.int32)
-    frames = sampler.sample_frames(env_ids)
-
-    assert np.isin(frames, loader.clip_offsets).all()
-    np.testing.assert_array_equal(
-        sampler.current_clip_end_frames, loader.clip_end_frames[sampler.current_clip_indices]
-    )
-
-
-def test_motion_sampler_step_respects_current_clip_end(tmp_path):
-    motion_a = tmp_path / "motion_a.npz"
-    motion_b = tmp_path / "motion_b.npz"
-    _write_motion_npz(motion_a, base_value=0.0, num_frames=2)
-    _write_motion_npz(motion_b, base_value=10.0, num_frames=3)
-
-    loader = MotionLoader([str(motion_a), str(motion_b)])
-    sampler = MotionSampler(loader, mode="uniform", num_envs=2)
-
-    sampler.current_frames[:] = np.array([1, 3], dtype=np.int32)
-    sampler.current_clip_indices[:] = np.array([0, 1], dtype=np.int32)
-    sampler.current_clip_end_frames[:] = np.array([1, 4], dtype=np.int32)
-
-    done_env_ids = sampler.step()
-    np.testing.assert_array_equal(done_env_ids, np.array([0], dtype=np.int64))
-    np.testing.assert_array_equal(sampler.current_frames, np.array([2, 4], dtype=np.int32))
-
-
-def test_motion_sampler_uses_env_owned_rng_and_steps_only_selected_rows(tmp_path):
-    motion = tmp_path / "motion.npz"
-    _write_motion_npz(motion, base_value=0.0, num_frames=8)
-    loader = MotionLoader(str(motion))
-    env_ids = np.array([0, 2], dtype=np.int32)
-    sampler = MotionSampler(
-        loader,
-        mode="uniform",
-        num_envs=3,
-        rng=np.random.default_rng(17),
-    )
-    expected_rng = np.random.default_rng(17)
-
-    frames = sampler.sample_frames(env_ids)
-
-    np.testing.assert_array_equal(frames, expected_rng.integers(0, 8, 2, dtype=np.int32))
-    untouched = int(sampler.current_frames[1])
-    sampler.current_clip_end_frames[:] = 7
-    done = sampler.step(np.array([2], dtype=np.int32))
-    assert done.size == 0
-    assert sampler.current_frames[1] == untouched
-    assert sampler.current_frames[2] == frames[1] + 1
-
-
-def test_motion_sampler_adaptive_zero_floor_cold_starts_uniform(tmp_path):
-    motion = tmp_path / "motion.npz"
-    _write_motion_npz(motion, base_value=0.0, num_frames=70)
-    loader = MotionLoader(str(motion))
-    sampler = MotionSampler(
-        loader,
-        mode="adaptive",
-        num_envs=64,
-        adaptive_uniform_ratio=0.0,
-        rng=np.random.default_rng(7),
-    )
-
-    frames = sampler.sample_frames(np.arange(64, dtype=np.int32))
-
-    assert frames.min() >= 0
-    assert frames.max() < loader.num_frames
-    np.testing.assert_allclose(sampler.sampling_entropy, 1.0)
-    np.testing.assert_allclose(sampler.sampling_top1_prob, 1.0 / sampler.bin_count)
-
-
-def test_motion_loader_reads_optional_joint_torque(tmp_path):
-    motion = tmp_path / "motion_torque.npz"
-    _write_motion_npz(motion, base_value=0.0, num_frames=4, num_joints=2, with_torque=True)
-
-    loader = MotionLoader(str(motion))
-
-    assert loader.has_joint_torque
-    assert loader.joint_torque.shape == (4, 2)
-    np.testing.assert_allclose(loader.joint_torque_limit, np.array([10.0, 10.0]))
-    np.testing.assert_allclose(loader.joint_torque[2], np.array([9.0, 9.0]))
-
-    sampled = loader.get_motion_at_frame(np.array([0, 3], dtype=np.int32))
-    np.testing.assert_allclose(sampled.joint_torque[:, 0], np.array([7.0, 10.0]))
-
-    buffer = loader.make_motion_data_buffer(2)
-    assert buffer.joint_torque is not None and buffer.joint_torque.shape == (2, 2)
-    out = loader.get_motion_at_frame(np.array([1, 2], dtype=np.int32), out=buffer)
-    np.testing.assert_allclose(out.joint_torque[:, 0], np.array([8.0, 9.0]))
-
-
-def test_motion_loader_without_torque_stays_torque_free(tmp_path):
-    motion = tmp_path / "motion_plain.npz"
-    _write_motion_npz(motion, base_value=0.0, num_frames=4)
-
-    loader = MotionLoader(str(motion))
-
-    assert not loader.has_joint_torque
-    assert loader.joint_torque is None
-    assert loader.joint_torque_limit is None
-
-    sampled = loader.get_motion_at_frame(np.array([0, 3], dtype=np.int32))
-    assert sampled.joint_torque is None
-
-    buffer = loader.make_motion_data_buffer(2)
-    assert buffer.joint_torque is None
-    out = loader.get_motion_at_frame(np.array([1, 2], dtype=np.int32), out=buffer)
-    assert out.joint_torque is None
-
-
-def test_motion_loader_mixed_clip_torque_presence_warns_and_disables(tmp_path):
-    motion_a = tmp_path / "motion_a.npz"
-    motion_b = tmp_path / "motion_b.npz"
-    _write_motion_npz(motion_a, base_value=0.0, num_frames=2, with_torque=True)
-    _write_motion_npz(motion_b, base_value=10.0, num_frames=3, with_torque=False)
-
-    import pytest
-
-    with pytest.warns(UserWarning, match="torque"):
-        loader = MotionLoader([str(motion_a), str(motion_b)])
-
-    assert not loader.has_joint_torque
-    assert loader.joint_torque is None
-    assert loader.joint_torque_limit is None
-
-
-def test_motion_loader_multi_clip_torque_concatenates(tmp_path):
-    motion_a = tmp_path / "motion_a.npz"
-    motion_b = tmp_path / "motion_b.npz"
-    _write_motion_npz(motion_a, base_value=0.0, num_frames=2, with_torque=True)
-    _write_motion_npz(motion_b, base_value=10.0, num_frames=3, with_torque=True)
-
-    loader = MotionLoader([str(motion_a), str(motion_b)])
-
-    assert loader.has_joint_torque
-    assert loader.joint_torque.shape == (5, 2)
-    np.testing.assert_allclose(loader.joint_torque[:, 0], np.array([7.0, 8.0, 7.0, 8.0, 9.0]))
-
-
-def test_motion_loader_rejects_inconsistent_clip_torque_limits(tmp_path):
-    motion_a = tmp_path / "motion_a.npz"
-    motion_b = tmp_path / "motion_b.npz"
-    _write_motion_npz(motion_a, base_value=0.0, num_frames=2, with_torque=True)
-    _write_motion_npz(
-        motion_b, base_value=10.0, num_frames=3, with_torque=True, torque_limit=(10.0, 20.0)
-    )
-
-    with np.testing.assert_raises(ValueError):
-        MotionLoader([str(motion_a), str(motion_b)])
-
-
-def test_motion_loader_rejects_partial_torque_key_set(tmp_path):
-    motion = tmp_path / "motion_partial.npz"
-    _write_motion_npz(motion, base_value=0.0, num_frames=2, with_torque=True)
-
-    with np.load(motion) as data:
-        payload = {key: data[key] for key in data.files if key != "joint_torque_limit"}
-    np.savez(motion, **payload)
-
-    with np.testing.assert_raises(ValueError):
-        MotionLoader(str(motion))
-
-
-def test_motion_loader_rejects_invalid_torque_limit(tmp_path):
-    motion = tmp_path / "motion_bad_limit.npz"
-    _write_motion_npz(
-        motion, base_value=0.0, num_frames=2, with_torque=True, torque_limit=(10.0, 0.0)
-    )
-
-    with np.testing.assert_raises(ValueError):
-        MotionLoader(str(motion))

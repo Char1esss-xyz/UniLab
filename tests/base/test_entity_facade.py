@@ -245,7 +245,7 @@ def test_manipulation_entity_maps_local_columns_and_binds_mocap_without_floating
     joint_ids, _ = hand.bind_joint_damping_write(term_name="damping")
     default_pose = hand.bind_mocap_pose_write("foot", term_name="wrist")
     calls = backend.calls.copy()
-    ids = np.array([2], dtype=np.int32)
+    ids = torch.tensor([2], dtype=torch.int64)
     pose = default_pose[None].copy()
     pose[:, 0] = 0.8
     for _ in range(2):
@@ -256,7 +256,7 @@ def test_manipulation_entity_maps_local_columns_and_binds_mocap_without_floating
     np.testing.assert_array_equal(backend.payload.geom_size[0, 2], 0.5)
     np.testing.assert_array_equal(backend.payload.geom_size[0, :2], 1.0)
     assert backend.payload.dof_damping[0, 7] == 0.2
-    np.testing.assert_array_equal(hand.read_mocap_pose()[ids], pose)
+    np.testing.assert_array_equal(hand.read_mocap_pose()[ids.detach().cpu().numpy()], pose)
     for name in ("geom_size defaults", "dof_damping defaults", "model DOF IDs", "mocap binding"):
         assert backend.calls[name] == calls[name] == 1
     assert backend.calls["root-state layout"] == 0
@@ -297,10 +297,10 @@ def test_entity_binding_selects_per_world_default_columns() -> None:
     assert defaults.shape == (backend.num_envs, body_ids.size)
     np.testing.assert_allclose(defaults[:, 0], [1.0, 2.0, 3.0])
 
-    ids = np.array([1], dtype=np.int32)
+    ids = torch.tensor([1], dtype=torch.int64)
     with transaction.scoped(ids):
         entity.write_body_mass_to_sim(
-            np.asarray([[7.0]]),
+            torch.asarray([[7.0]]),
             body_ids,
             ids,
             term_name="variant_mass",
@@ -342,6 +342,10 @@ def test_backend_profiles_materialize_identical_local_entity_contract(backend_ty
     np.testing.assert_array_equal(robot.data.joint_vel, backend.dof_vel[:, [4, 2]])
     np.testing.assert_array_equal(robot.data.default_joint_vel, 0.0)
     np.testing.assert_array_equal(robot.data.soft_joint_pos_limits, backend.joint_range[[4, 2]])
+    soft_limits = robot.data.soft_joint_pos_limits_torch(torch.device("cpu"))
+    torch.testing.assert_close(soft_limits, torch.from_numpy(backend.joint_range[[4, 2]]))
+    assert soft_limits.dtype == torch.float32
+    assert robot.data.soft_joint_pos_limits_torch(torch.device("cpu")) is soft_limits
     np.testing.assert_array_equal(robot.data.gravity_vec_w, [[0.0, 0.0, -1.0]] * 3)
     np.testing.assert_array_equal(robot.data.joint_pos_biased, backend.dof_pos[:, [4, 2]])
     np.testing.assert_array_equal(robot.data.body_link_pos_w, backend.body_pos[:, [7, 4]])
@@ -501,7 +505,7 @@ def test_entity_control_write_uses_cached_actuator_columns_and_fails_closed() ->
     np.testing.assert_array_equal(control[:, 2], [2.0, 4.0, 6.0])
     data.write_ctrl(
         np.array([[9.0, 8.0], [7.0, 6.0]], dtype=np.float32),
-        env_ids=np.array([2, 0], dtype=np.int32),
+        env_ids=torch.tensor([2, 0], dtype=torch.int64),
     )
     np.testing.assert_array_equal(control[:, 4], [7.0, 3.0, 9.0])
     np.testing.assert_array_equal(control[:, 2], [6.0, 4.0, 8.0])
@@ -514,7 +518,7 @@ def test_entity_control_write_uses_cached_actuator_columns_and_fails_closed() ->
     with pytest.raises(IndexError, match="out of range"):
         data.write_ctrl(
             np.zeros((1, 2), dtype=np.float32),
-            env_ids=np.array([backend.num_envs], dtype=np.int32),
+            env_ids=torch.tensor([backend.num_envs], dtype=torch.int64),
         )
 
     _, read_only_scene = _scene()
@@ -536,21 +540,21 @@ def test_entity_root_writes_use_cached_layout_and_one_reset_commit() -> None:
 
     with transaction.scoped(torch.tensor([0, 2], dtype=torch.int64)):
         robot.write_root_link_pose_to_sim(
-            np.array(
+            torch.tensor(
                 [
                     [10.0, 11.0, 12.0, half_sqrt, 0.0, 0.0, half_sqrt],
                     [20.0, 21.0, 22.0, 1.0, 0.0, 0.0, 0.0],
                 ],
-                dtype=np.float32,
+                dtype=torch.float32,
             ),
-            env_ids=np.array([2, 0], dtype=np.int32),
+            env_ids=torch.tensor([2, 0], dtype=torch.int64),
         )
         robot.write_root_link_velocity_to_sim(
-            np.array(
+            torch.tensor(
                 [[1.0, 2.0, 3.0, 1.0, 0.0, 0.0], [4.0, 5.0, 6.0, 0.0, 1.0, 2.0]],
-                dtype=np.float32,
+                dtype=torch.float32,
             ),
-            env_ids=np.array([2, 0], dtype=np.int32),
+            env_ids=torch.tensor([2, 0], dtype=torch.int64),
         )
 
     assert backend.calls["root-state layout"] == cold_layout_calls == 1
@@ -575,10 +579,10 @@ def test_entity_read_reset_root_pose_returns_staged_or_default_pose() -> None:
 
     with transaction.scoped(torch.tensor([0, 2], dtype=torch.int64)):
         robot.write_root_link_pose_to_sim(
-            np.array([[10.0, 11.0, 12.0, 1.0, 0.0, 0.0, 0.0]], dtype=np.float32),
-            env_ids=np.array([2], dtype=np.int32),
+            torch.tensor([[10.0, 11.0, 12.0, 1.0, 0.0, 0.0, 0.0]], dtype=torch.float32),
+            env_ids=torch.tensor([2], dtype=torch.int64),
         )
-        staged = robot.read_reset_root_pose(env_ids=np.array([0, 2], dtype=np.int32))
+        staged = robot.read_reset_root_pose(env_ids=torch.tensor([0, 2], dtype=torch.int64))
 
     # Env 2 reflects the staged write; env 0 the backend default root pose.
     np.testing.assert_allclose(staged[1], [10.0, 11.0, 12.0, 1.0, 0.0, 0.0, 0.0])
@@ -612,8 +616,8 @@ def test_entity_caches_unsupported_root_layout_without_hot_path_probe() -> None:
     ):
         with transaction.scoped(torch.tensor([0], dtype=torch.int64)):
             robot.write_root_state_to_sim(
-                np.array([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]),
-                env_ids=np.array([0], dtype=np.int32),
+                torch.tensor([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]),
+                env_ids=torch.tensor([0], dtype=torch.int64),
             )
     assert backend.calls["root-state layout"] == 1
     assert backend.set_state_calls == []
@@ -654,6 +658,47 @@ def test_entity_joint_position_target_maps_natural_joint_order_to_control_order(
             np.ones((backend.num_envs, 1), dtype=np.float32),
             joint_ids=np.asarray([2], dtype=np.int32),
         )
+
+
+def test_entity_full_width_position_target_maps_natural_joint_order() -> None:
+    backend = _StrictBackendProfile("mujoco")
+    backend.num_actuators = 3
+    backend.actuator_names = ("hip_motor", "unused_motor", "ankle_motor")
+    backend.actuator_joint_names = ("hip", "unused", "ankle")
+    backend.joint_ids = {"hip": 2, "knee": 0, "ankle": 4, "unused": 1}
+    backend.get_actuator_ctrl_range = lambda: np.asarray([[-3.0, 3.0]] * 3, dtype=np.float32)
+    control = torch.zeros((backend.num_envs, backend.num_actuators), dtype=torch.float32)
+    scene = EntityScene(
+        {
+            "robot": EntityCfg(
+                joint_names=("ankle", "hip", "unused"),
+                actuator_names=backend.actuator_names,
+            )
+        },
+        cast(SimBackend, backend),
+        control,
+    )
+
+    target = torch.arange(1.0, 4.0, dtype=torch.float32).repeat(backend.num_envs, 1)
+    scene["robot"].set_full_width_joint_position_target(target)
+
+    torch.testing.assert_close(control, target[:, [1, 2, 0]])
+
+
+def test_entity_cold_default_root_and_env_origin_torch_tables_are_cached() -> None:
+    _, scene = _scene("mujoco")
+    robot = scene["robot"]
+
+    roots = robot.data.default_root_state_torch(torch.device("cpu"))
+    origins = scene.env_origins_torch(torch.device("cpu"))
+    assert roots.shape == (3, 13)
+    assert origins.shape == (3, 3)
+    assert roots.dtype == torch.float32
+    assert origins.dtype == torch.float32
+    np.testing.assert_allclose(roots.numpy(), robot.data.default_root_state)
+    np.testing.assert_allclose(origins.numpy(), scene.env_origins)
+    assert robot.data.default_root_state_torch(torch.device("cpu")) is roots
+    assert scene.env_origins_torch(torch.device("cpu")) is origins
 
 
 @pytest.mark.parametrize(

@@ -1,3 +1,11 @@
+"""NumPy host-bound rotation helpers owned by the base/reset boundary.
+
+These helpers are intentionally private to ``unilab.base``. They serve the
+explicit reset/entity host boundary; task cold loaders own their data-format
+conversion locally rather than depending on this transition shim. No
+compatibility import for ``unilab.utils.rotation`` is retained.
+"""
+
 from __future__ import annotations
 
 import numpy as np
@@ -30,15 +38,6 @@ def np_quat_mul(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
         axis=1,
     )
     return result[0] if q1_was_1d and q2_was_1d else result
-
-
-def np_quat_conjugate_batched(q: np.ndarray) -> np.ndarray:
-    """Conjugate quaternions with shape (..., 4), w-first."""
-    if q.shape[-1] != 4:
-        raise ValueError(f"Expected quaternion last dimension 4, got {q.shape}")
-    conj = np.array(q, copy=True)
-    conj[..., 1:] *= -1
-    return conj
 
 
 def np_quat_mul_batched(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
@@ -189,11 +188,6 @@ def np_yaw_from_quat(quat: np.ndarray) -> np.ndarray:
     return np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
-def np_wrap_to_pi(angle: np.ndarray) -> np.ndarray:
-    """Wrap angle(s) into (-pi, pi]."""
-    return (angle + np.pi) % (2.0 * np.pi) - np.pi
-
-
 def np_quat_inv(q: np.ndarray) -> np.ndarray:
     """Inverse of unit quaternions (N, 4) or (4,), w-first."""
     return np_quat_conjugate(q)
@@ -311,9 +305,15 @@ def np_quat_error_magnitude(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
     return magnitude
 
 
+def _conjugate(q: np.ndarray) -> np.ndarray:
+    result = np.array(q, copy=True)
+    result[..., 1:] *= -1
+    return result
+
+
 def np_quat_error_magnitude_batched(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
     """Angular error magnitude for broadcast-compatible quaternions (..., 4)."""
-    q_rel = np_quat_mul_batched(q2, np_quat_conjugate_batched(q1))
+    q_rel = np_quat_mul_batched(q2, _conjugate(q1))
     sign = np.where(q_rel[..., 0:1] < 0.0, -1.0, 1.0)
     q_rel = q_rel * sign
     xyz_norm = np.linalg.norm(q_rel[..., 1:], axis=-1)
@@ -364,29 +364,6 @@ def np_quat_from_euler_xyz(roll: np.ndarray, pitch: np.ndarray, yaw: np.ndarray)
 
     result = np.stack([w, x, y, z], axis=1)
     return result[0] if squeeze else result
-
-
-def np_yaw_quat(q: np.ndarray) -> np.ndarray:
-    """Extract yaw-only quaternion from full quaternion(s), w-first."""
-    q_was_1d = q.ndim == 1
-    if q_was_1d:
-        q = q[None, :]
-
-    w, x, y, z = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
-    yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
-
-    half_yaw = yaw * 0.5
-    result = np.stack(
-        [
-            np.cos(half_yaw),
-            np.zeros_like(half_yaw),
-            np.zeros_like(half_yaw),
-            np.sin(half_yaw),
-        ],
-        axis=1,
-    )
-
-    return result[0] if q_was_1d else result
 
 
 def np_matrix_from_quat(q: np.ndarray) -> np.ndarray:
@@ -450,15 +427,6 @@ def np_matrix_first_two_cols_from_quat(q: np.ndarray) -> np.ndarray:
         ],
         axis=-1,
     )
-
-
-def np_subtract_frame_transforms(
-    pos1: np.ndarray, quat1: np.ndarray, pos2: np.ndarray, quat2: np.ndarray
-) -> tuple[np.ndarray, np.ndarray]:
-    """Compute relative transform from frame 1 to frame 2 in frame-1 coordinates."""
-    rel_pos = np_quat_apply_inverse(quat1, pos2 - pos1)
-    rel_quat = np_quat_mul(np_quat_inv(quat1), quat2)
-    return rel_pos, rel_quat
 
 
 def np_subtract_anchor_frame_transforms(

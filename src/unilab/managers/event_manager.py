@@ -5,15 +5,16 @@
 
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-import numpy as np
 import torch
 from prettytable import PrettyTable
 
 from unilab.managers.manager_base import ManagerBase, ManagerTermBaseCfg
+from unilab.managers.torch_rng import TorchManagerRng
 
 if TYPE_CHECKING:
     from unilab.managers._types import ManagerBasedRlEnv
@@ -78,7 +79,12 @@ class EventManager(ManagerBase):
     def __init__(self, cfg: dict[str, EventTermCfg | None], env: ManagerBasedRlEnv):
         self.cfg = deepcopy(cfg)
         self._device = torch.device(getattr(env, "device", torch.device("cpu")))
-        self._torch_rng = getattr(env, "torch_rng", None)
+        rng = env.torch_rng
+        if not isinstance(rng, TorchManagerRng):
+            raise RuntimeError(
+                "EventManager interval sampling requires the Manager-owned Torch generator"
+            )
+        self._torch_rng = rng
         self._mode_term_names: dict[EventMode, list[str]] = dict()
         self._mode_term_cfgs: dict[EventMode, list[EventTermCfg]] = dict()
         self._mode_class_term_cfgs: dict[EventMode, list[EventTermCfg]] = dict()
@@ -111,6 +117,15 @@ class EventManager(ManagerBase):
     @property
     def active_terms(self) -> dict[EventMode, list[str]]:
         return self._mode_term_names
+
+    @property
+    def term_cfgs(self) -> dict[str, EventTermCfg]:
+        """Return active event term configs keyed by their global term name."""
+        return {
+            name: self._mode_term_cfgs[mode][index]
+            for mode, names in self._mode_term_names.items()
+            for index, name in enumerate(names)
+        }
 
     @property
     def available_modes(self) -> list[EventMode]:
@@ -194,13 +209,25 @@ class EventManager(ManagerBase):
             raise ValueError(f"Event mode '{mode}' requires the time-step of the environment.")
 
         if mode == "reset" and self.uses_tensor_reset_rows:
-            if any(
-                term_cfg.min_step_count_between_reset for term_cfg in self._mode_term_cfgs["reset"]
-            ):
-                raise NotImplementedError(
-                    "tensor reset-row events do not support min_step_count_between_reset"
-                )
-            for term_cfg in self._mode_term_cfgs["reset"]:
+            for index, term_cfg in enumerate(self._mode_term_cfgs["reset"]):
+                if term_cfg.min_step_count_between_reset:
+                    assert global_env_step_count is not None
+                    assert env_ids is not None
+                    assert isinstance(env_ids, torch.Tensor)
+                    last_triggered_step = self._reset_term_last_triggered_step_id[index][env_ids]
+                    triggered_at_least_once = self._reset_term_last_triggered_once[index][env_ids]
+                    steps_since_triggered = global_env_step_count - last_triggered_step
+                    valid_trigger = steps_since_triggered >= term_cfg.min_step_count_between_reset
+                    valid_trigger |= (last_triggered_step == 0) & ~triggered_at_least_once
+                    valid_env_ids = env_ids[valid_trigger]
+                    if valid_env_ids.numel() == 0:
+                        continue
+                    self._reset_term_last_triggered_once[index][valid_env_ids] = True
+                    self._reset_term_last_triggered_step_id[index][valid_env_ids] = (
+                        global_env_step_count
+                    )
+                    term_cfg.func(self._env, valid_env_ids, **term_cfg.params)
+                    continue
                 term_cfg.func(self._env, env_ids, **term_cfg.params)
             return
 
@@ -286,7 +313,7 @@ class EventManager(ManagerBase):
                         f"Event term '{term_name}' has mode 'interval' but 'interval_range_s' is not specified."
                     )
                 lower, upper = term_cfg.interval_range_s
-                if not np.isfinite((lower, upper)).all() or lower > upper:
+                if not (math.isfinite(lower) and math.isfinite(upper)) or lower > upper:
                     raise ValueError(
                         f"EventManager term '{term_name}' has invalid interval_range_s "
                         f"{term_cfg.interval_range_s}."
@@ -307,12 +334,4 @@ class EventManager(ManagerBase):
                 )
 
     def _sample_interval(self, lower: float, upper: float, count: int) -> torch.Tensor:
-        if self._torch_rng is not None:
-            return self._torch_rng.uniform(lower, upper, (count,), dtype=torch.float64).reshape(
-                count
-            )
-        return torch.as_tensor(
-            self._env.rng.uniform(lower, upper, count),
-            dtype=torch.float64,
-            device=self._device,
-        )
+        return self._torch_rng.uniform(lower, upper, (count,), dtype=torch.float64).reshape(count)

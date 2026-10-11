@@ -112,6 +112,7 @@ def test_fixture_real_mujoco_reset_step_and_partial_reset() -> None:
         assert np.all(np.abs(after[reset_ids, 0]) <= 1.0)
         assert np.all(np.abs(after[reset_ids, 1]) <= 0.25 * np.pi)
 
+        env.set_autoreset(False)
         state = env.step(torch.zeros((8, 1), dtype=torch.float32, device=env.device))
         assert state.obs["obs"].shape == (8, 4)
         assert state.reward.shape == (8,)
@@ -156,8 +157,6 @@ def test_fixture_stays_test_only_and_has_no_external_runtime_imports() -> None:
         line for line in source.splitlines() if not line.lstrip().startswith("#")
     )
     for forbidden in (
-        "import torch",
-        "from torch",
         "import isaaclab",
         "from isaaclab",
         "uni_rl",

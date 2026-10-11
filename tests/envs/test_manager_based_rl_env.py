@@ -55,6 +55,7 @@ from unilab.managers import (
     TerminationTermCfg,
 )
 from unilab.managers.scene_entity_config import SceneEntityCfg
+from unilab.managers.torch_rng import TorchManagerRng
 
 
 class _FakeBackend:
@@ -422,6 +423,21 @@ class _ScenePlanBackend(_StateBackend):
             "qvel": torch.zeros((self.num_envs, 3), dtype=torch.float32, device=target),
         }
 
+    def bind_sensor_data(self, names):
+        from unisim.backend.base import BackendSensorView
+
+        sensor_names = tuple(names)
+        values = [self.sensors[name] for name in sensor_names]
+        return BackendSensorView(
+            self.backend_type,
+            sensor_names,
+            tuple(value.shape[1] for value in values),
+            self.num_envs,
+            lambda: torch.cat(
+                [value.reshape(self.num_envs, -1) for value in values], dim=1
+            ).numpy(),
+        )
+
     def get_body_ids(self, names) -> np.ndarray:
         available = ("base", "platform", "ball")
         return np.asarray([available.index(name) for name in names], dtype=np.int32)
@@ -578,24 +594,24 @@ class _DriveCfg(ActionTermCfg):
 class _DriveAction(ActionTerm):
     def __init__(self, cfg: _DriveCfg, env) -> None:
         super().__init__(cfg, env)
-        self._processed = np.zeros((self.num_envs, 1), dtype=np.float32)
+        self._processed = torch.zeros((self.num_envs, 1), dtype=torch.float32)
 
     @property
     def action_dim(self) -> int:
         return 1
 
     @property
-    def raw_action(self) -> np.ndarray:
+    def raw_action(self) -> torch.Tensor:
         return self._processed
 
-    def process_actions(self, actions: np.ndarray) -> None:
+    def process_actions(self, actions: torch.Tensor) -> None:
         self._env.action_input_types.append(type(actions))
-        self._processed[:] = actions * cast(_DriveCfg, self.cfg).gain
+        self._processed.copy_(actions * cast(_DriveCfg, self.cfg).gain)
 
     def apply_actions(self) -> None:
         self._env.trace.append("action_apply")
         self._env.action_sim_steps.append(self._env._sim_step_counter)
-        self._entity.data.write_ctrl(torch.from_numpy(self._processed))
+        self._entity.data.write_ctrl(self._processed)
 
 
 class _FeedbackDriveAction(_DriveAction):
@@ -664,17 +680,19 @@ class _Command(CommandTerm):
 
     def __init__(self, cfg: _CommandCfg, env) -> None:
         super().__init__(cfg, env)
-        self._command = np.zeros((self.num_envs, 1), dtype=np.float32)
+        self._command = torch.zeros((self.num_envs, 1), dtype=torch.float32)
 
     @property
-    def command(self) -> np.ndarray:
+    def command(self) -> torch.Tensor:
         return self._command
 
     def _update_metrics(self, env_ids: torch.Tensor | None = None) -> None:
         return None
 
     def _resample_command(self, env_ids: torch.Tensor) -> None:
-        self._command[env_ids.cpu().numpy(), 0] = self._env.rng.uniform(size=env_ids.numel())
+        rng = self._env.torch_rng
+        assert rng is not None
+        self._command[env_ids, 0] = rng.uniform(0.0, 1.0, (env_ids.numel(),))
 
     def _update_command(self, env_ids: torch.Tensor | None) -> None:
         ids = None if env_ids is None else env_ids.clone()
@@ -717,8 +735,8 @@ class _StateWritingCommand(_Command):
     def _resample_command(self, env_ids: torch.Tensor) -> None:
         self._command[env_ids, 0] = 0.75
         self._env.scene["robot"].write_joint_state_to_sim(
-            np.full((len(env_ids), 1), 0.75, dtype=np.float32),
-            np.full((len(env_ids), 1), -0.75, dtype=np.float32),
+            torch.full((len(env_ids), 1), 0.75, dtype=torch.float32),
+            torch.full((len(env_ids), 1), -0.75, dtype=torch.float32),
             env_ids=env_ids,
         )
 
@@ -772,10 +790,10 @@ class _AliasedSensorCommand(CommandTerm):
 
     def __init__(self, cfg: CommandTermCfg, env) -> None:
         super().__init__(cfg, env)
-        self._command = np.zeros((self.num_envs, 2), dtype=np.float32)
+        self._command = torch.zeros((self.num_envs, 2), dtype=torch.float32)
 
     @property
-    def command(self) -> np.ndarray:
+    def command(self) -> torch.Tensor:
         return self._command
 
     def _update_metrics(self, env_ids: torch.Tensor | None = None) -> None:
@@ -844,16 +862,17 @@ class _NamedSensorTensorObservation:
 
 
 def _policy_obs(env: _TestEnv) -> np.ndarray:
-    return np.column_stack(
+    return torch.stack(
         (
-            env.episode_length_buf.to(torch.float32).detach().cpu().numpy(),
-            env.action_manager.action[:, 0].detach().cpu().numpy(),
-        )
+            env.episode_length_buf.to(torch.float32),
+            env.action_manager.action[:, 0],
+        ),
+        dim=1,
     )
 
 
-def _critic_obs(env: _TestEnv) -> np.ndarray:
-    return env.episode_length_buf[:, None].to(torch.float32).detach().cpu().numpy()
+def _critic_obs(env: _TestEnv) -> torch.Tensor:
+    return env.episode_length_buf[:, None].to(torch.float32)
 
 
 def _tensor_runtime_policy_obs(env: _TestEnv) -> torch.Tensor:
@@ -892,15 +911,15 @@ def _reward(env: _TestEnv) -> np.ndarray:
 
 
 def _joint_state_obs(env: _TestEnv) -> np.ndarray:
-    return env.scene["robot"].data.joint_pos
+    return torch.as_tensor(env.scene["robot"].data.joint_pos, dtype=torch.float32)
 
 
-def _joint_state_reward(env: _TestEnv) -> np.ndarray:
-    return env.scene["robot"].data.joint_pos[:, 0]
+def _joint_state_reward(env: _TestEnv) -> torch.Tensor:
+    return torch.as_tensor(env.scene["robot"].data.joint_pos[:, 0], dtype=torch.float32)
 
 
-def _joint_state_termination(env: _TestEnv) -> np.ndarray:
-    return env.scene["robot"].data.joint_pos[:, 0] > 100.0
+def _joint_state_termination(env: _TestEnv) -> torch.Tensor:
+    return torch.as_tensor(env.scene["robot"].data.joint_pos[:, 0]) > 100.0
 
 
 def _mutate_joint_state_step_event(env: _TestEnv, env_ids: np.ndarray | None) -> None:
@@ -952,8 +971,8 @@ def _write_reset_joint_state(env: _TestEnv, env_ids: np.ndarray | None) -> None:
     assert env_ids is not None
     count = len(env_ids)
     env.scene["robot"].write_joint_state_to_sim(
-        np.full((count, 1), 0.25, dtype=np.float32),
-        np.full((count, 1), -0.5, dtype=np.float32),
+        torch.full((count, 1), 0.25, dtype=torch.float32),
+        torch.full((count, 1), -0.5, dtype=torch.float32),
         env_ids=env_ids,
     )
 
@@ -2929,13 +2948,13 @@ def test_reset_seed_updates_the_shared_generator_in_place() -> None:
     cfg.events = {}
     env, _ = _make_env(cfg)
     env.init_state()
-    generator = env.rng
+    generator = env.torch_rng
 
     env.reset(seed=123, env_indices=torch.tensor([0], dtype=torch.int64))
 
-    assert env.rng is generator
-    expected = np.random.default_rng(123).random()
-    assert env.rng.random() == pytest.approx(expected)
+    assert env.torch_rng is generator
+    expected = TorchManagerRng.seeded(123).random(1)
+    torch.testing.assert_close(env.torch_rng.random(1), expected)
 
 
 def test_per_substep_metrics_fail_without_post_substep_backend_hook() -> None:
@@ -3202,6 +3221,20 @@ def test_get_playback_debug_overlays_frame_is_none_when_all_terms_return_none() 
 def test_manager_tensor_runtime_switch_is_removed() -> None:
     assert not hasattr(ManagerBasedRlEnvCfg(), "tensor_runtime")
     assert not hasattr(ManagerBasedRlEnvCfg(), "tensor_runtime_device")
+
+
+def test_manager_publication_rejects_numpy_results() -> None:
+    env = object.__new__(ManagerBasedRlEnv)
+    device = torch.device("cpu")
+    object.__setattr__(env, "_device", device)
+
+    with pytest.raises(TypeError, match="public results must be torch.Tensor"):
+        env._manager_tensor(np.ones((2, 1), dtype=np.float32), dtype=torch.float32)
+
+    values = torch.ones((2, 1), dtype=torch.float64)
+    published = env._manager_tensor(values, dtype=torch.float32)
+    assert published.dtype == torch.float32
+    assert published.data_ptr() != values.data_ptr()
 
 
 class _RecordingResetOwner(ResetOwner):

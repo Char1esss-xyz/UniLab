@@ -12,7 +12,6 @@ from dataclasses import dataclass, field, is_dataclass
 from dataclasses import fields as dataclass_fields
 from typing import Any, Mapping
 
-import numpy as np
 import torch
 
 from unilab.managers._noise.noise_cfg import UniformNoiseCfg
@@ -22,6 +21,10 @@ def _qualified_name(value: Any) -> str:
     if isinstance(value, type):
         return f"{value.__module__}.{value.__qualname__}"
     return f"{type(value).__module__}.{type(value).__qualname__}"
+
+
+def _finite_float(value: float) -> bool:
+    return value == value and value not in {float("inf"), float("-inf")}
 
 
 def semantic_token(value: Any) -> Any:
@@ -42,15 +45,9 @@ def semantic_token(value: Any) -> Any:
             ),
         )
     if isinstance(value, (str, bytes, bool, int, float)):
-        if isinstance(value, float) and not bool(np.isfinite(value)):
+        if isinstance(value, float) and not _finite_float(value):
             raise ValueError("tensor task owner identity contains a non-finite scalar")
         return type(value).__name__, value
-    if isinstance(value, np.generic):
-        if isinstance(value, (float, np.floating)) and not bool(np.isfinite(value)):
-            raise ValueError("tensor task owner identity contains a non-finite scalar")
-        return type(value).__name__, value.item()
-    if isinstance(value, np.ndarray):
-        return _qualified_name(value), str(value.dtype), value.shape, value.tobytes(order="C")
     if isinstance(value, Mapping):
         return tuple((str(key), semantic_token(item)) for key, item in value.items())
     if isinstance(value, (list, tuple)):
@@ -102,7 +99,7 @@ class TensorObservationNoise:
         upper_values = tuple(term.n_max for term in terms if isinstance(term.n_max, float))
         if len(lower_values) != len(terms) or len(upper_values) != len(terms):
             raise TypeError("motion-tracking tensor runtime requires scalar uniform noise bounds")
-        if any(not np.isfinite(value) for value in (*lower_values, *upper_values)):
+        if any(not _finite_float(value) for value in (*lower_values, *upper_values)):
             raise ValueError("observation noise bounds must be finite")
         if any(upper < lower for lower, upper in zip(lower_values, upper_values)):
             raise ValueError("observation noise upper bounds must not be below lower bounds")

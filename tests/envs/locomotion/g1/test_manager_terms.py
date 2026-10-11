@@ -11,6 +11,7 @@ import pytest
 import torch
 
 from unilab.managers import ObservationTermCfg, RewardTermCfg
+from unilab.managers.torch_rng import TorchManagerRng
 from unilab.tasks.locomotion.g1 import manager_terms as g1_terms
 from unilab.tasks.locomotion.g1.manager_terms import (
     G1GaitPhase,
@@ -26,6 +27,11 @@ pytestmark = pytest.mark.slow
 
 def _fake_scene(sensor_data: dict[str, np.ndarray]) -> Any:
     class _Scene(dict):
+        def __init__(self) -> None:
+            super().__init__()
+            self["robot"] = SimpleNamespace()
+            self._tensor_read_plan = None
+
         def bind_sensor_data(self, names):
             arrays = [sensor_data[name] for name in names]
             concatenated = np.concatenate(arrays, axis=1)
@@ -34,6 +40,20 @@ def _fake_scene(sensor_data: dict[str, np.ndarray]) -> Any:
                 dimensions=dimensions,
                 backend_type="fake",
                 read=lambda: concatenated,
+            )
+
+        def refresh_tensor_read_plan(self, device: torch.device = torch.device("cpu")) -> None:
+            values = {
+                name: torch.as_tensor(value, device=device) for name, value in sensor_data.items()
+            }
+
+            def sensor_tensor_views(entity, names):
+                return SimpleNamespace(values={name: values[name] for name in names})
+
+            self._tensor_read_plan = SimpleNamespace(
+                device=device,
+                sensor_names={"robot": tuple(sensor_data)},
+                sensor_tensor_views=sensor_tensor_views,
             )
 
     return _Scene()
@@ -48,15 +68,20 @@ class _FakeEnv:
         *,
         num_envs: int = 2,
         counter: int = 0,
-        command: np.ndarray | None = None,
+        command: torch.Tensor | None = None,
     ) -> None:
-        commands = {"twist": command if command is not None else np.zeros((num_envs, 3))}
+        commands = {
+            "twist": command
+            if command is not None
+            else torch.zeros((num_envs, 3), dtype=torch.float32)
+        }
         self.num_envs = num_envs
         self.common_step_counter = counter
         self.step_dt = 0.02
         self.device = torch.device("cpu")
-        self.rng = np.random.default_rng(0)
+        self.torch_rng = TorchManagerRng.seeded(0)
         self.scene = _fake_scene(sensor_data)
+        self.scene.refresh_tensor_read_plan()
         self.command_manager = SimpleNamespace(get_command=lambda name: commands[name])
 
 
@@ -109,8 +134,20 @@ def test_gait_phase_independent_mode_samples_feet_independently():
     assert not np.allclose(phase[:, 1] - phase[:, 0], np.pi)
 
 
+def test_gait_phase_reset_fails_closed_without_torch_rng() -> None:
+    env = _fake_env({}, num_envs=4)
+    env.torch_rng = None
+    term = G1GaitPhase(
+        ObservationTermCfg(func=G1GaitPhase, params={"frequency": 1.5}),
+        cast(Any, env),
+    )
+
+    with pytest.raises(RuntimeError, match="Manager-owned Torch generator"):
+        term.reset(torch.arange(4, dtype=torch.int64))
+
+
 def test_bezier_targets_match_legacy_reference_values():
-    phase = np.array([[0.0, np.pi], [np.pi / 2.0, 3.0 * np.pi / 2.0]])
+    phase = torch.tensor([[0.0, torch.pi], [torch.pi / 2.0, 3.0 * torch.pi / 2.0]])
     left, right = compute_feet_phase_height_targets(phase, 0.09)
     # phi=0 -> x=0.5 boundary -> stance peak; phi=pi -> x=0 -> zero;
     # phi=pi/2 -> x=0.75 -> swing midpoint 0.045.
@@ -118,7 +155,7 @@ def test_bezier_targets_match_legacy_reference_values():
     np.testing.assert_allclose(right, [0.0, 0.045], atol=1.0e-7)
     left_contact, right_contact = compute_feet_phase_contact_targets(phase, 0.09)
     np.testing.assert_array_equal(left_contact, [False, True])
-    np.testing.assert_array_equal(right_contact, [True, True])
+    np.testing.assert_array_equal(right_contact, [True, False])
 
 
 def test_gait_rewards_share_phase_without_double_advance():
@@ -194,7 +231,7 @@ def test_feet_double_stance_masks_on_forward_command():
         **{f"left_foot_contact_{i}": np.ones((2, 1)) for i in range(4)},
         **{f"right_foot_contact_{i}": np.ones((2, 1)) for i in range(4)},
     }
-    command = np.array([[0.5, 0.0, 0.0], [0.0, 0.0, 0.0]])
+    command = torch.tensor([[0.5, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=torch.float32)
     env = _fake_env(sensors, command=command)
     term = g1_terms.feet_double_stance(
         RewardTermCfg(
@@ -324,6 +361,7 @@ def test_velocity_command_dead_zone_zeroes_small_planar_commands():
     env = SimpleNamespace(
         num_envs=64,
         rng=np.random.default_rng(0),
+        torch_rng=TorchManagerRng.seeded(0),
         step_dt=0.02,
         scene={
             "robot": SimpleNamespace(

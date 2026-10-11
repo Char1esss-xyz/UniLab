@@ -32,7 +32,7 @@ from unisim.dr.types import (
     TensorResetRandomizationPayload,
 )
 
-from unilab.base.entity import EntityCfg, EntityScene
+from unilab.base.entity import EntityCfg, EntityScene, SceneTensorReadSpec
 from unilab.base.reset_state import ResetStateTransaction
 from unilab.envs import mdp
 from unilab.managers import EventManager, EventTermCfg, SceneEntityCfg
@@ -44,16 +44,35 @@ requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA i
 
 class _CaptureEntity:
     def __init__(self, default_root_state: np.ndarray) -> None:
-        self.data = SimpleNamespace(default_root_state=default_root_state)
+        self.default_root_state = default_root_state
+        self._default_root_state_tensor: torch.Tensor | None = None
         self.writes: list[tuple[np.ndarray, np.ndarray]] = []
+
+    @property
+    def data(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            default_root_state=self.default_root_state,
+            default_root_state_torch=self.default_root_state_torch,
+        )
+
+    def default_root_state_torch(self, device: torch.device) -> torch.Tensor:
+        if (
+            self._default_root_state_tensor is None
+            or self._default_root_state_tensor.device != device
+        ):
+            self._default_root_state_tensor = torch.from_numpy(
+                np.array(self.default_root_state, copy=True)
+            ).to(device=device)
+        return self._default_root_state_tensor
 
     def write_root_state_to_sim(
         self,
-        root_state: np.ndarray,
+        root_state: torch.Tensor,
         env_ids: np.ndarray | None = None,
     ) -> None:
         assert env_ids is not None
-        self.writes.append((root_state.copy(), env_ids.copy()))
+        root = root_state.clone()
+        self.writes.append((root, env_ids.clone()))
 
 
 class _CaptureScene:
@@ -63,6 +82,9 @@ class _CaptureScene:
 
     def __getitem__(self, name: str) -> _CaptureEntity:
         return self.entities[name]
+
+    def env_origins_torch(self, device: torch.device) -> torch.Tensor:
+        return torch.from_numpy(self.env_origins).to(device=device)
 
 
 def _capture_env(
@@ -83,6 +105,8 @@ def _capture_env(
         SimpleNamespace(
             num_envs=3,
             rng=np.random.default_rng(seed),
+            device=torch.device("cpu"),
+            torch_rng=TorchManagerRng.seeded(seed),
             scene=_CaptureScene(entity, env_origins),
         ),
     )
@@ -100,7 +124,7 @@ def test_uniform_root_state_applies_pinned_pose_velocity_and_origin_semantics() 
         dtype=np.float32,
     )
     env, entity = _capture_env(default_root_state=defaults, env_origins=origins)
-    ids = np.asarray([2, 0], dtype=np.int32)
+    ids = torch.tensor([2, 0], dtype=torch.int64)
 
     mdp.reset_root_state_uniform(
         env,
@@ -140,12 +164,21 @@ def test_uniform_root_state_applies_pinned_pose_velocity_and_origin_semantics() 
     np.testing.assert_array_equal(defaults[:, :3], [[1, 2, 3], [4, 5, 6], [7, 8, 9]])
 
 
+def test_generic_event_randomization_fails_closed_without_torch_rng() -> None:
+    env, _entity = _capture_env()
+    env.torch_rng = None
+    ids = torch.tensor([0, 1], dtype=torch.int64)
+
+    with pytest.raises(RuntimeError, match="Manager-owned Torch generator"):
+        mdp.reset_root_state_uniform(env, ids, {"x": (0.1, 0.2)})
+
+
 def test_uniform_root_state_uses_env_rng_and_preserves_single_env_shape() -> None:
     pose_range = {"x": (-1.0, 1.0), "yaw": (-0.5, 0.5)}
     velocity_range = {"x": (-2.0, 2.0), "roll": (-0.25, 0.25)}
     left, left_entity = _capture_env(seed=9)
     right, right_entity = _capture_env(seed=9)
-    ids = np.asarray([1], dtype=np.int32)
+    ids = torch.tensor([1], dtype=torch.int64)
 
     mdp.reset_root_state_uniform(left, ids, pose_range, velocity_range)
     mdp.reset_root_state_uniform(right, ids, pose_range, velocity_range)
@@ -408,6 +441,8 @@ def _transaction_env(
         SimpleNamespace(
             num_envs=backend.num_envs,
             rng=np.random.default_rng(rng_seed),
+            device=torch.device("cpu"),
+            torch_rng=TorchManagerRng.seeded(rng_seed),
             scene=scene,
             step_dt=step_dt,
             backend=backend,
@@ -418,7 +453,7 @@ def _transaction_env(
 
 def test_uniform_root_state_composes_in_one_reset_transaction_commit() -> None:
     env, backend, transaction = _transaction_env()
-    active_ids = np.asarray([0, 2], dtype=np.int32)
+    active_ids = torch.tensor([0, 2], dtype=torch.int64)
 
     with transaction.scoped(active_ids):
         mdp.reset_scene_to_default(env, active_ids)
@@ -489,7 +524,7 @@ def test_pd_gains_event_supports_log_uniform_absolute_sampling() -> None:
         },
         env,
     )
-    ids = np.arange(3, dtype=np.int32)
+    ids = torch.arange(3, dtype=torch.int64)
 
     with transaction.scoped(ids):
         manager.apply(mode="reset", env_ids=ids, global_env_step_count=0)
@@ -856,8 +891,7 @@ def test_min_step_count_gating_reuses_committed_field_values() -> None:
         env,
     )
     first_rows = torch.tensor([0, 1], dtype=torch.int64)
-    first_ids = first_rows.cpu().numpy()
-    with transaction.scoped(first_ids):
+    with transaction.scoped(first_rows):
         mdp.reset_scene_to_default(env, first_rows)
         manager.apply(mode="reset", env_ids=first_rows, global_env_step_count=0)
     first = backend.randomization_calls[-1]
@@ -866,8 +900,7 @@ def test_min_step_count_gating_reuses_committed_field_values() -> None:
     # Env 2 has never triggered, so the first-trigger override fires it while
     # envs 0 and 1 stay gated; their payload rows reuse committed values.
     rows = torch.tensor([0, 1, 2], dtype=torch.int64)
-    ids = rows.cpu().numpy()
-    with transaction.scoped(ids):
+    with transaction.scoped(rows):
         mdp.reset_scene_to_default(env, rows)
         manager.apply(mode="reset", env_ids=rows, global_env_step_count=50)
     second = backend.randomization_calls[-1]
@@ -879,15 +912,15 @@ def test_min_step_count_gating_reuses_committed_field_values() -> None:
 
     # Fully gated resets skip the field entirely; the backend keeps the
     # previously applied per-env values, so no dense payload is needed.
-    with transaction.scoped(first_ids):
-        mdp.reset_scene_to_default(env, first_ids)
+    with transaction.scoped(first_rows):
+        mdp.reset_scene_to_default(env, first_rows)
         manager.apply(mode="reset", env_ids=first_rows, global_env_step_count=60)
     third = backend.randomization_calls[-1]
     assert third is None or third.body_mass is None
 
     # Once enough steps elapsed the gate reopens and the term resamples.
-    with transaction.scoped(first_ids):
-        mdp.reset_scene_to_default(env, first_ids)
+    with transaction.scoped(first_rows):
+        mdp.reset_scene_to_default(env, first_rows)
         manager.apply(mode="reset", env_ids=first_rows, global_env_step_count=200)
     fourth = backend.randomization_calls[-1]
     assert fourth is not None and fourth.body_mass is not None
@@ -900,15 +933,15 @@ def test_min_step_count_gating_reuses_committed_field_values() -> None:
 
 def test_startup_mass_and_com_sample_once_and_persist_across_resets() -> None:
     env, backend, transaction = _transaction_env(rng_seed=61)
-    uniform_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-    original_rng = env.rng
+    uniform_calls = 0
+    original_uniform = env.torch_rng.uniform
 
-    class _CountingRng:
-        def uniform(self, *args: Any, **kwargs: Any) -> np.ndarray:
-            uniform_calls.append((args, kwargs))
-            return original_rng.uniform(*args, **kwargs)
+    def counted_uniform(*args: Any, **kwargs: Any) -> torch.Tensor:
+        nonlocal uniform_calls
+        uniform_calls += 1
+        return original_uniform(*args, **kwargs)
 
-    env.rng = _CountingRng()
+    env.torch_rng.uniform = counted_uniform  # type: ignore[method-assign]
     asset_cfg = SceneEntityCfg("robot", body_names=("base",))
     manager = EventManager(
         {
@@ -946,9 +979,7 @@ def test_startup_mass_and_com_sample_once_and_persist_across_resets() -> None:
     assert startup.body_ipos is not None
     np.testing.assert_allclose(startup.body_mass, [[15.0]] * backend.num_envs)
     np.testing.assert_allclose(startup.body_ipos, [[[0.1, 0.0, -0.2]]] * backend.num_envs)
-    assert len(uniform_calls) == 2, "mass and COM must each sample exactly once"
-    assert uniform_calls[0][1]["size"] == (backend.num_envs, 1)
-    assert uniform_calls[1][1]["size"] == (backend.num_envs, 3)
+    assert uniform_calls == 2, "mass and COM must each sample exactly once"
 
     selected = torch.tensor([1, 2], dtype=torch.int64)
     with transaction.scoped(selected):
@@ -959,7 +990,7 @@ def test_startup_mass_and_com_sample_once_and_persist_across_resets() -> None:
     replay = backend.randomization_calls[-1]
     assert replay is None or replay.body_mass is None
     assert replay is None or replay.body_ipos is None
-    assert len(uniform_calls) == 2
+    assert uniform_calls == 2
 
 
 @pytest.mark.parametrize("mode", ["interval", "step"])
@@ -1019,15 +1050,13 @@ def test_min_step_count_gating_applies_to_pd_gains_payload_rows() -> None:
         env,
     )
     first_rows = torch.tensor([0, 1], dtype=torch.int64)
-    first_ids = first_rows.cpu().numpy()
-    with transaction.scoped(first_ids):
+    with transaction.scoped(first_rows):
         manager.apply(mode="reset", env_ids=first_rows, global_env_step_count=0)
     first = backend.randomization_calls[-1]
     assert first is not None and first.kp is not None and first.kd is not None
 
     rows = torch.tensor([0, 1, 2], dtype=torch.int64)
-    ids = rows.cpu().numpy()
-    with transaction.scoped(ids):
+    with transaction.scoped(rows):
         mdp.reset_scene_to_default(env, rows)
         manager.apply(mode="reset", env_ids=rows, global_env_step_count=10)
     second = backend.randomization_calls[-1]
@@ -1087,11 +1116,14 @@ def test_apply_body_impulse_lifecycle_stages_sustains_and_expires() -> None:
 
 
 def test_apply_body_impulse_offset_generates_cross_torque() -> None:
-    env, backend, _ = _transaction_env(
-        rng_seed=37,
-        interval_force_supported=True,
-        interval_torque_supported=True,
+    env, backend, _ = _tensor_dr_env(device_reset_randomization=False, device=torch.device("cpu"))
+    backend.interval_force_supported = True
+    backend.interval_torque_supported = True
+    env.scene._tensor_read_plan = scene_compile = env.scene.compile_tensor_reads(
+        env.device,
+        (SceneTensorReadSpec(entity="robot", body_names=("base",)),),
     )
+    scene_compile.refresh()
     manager = EventManager(
         {
             "impulse": EventTermCfg(
@@ -1375,10 +1407,22 @@ def test_uniform_root_state_invalid_ranges_fail_before_write(
 
 
 class _BiasEntity:
-    def __init__(self, num_envs: int, num_joints: int) -> None:
+    def __init__(self, num_envs: int, num_joints: int, *, tensor_control: bool) -> None:
         self.num_joints = num_joints
         self.joint_names = [f"joint_{index}" for index in range(num_joints)]
-        self.data = SimpleNamespace(encoder_bias=np.zeros((num_envs, num_joints), dtype=np.float32))
+        self._bias = np.zeros((num_envs, num_joints), dtype=np.float32)
+        self._bias_tensor = torch.from_numpy(self._bias)
+        self.control_buffer = (
+            torch.zeros((num_envs, num_joints), dtype=torch.float32) if tensor_control else None
+        )
+        self.data = self
+
+    def update_encoder_bias_tensor(self, rows, columns, values) -> None:
+        self._bias_tensor[rows[:, None], columns[None, :]] = values
+
+    @property
+    def encoder_bias(self) -> np.ndarray:
+        return self._bias_tensor.numpy()
 
     def find_joints(self, names: list[str]) -> list[int]:
         return [self.joint_names.index(name) for name in names]
@@ -1394,13 +1438,20 @@ class _BiasScene:
         return self._entity
 
 
-def _bias_env(num_envs: int = 3, num_joints: int = 4, seed: int = 7) -> ManagerBasedRlEnv:
+def _bias_env(
+    num_envs: int = 3,
+    num_joints: int = 4,
+    seed: int = 7,
+    *,
+    tensor_control: bool = True,
+) -> ManagerBasedRlEnv:
     return cast(
         ManagerBasedRlEnv,
         SimpleNamespace(
             num_envs=num_envs,
-            rng=np.random.default_rng(seed),
-            scene=_BiasScene(_BiasEntity(num_envs, num_joints)),
+            device=torch.device("cpu"),
+            torch_rng=TorchManagerRng.seeded(seed),
+            scene=_BiasScene(_BiasEntity(num_envs, num_joints, tensor_control=tensor_control)),
         ),
     )
 
@@ -1433,6 +1484,30 @@ def test_randomize_encoder_bias_samples_selected_joints_within_range() -> None:
     np.testing.assert_array_equal(bias[:, [0, 2]], np.zeros((3, 2)))
     assert np.all(np.abs(bias[[0, 2]][:, [1, 3]]) <= 0.02)
     assert np.any(bias[[0, 2]][:, [1, 3]] != 0.0)
+
+
+def test_randomize_encoder_bias_fails_closed_without_torch_control_plane() -> None:
+    env = _bias_env(tensor_control=False)
+    manager = EventManager(
+        {
+            "bias": EventTermCfg(
+                func=mdp.randomize_encoder_bias,
+                mode="reset",
+                params={
+                    "bias_range": (-0.02, 0.02),
+                    "asset_cfg": SceneEntityCfg("robot", joint_ids=[1, 3]),
+                },
+            )
+        },
+        env,
+    )
+
+    with pytest.raises(NotImplementedError, match="Torch control plane"):
+        manager.apply(
+            mode="reset",
+            env_ids=torch.tensor([0, 2], dtype=torch.int64),
+            global_env_step_count=0,
+        )
 
 
 def test_randomize_encoder_bias_rejects_invalid_cfg_at_construction() -> None:
@@ -1620,7 +1695,8 @@ def _mass_inertia_env(
         ManagerBasedRlEnv,
         SimpleNamespace(
             num_envs=backend.num_envs,
-            rng=np.random.default_rng(rng_seed),
+            device=torch.device("cpu"),
+            torch_rng=TorchManagerRng.seeded(rng_seed),
             scene=scene,
             step_dt=0.02,
         ),
@@ -1759,16 +1835,24 @@ class _TensorBackend(_Backend):
         super().__init__(**kwargs)
         self.device_reset_randomization = device_reset_randomization
         self.tensor_reset_calls: list[tuple[Any, Any, Any, Any]] = []
+        self.body_tensor_views = {
+            "pos_w": torch.zeros((self.num_envs, 1, 3), dtype=torch.float32),
+            "quat_w": torch.zeros((self.num_envs, 1, 4), dtype=torch.float32),
+            "lin_vel_w": torch.zeros((self.num_envs, 1, 3), dtype=torch.float32),
+            "ang_vel_w": torch.zeros((self.num_envs, 1, 3), dtype=torch.float32),
+        }
+        self.body_tensor_views["quat_w"][..., 0] = 1.0
 
     def get_tensor_capabilities(self) -> TensorLifecycleCapabilities:
         return TensorLifecycleCapabilities(
             execution=TensorExecution.DEVICE_RESIDENT,
             state_views=True,
             state_fields=frozenset({"qpos", "qvel"}),
-            sensor_views=False,
+            sensor_views=True,
             stepping=True,
             selected_reset=True,
             reset_randomization=True,
+            tracked_body_views=True,
             process_topology=TensorProcessTopology.IN_PROCESS,
             data_plane=TensorDataPlane.DIRECT,
             stream_event_ownership="fake synchronous stream",
@@ -1779,6 +1863,29 @@ class _TensorBackend(_Backend):
     def set_state_tensor(self, env_indices, qpos, qvel, randomization=None) -> dict:
         self.tensor_reset_calls.append((env_indices, qpos, qvel, randomization))
         return {"ok": True}
+
+    def get_tracked_body_views(self, body_names=None, device=None):
+        assert tuple(body_names) == ("base",)
+        return SimpleNamespace(body_names=tuple(body_names), **self.body_tensor_views)
+
+    def get_state_views(self, names, device=None):
+        return {
+            "qpos": torch.zeros((self.num_envs, 3), dtype=torch.float32),
+            "qvel": torch.zeros((self.num_envs, 3), dtype=torch.float32),
+        }
+
+    def get_sensor_view(self, name, device="cpu"):
+        field = next(
+            value
+            for prefix, value in (
+                ("track_pos_w_", self.body_tensor_views["pos_w"]),
+                ("track_quat_w_", self.body_tensor_views["quat_w"]),
+                ("track_linvel_w_", self.body_tensor_views["lin_vel_w"]),
+                ("track_angvel_w_", self.body_tensor_views["ang_vel_w"]),
+            )
+            if name.startswith(prefix)
+        )
+        return field[:, 0]
 
 
 def _tensor_dr_env(
@@ -1807,7 +1914,7 @@ def _tensor_dr_env(
             num_envs=backend.num_envs,
             device=device,
             rng=np.random.default_rng(5),
-            torch_rng=(TorchManagerRng.seeded(5, device=device) if device.type == "cuda" else None),
+            torch_rng=TorchManagerRng.seeded(5, device=device),
             scene=scene,
             step_dt=0.02,
             backend=backend,

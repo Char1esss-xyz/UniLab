@@ -21,7 +21,7 @@ import types
 import numpy as np
 import torch
 
-from unilab.utils.rotation import np_quat_apply_batched
+from unilab.base.rotation import np_quat_apply_batched
 
 # Mirrors TINY_MODEL_XML.  INIT_QPOS equals mj.qpos0 of that document
 # (pelvis body pos z=0.8) so materialize-time state matches the MJCF scan.
