@@ -1946,14 +1946,16 @@ class ApplyBodyImpulse(ManagerTermBase):
 
     def _selected_body_quats(
         self,
-        quats: np.ndarray,
+        quats: torch.Tensor | np.ndarray,
         trigger_ids: torch.Tensor,
     ) -> torch.Tensor:
-        rows = torch.from_numpy(np.ascontiguousarray(quats)).to(device=self._device)
+        rows = (
+            quats
+            if isinstance(quats, torch.Tensor)
+            else torch.from_numpy(np.ascontiguousarray(quats))
+        ).to(device=self._device)
         rows = rows.index_select(0, trigger_ids.to(device=self._device))
-        columns = torch.from_numpy(np.ascontiguousarray(self._local_body_ids)).to(
-            device=self._device
-        )
+        columns = self._local_body_ids.to(device=self._device)
         return rows.index_select(1, columns).reshape(-1, 4)
 
 
