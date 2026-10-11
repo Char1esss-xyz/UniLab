@@ -228,50 +228,29 @@ class _SensorTerm(SensorTermBase):
 
 def compute_feet_phase_height_targets(
     gait_phase: np.ndarray | torch.Tensor, swing_height: float
-) -> tuple[np.ndarray | torch.Tensor, np.ndarray | torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Cubic-Bézier per-foot height targets, ported from the legacy G1 task."""
 
-    def cubic_bezier_height(
-        phi: np.ndarray | torch.Tensor, swing_height: float
-    ) -> np.ndarray | torch.Tensor:
-        if isinstance(phi, torch.Tensor):
-            phase = phi if phi.ndim == 2 else phi[:, None]
-            phi_normalized = torch.remainder(phase + math.pi, 2 * math.pi) - math.pi
-            x = (phi_normalized + math.pi) / (2 * math.pi)
-            stance_t = (2 * x).clamp(max=1.0)
-            swing_t = (2 * x - 1).clamp(min=0.0)
-            bezier = torch.where(
-                x <= 0.5,
-                stance_t**3 + 3 * stance_t**2 * (1 - stance_t),
-                1.0 - (swing_t**3 + 3 * swing_t**2 * (1 - swing_t)),
-            )
-            return swing_height * bezier
-        # The legacy NumPy helper branches on the same x<=0.5 boundary while
-        # evaluating both sides. Evaluate only the selected branch on the hot
-        # path; result values are identical where each branch is defined.
-        phi_normalized = np.fmod(phi + np.pi, 2 * np.pi) - np.pi
-        x = (phi_normalized + np.pi) / (2 * math.pi)
-        stance = x <= 0.5
-        stance_t = np.clip(2 * x, None, 1.0)
-        swing_t = np.clip(2 * x - 1.0, 0.0, None)
-        bezier = np.where(
-            stance,
+    def cubic_bezier_height(phase: torch.Tensor, swing_height: float) -> torch.Tensor:
+        phase = phase if phase.ndim == 2 else phase[:, None]
+        phi_normalized = torch.remainder(phase + math.pi, 2 * math.pi) - math.pi
+        x = (phi_normalized + math.pi) / (2 * math.pi)
+        stance_t = (2 * x).clamp(max=1.0)
+        swing_t = (2 * x - 1).clamp(min=0.0)
+        bezier = torch.where(
+            x <= 0.5,
             stance_t**3 + 3 * stance_t**2 * (1 - stance_t),
             1.0 - (swing_t**3 + 3 * swing_t**2 * (1 - swing_t)),
         )
-        return np.asarray(swing_height * bezier, dtype=np.float32)
+        return swing_height * bezier
 
-    if isinstance(gait_phase, torch.Tensor):
-        targets = cubic_bezier_height(gait_phase, swing_height)
-        return targets[:, 0], targets[:, 1]
-    left_target = cubic_bezier_height(gait_phase[:, 0], swing_height)
-    right_target = cubic_bezier_height(gait_phase[:, 1], swing_height)
-    return left_target, right_target
+    targets = cubic_bezier_height(_torch_values(gait_phase), swing_height)
+    return targets[:, 0], targets[:, 1]
 
 
 def compute_feet_phase_contact_targets(
     gait_phase: np.ndarray | torch.Tensor, swing_height: float
-) -> tuple[np.ndarray | torch.Tensor, np.ndarray | torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Expected per-foot contact flags derived from the Bézier height targets."""
     left_target, right_target = compute_feet_phase_height_targets(gait_phase, swing_height)
     contact_height_threshold = swing_height * 0.5

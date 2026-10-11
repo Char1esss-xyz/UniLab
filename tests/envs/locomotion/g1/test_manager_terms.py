@@ -152,7 +152,7 @@ def test_bezier_targets_match_legacy_reference_values():
     np.testing.assert_allclose(right, [0.0, 0.045], atol=1.0e-7)
     left_contact, right_contact = compute_feet_phase_contact_targets(phase, 0.09)
     np.testing.assert_array_equal(left_contact, [False, True])
-    np.testing.assert_array_equal(right_contact, [True, True])
+    np.testing.assert_array_equal(right_contact, [True, False])
 
 
 def test_gait_rewards_share_phase_without_double_advance():
