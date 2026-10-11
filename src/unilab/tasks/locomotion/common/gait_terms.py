@@ -88,13 +88,6 @@ def _command_name_param(term: str, value: Any, *, required: bool) -> str | None:
     return value
 
 
-def _num_selected_bodies(asset: Entity, asset_cfg: SceneEntityCfg) -> int:
-    body_ids = asset_cfg.body_ids
-    if isinstance(body_ids, list):
-        return len(body_ids)
-    return len(range(*body_ids.indices(asset.num_bodies)))
-
-
 def _selected_body_names(asset: Entity, asset_cfg: SceneEntityCfg) -> tuple[str, ...]:
     body_ids = asset_cfg.body_ids
     if isinstance(body_ids, list):
@@ -117,18 +110,6 @@ def _feet_body_tensor_view(
     if tuple(body.pos_w.shape) != expected or tuple(body.lin_vel_w.shape) != expected:
         raise ValueError(f"{term} foot body state must have shape {expected}")
     return body
-
-
-def _feet_pos_vel(
-    term: str, env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg, num_feet: int
-) -> tuple[np.ndarray, np.ndarray]:
-    asset = cast("Entity", env.scene[asset_cfg.name])
-    positions = asset.data.body_link_pos_w[:, asset_cfg.body_ids, :]
-    velocities = asset.data.body_link_lin_vel_w[:, asset_cfg.body_ids, :]
-    shape = (env.num_envs, num_feet, 3)
-    positions = _state(term, "foot body position", positions, shape)
-    velocities = _state(term, "foot body velocity", velocities, shape)
-    return positions, velocities
 
 
 class _FootContactTerm(SensorTermBase):
