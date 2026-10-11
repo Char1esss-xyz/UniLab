@@ -109,7 +109,9 @@ def root_height(
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
     """Return the world-frame root height as a scalar reward or metric term."""
-    asset = cast("Entity", env.scene[asset_cfg.name])
+    asset, view = _root_body_view(env, asset_cfg)
+    if view is not None:
+        return _reward(view.pos_w[:, 0, 2])
     return _reward(asset.data.root_link_pos_w[:, 2])
 
 
