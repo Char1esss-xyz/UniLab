@@ -1417,11 +1417,8 @@ def robot_body_ori_b(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
 
 def motion_joint_pos_rel(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
     command = _command(env, command_name)
-    robot_joint_pos = getattr(command, "device_robot_joint_pos", None)
-    if not isinstance(robot_joint_pos, torch.Tensor):
-        raise TypeError("MotionCommand device_robot_joint_pos must be a Torch tensor")
     return (
-        robot_joint_pos
+        command.device_robot_joint_pos
         - command.robot.data.default_joint_pos_torch(env.device)
         - cast(torch.Tensor, command.joint_default_bias)
     )
@@ -1430,13 +1427,8 @@ def motion_joint_pos_rel(env: ManagerBasedRlEnv, command_name: str) -> torch.Ten
 def motion_joint_pos_rel_biased(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
     """Joint position relative to the episode default, including encoder bias."""
     command = _command(env, command_name)
-    robot_joint_pos = getattr(command, "device_robot_joint_pos", None)
-    if robot_joint_pos is None:
-        robot_joint_pos = command.robot_joint_pos
-    if not isinstance(robot_joint_pos, torch.Tensor):
-        raise TypeError("MotionCommand device_robot_joint_pos must be a Torch tensor")
     return (
-        robot_joint_pos
+        command.device_robot_joint_pos
         + command.robot.data.encoder_bias_tensor.to(
             device=env.device, dtype=torch.float32, non_blocking=True
         )
@@ -1588,13 +1580,7 @@ def motion_joint_position_error_exp(
 ) -> torch.Tensor:
     command = _command(env, command_name)
     scale = _positive_std(std, term_name="motion joint position")
-    robot_joint_pos = getattr(command, "device_robot_joint_pos", None)
-    if robot_joint_pos is None:
-        robot_joint_pos = command.robot_joint_pos
-    if not isinstance(robot_joint_pos, torch.Tensor):
-        raise TypeError("MotionCommand device_robot_joint_pos must be a Torch tensor")
-    joint_delta = command.joint_pos - robot_joint_pos
-    error = cast(torch.Tensor, joint_delta).square().mean(dim=-1)
+    error = (command.joint_pos - command.device_robot_joint_pos).square().mean(dim=-1)
     return torch.exp(-error / (scale * scale))
 
 
@@ -1603,13 +1589,7 @@ def motion_joint_velocity_error_exp(
 ) -> torch.Tensor:
     command = _command(env, command_name)
     scale = _positive_std(std, term_name="motion joint velocity")
-    robot_joint_vel = getattr(command, "device_robot_joint_vel", None)
-    if robot_joint_vel is None:
-        robot_joint_vel = command.robot_joint_vel
-    if not isinstance(robot_joint_vel, torch.Tensor):
-        raise TypeError("MotionCommand device_robot_joint_vel must be a Torch tensor")
-    joint_delta = command.joint_vel - robot_joint_vel
-    error = cast(torch.Tensor, joint_delta).square().mean(dim=-1)
+    error = (command.joint_vel - command.device_robot_joint_vel).square().mean(dim=-1)
     return torch.exp(-error / (scale * scale))
 
 
@@ -1714,10 +1694,7 @@ class bad_motion_body_pos_z_only(_BodyTerm):
 
 def motion_clip_end(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
     command = _command(env, command_name)
-    current_clip_ends = getattr(command, "tensor_current_clip_end_frames", None)
-    if current_clip_ends is None:
-        raise TypeError("MotionCommand must publish tensor_current_clip_end_frames")
-    return cast(torch.Tensor, command.time_steps) >= cast(torch.Tensor, current_clip_ends)
+    return cast(torch.Tensor, command.time_steps) >= command.tensor_current_clip_end_frames
 
 
 class MotionAnchorObservation(ManagerTermBase):

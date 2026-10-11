@@ -110,8 +110,12 @@ def body_setup(monkeypatch: pytest.MonkeyPatch):
         robot_anchor_quat_w=robot_body_quat_w[:, anchor_body_idx],
         joint_pos=torch.from_numpy(rng.standard_normal((num_envs, 29), dtype=np.float32)),
         joint_vel=torch.from_numpy(rng.standard_normal((num_envs, 29), dtype=np.float32)),
-        robot_joint_pos=torch.from_numpy(rng.standard_normal((num_envs, 29), dtype=np.float32)),
-        robot_joint_vel=torch.from_numpy(rng.standard_normal((num_envs, 29), dtype=np.float32)),
+        device_robot_joint_pos=torch.from_numpy(
+            rng.standard_normal((num_envs, 29), dtype=np.float32)
+        ),
+        device_robot_joint_vel=torch.from_numpy(
+            rng.standard_normal((num_envs, 29), dtype=np.float32)
+        ),
         body_pos_relative_w=body_pos_relative_w,
         body_quat_relative_w=body_quat_relative_w,
         robot_body_quat_w=robot_body_quat_w,
@@ -172,8 +176,8 @@ def _expected_body_reward(
             0.3,
             False,
         ),
-        (mt.motion_joint_position_error_exp, "joint_pos", "robot_joint_pos", 0.2, True),
-        (mt.motion_joint_velocity_error_exp, "joint_vel", "robot_joint_vel", 1.0, True),
+        (mt.motion_joint_position_error_exp, "joint_pos", "device_robot_joint_pos", 0.2, True),
+        (mt.motion_joint_velocity_error_exp, "joint_vel", "device_robot_joint_vel", 1.0, True),
     ],
 )
 def test_tensor_scalar_error_rewards_match_numpy_and_do_not_mutate(
