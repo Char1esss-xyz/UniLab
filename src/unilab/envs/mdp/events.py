@@ -1548,7 +1548,9 @@ class RandomizePhysicsSceneGravity(ManagerTermBase):
             width=3,
             distribution=self._distribution,
         )
-        self._default_gravity = env.scene.bind_gravity_write(term_name=term_name)
+        self._default_gravity = env.scene.bind_gravity_write_torch(
+            term_name=term_name, device=getattr(env, "device", torch.device("cpu"))
+        )
 
     def __call__(
         self,
@@ -1566,17 +1568,24 @@ class RandomizePhysicsSceneGravity(ManagerTermBase):
             (ids.numel(), 3),
             self._distribution,
         )
-        default_gravity = _selected_reset_defaults_tensor(
-            self._default_gravity,
-            ids,
-            canonical_ndim=1,
-            device=sampled.device,
-        )
+        if self._default_gravity.ndim == 1:
+            default_gravity = (
+                self._default_gravity.expand(ids.numel(), 3).clone()
+                if self._default_gravity.shape[0] == 1
+                else self._default_gravity
+            ).to(device=sampled.device)
+        else:
+            default_gravity = _selected_reset_defaults_tensor(
+                self._default_gravity.cpu().numpy(),
+                ids,
+                canonical_ndim=1,
+                device=sampled.device,
+            )
         values = _apply_randomization_operation_tensor(
             default_gravity,
             sampled,
             self._operation,
-        ).cpu()
+        )
         env.scene.write_gravity_to_sim(
             values,
             ids,

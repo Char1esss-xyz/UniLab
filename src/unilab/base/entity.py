@@ -4472,6 +4472,19 @@ class EntityScene(Mapping[str, Entity]):
             )
         return self._reset_state.bind_gravity_write(term_name=term_name)
 
+    def bind_gravity_write_torch(
+        self, *, term_name: str, device: str | torch.device
+    ) -> torch.Tensor:
+        """Bind immutable backend gravity as a Torch table for tensor events."""
+        if self._reset_state is None:
+            raise NotImplementedError(
+                f"EventManager term '{term_name}' gravity capability is unavailable: "
+                "EntityScene was materialized without an env-owned reset transaction"
+            )
+        return self._reset_state.bind_gravity_write_torch(
+            term_name=term_name, device=torch.device(device)
+        )
+
     def write_gravity_to_sim(
         self,
         values: np.ndarray,

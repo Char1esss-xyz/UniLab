@@ -825,6 +825,11 @@ class ResetStateTransaction:
             term_name=term_name,
         )
 
+    def bind_gravity_write_torch(self, *, term_name: str, device: torch.device) -> torch.Tensor:
+        """Bind the immutable backend gravity vector as a Torch table."""
+        default = self.bind_gravity_write(term_name=term_name)
+        return torch.from_numpy(np.array(default, copy=True)).to(device=device, dtype=torch.float64)
+
     def bind_dof_armature_write(
         self,
         dof_ids: np.ndarray,
