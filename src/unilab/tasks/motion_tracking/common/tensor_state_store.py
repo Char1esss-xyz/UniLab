@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import cast
 
-import numpy as np
 import torch
 from unisim.backend.base import (
     HostBridgeTransferPlan,
@@ -29,10 +28,10 @@ class TensorDeviceStateStore:
         backend: SimBackend,
         device: torch.device,
         num_envs: int,
-        joint_qpos_ids: np.ndarray,
-        joint_qvel_ids: np.ndarray,
+        joint_qpos_ids: torch.Tensor,
+        joint_qvel_ids: torch.Tensor,
         body_names: tuple[str, ...],
-        body_ids: np.ndarray,
+        body_ids: torch.Tensor,
     ) -> None:
         if min(num_envs, len(body_names)) <= 0:
             raise ValueError("tensor state store dimensions must be positive")
@@ -43,10 +42,10 @@ class TensorDeviceStateStore:
         self.backend = backend
         self.device = torch.device(device)
         self.num_envs = int(num_envs)
-        self.joint_qpos_ids = np.asarray(joint_qpos_ids, dtype=np.int64)
-        self.joint_qvel_ids = np.asarray(joint_qvel_ids, dtype=np.int64)
+        self.joint_qpos_ids = joint_qpos_ids.to(device=torch.device("cpu"), dtype=torch.int64)
+        self.joint_qvel_ids = joint_qvel_ids.to(device=torch.device("cpu"), dtype=torch.int64)
         self.body_names = tuple(body_names)
-        self.body_ids = np.asarray(body_ids, dtype=np.intp)
+        self.body_ids = body_ids.to(device=torch.device("cpu"), dtype=torch.int64)
 
         self.device = torch.device(device)
         if self.device.type == "cuda":
@@ -67,7 +66,7 @@ class TensorDeviceStateStore:
                 f"supported devices are {capabilities.torch_devices}"
             )
 
-        joint_shape = (self.num_envs, self.joint_qpos_ids.size)
+        joint_shape = (self.num_envs, self.joint_qpos_ids.numel())
         body_shape = (self.num_envs, len(self.body_names))
         self.qpos: torch.Tensor | None = None
         self.qvel: torch.Tensor | None = None

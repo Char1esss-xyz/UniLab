@@ -314,10 +314,10 @@ def test_tensor_state_store_full_read_validates_layout_and_finite_state() -> Non
         backend=_HostBridgeBackend(),  # pyright: ignore[reportArgumentType]
         device=torch.device("cpu"),
         num_envs=1,
-        joint_qpos_ids=np.array([7], dtype=np.int64),
-        joint_qvel_ids=np.array([6], dtype=np.int64),
+        joint_qpos_ids=torch.tensor([7], dtype=torch.int64),
+        joint_qvel_ids=torch.tensor([6], dtype=torch.int64),
         body_names=("pelvis",),
-        body_ids=np.array([0], dtype=np.intp),
+        body_ids=torch.tensor([0], dtype=torch.int64),
     )
 
     store.read()
@@ -334,10 +334,10 @@ def test_tensor_state_store_runs_backend_readiness_after_selected_reset() -> Non
         backend=backend,  # pyright: ignore[reportArgumentType]
         device=torch.device("cpu"),
         num_envs=1,
-        joint_qpos_ids=np.array([7], dtype=np.int64),
-        joint_qvel_ids=np.array([6], dtype=np.int64),
+        joint_qpos_ids=torch.tensor([7], dtype=torch.int64),
+        joint_qvel_ids=torch.tensor([6], dtype=torch.int64),
         body_names=("pelvis",),
-        body_ids=np.array([0], dtype=np.intp),
+        body_ids=torch.tensor([0], dtype=torch.int64),
     )
     ctrl = torch.tensor([[0.25]], dtype=torch.float32)
 
@@ -367,10 +367,10 @@ def test_tensor_state_store_crosses_named_sensor_read_boundary_each_read() -> No
         backend=backend,  # pyright: ignore[reportArgumentType]
         device=torch.device("cpu"),
         num_envs=1,
-        joint_qpos_ids=np.array([7], dtype=np.int64),
-        joint_qvel_ids=np.array([6], dtype=np.int64),
+        joint_qpos_ids=torch.tensor([7], dtype=torch.int64),
+        joint_qvel_ids=torch.tensor([6], dtype=torch.int64),
         body_names=("pelvis",),
-        body_ids=np.array([0], dtype=np.intp),
+        body_ids=torch.tensor([0], dtype=torch.int64),
     )
 
     store.read()
@@ -388,10 +388,10 @@ def test_tensor_state_store_selected_reset_reads_authoritative_selected_rows() -
         backend=_HostBridgeBackend(),  # pyright: ignore[reportArgumentType]
         device=torch.device("cpu"),
         num_envs=1,
-        joint_qpos_ids=np.array([7], dtype=np.int64),
-        joint_qvel_ids=np.array([6], dtype=np.int64),
+        joint_qpos_ids=torch.tensor([7], dtype=torch.int64),
+        joint_qvel_ids=torch.tensor([6], dtype=torch.int64),
         body_names=("pelvis",),
-        body_ids=np.array([0], dtype=np.intp),
+        body_ids=torch.tensor([0], dtype=torch.int64),
     )
     store.read()
     qpos_before, qvel_before = store.qviews()
@@ -414,10 +414,10 @@ def test_tensor_state_store_has_no_legacy_host_state_fallback() -> None:
         backend=backend,  # pyright: ignore[reportArgumentType]
         device=torch.device("cpu"),
         num_envs=1,
-        joint_qpos_ids=np.array([7], dtype=np.int64),
-        joint_qvel_ids=np.array([6], dtype=np.int64),
+        joint_qpos_ids=torch.tensor([7], dtype=torch.int64),
+        joint_qvel_ids=torch.tensor([6], dtype=torch.int64),
         body_names=("pelvis",),
-        body_ids=np.array([0], dtype=np.intp),
+        body_ids=torch.tensor([0], dtype=torch.int64),
     )
     legacy_methods = (
         "get_body_pos_w",
@@ -444,10 +444,10 @@ def test_tensor_state_store_row_validation_uses_one_bounded_sync(
         backend=_HostBridgeBackend(),  # pyright: ignore[reportArgumentType]
         device=torch.device("cpu"),
         num_envs=3,
-        joint_qpos_ids=np.array([7], dtype=np.int64),
-        joint_qvel_ids=np.array([6], dtype=np.int64),
+        joint_qpos_ids=torch.tensor([7], dtype=torch.int64),
+        joint_qvel_ids=torch.tensor([6], dtype=torch.int64),
         body_names=("pelvis",),
-        body_ids=np.array([0], dtype=np.intp),
+        body_ids=torch.tensor([0], dtype=torch.int64),
     )
     rows = torch.tensor([0, 2], dtype=torch.int64)
     monkeypatch.setattr(tensor_state_store_module, "torch", _FakeTorch)
@@ -463,10 +463,10 @@ def test_host_bridge_selected_reset_has_no_device_resident_readiness_step() -> N
         backend=backend,  # pyright: ignore[reportArgumentType]
         device=torch.device("cpu"),
         num_envs=1,
-        joint_qpos_ids=np.array([7], dtype=np.int64),
-        joint_qvel_ids=np.array([6], dtype=np.int64),
+        joint_qpos_ids=torch.tensor([7], dtype=torch.int64),
+        joint_qvel_ids=torch.tensor([6], dtype=torch.int64),
         body_names=("pelvis",),
-        body_ids=np.array([0], dtype=np.intp),
+        body_ids=torch.tensor([0], dtype=torch.int64),
     )
     ctrl = torch.zeros((1, 1), dtype=torch.float32)
     qpos = torch.tensor([[0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.25]])
@@ -487,10 +487,10 @@ def test_tensor_state_store_uses_declared_named_sensor_reset_refresh() -> None:
         backend=backend,  # pyright: ignore[reportArgumentType]
         device=torch.device("cpu"),
         num_envs=1,
-        joint_qpos_ids=np.array([7], dtype=np.int64),
-        joint_qvel_ids=np.array([6], dtype=np.int64),
+        joint_qpos_ids=torch.tensor([7], dtype=torch.int64),
+        joint_qvel_ids=torch.tensor([6], dtype=torch.int64),
         body_names=("pelvis",),
-        body_ids=np.array([0], dtype=np.intp),
+        body_ids=torch.tensor([0], dtype=torch.int64),
     )
     ctrl = torch.tensor([[0.25]], dtype=torch.float32)
     qpos = torch.tensor([[0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.25]])
@@ -513,10 +513,10 @@ def test_tensor_state_store_empty_rows_validate_and_read_without_sync_or_backend
         backend=backend,  # pyright: ignore[reportArgumentType]
         device=torch.device("cpu"),
         num_envs=1,
-        joint_qpos_ids=np.array([7], dtype=np.int64),
-        joint_qvel_ids=np.array([6], dtype=np.int64),
+        joint_qpos_ids=torch.tensor([7], dtype=torch.int64),
+        joint_qvel_ids=torch.tensor([6], dtype=torch.int64),
         body_names=("pelvis",),
-        body_ids=np.array([0], dtype=np.intp),
+        body_ids=torch.tensor([0], dtype=torch.int64),
     )
     store.read()
     qpos = store.qpos
@@ -541,10 +541,10 @@ def test_tensor_state_store_rejects_row_range_with_one_sync(
         backend=_HostBridgeBackend(),  # pyright: ignore[reportArgumentType]
         device=torch.device("cpu"),
         num_envs=3,
-        joint_qpos_ids=np.array([7], dtype=np.int64),
-        joint_qvel_ids=np.array([6], dtype=np.int64),
+        joint_qpos_ids=torch.tensor([7], dtype=torch.int64),
+        joint_qvel_ids=torch.tensor([6], dtype=torch.int64),
         body_names=("pelvis",),
-        body_ids=np.array([0], dtype=np.intp),
+        body_ids=torch.tensor([0], dtype=torch.int64),
     )
     monkeypatch.setattr(tensor_state_store_module, "torch", _FakeTorch)
     _SyncCountingTensor.synchronization_count = 0
@@ -567,10 +567,10 @@ def test_tensor_state_store_rejects_unsupported_backend_before_read() -> None:
             backend=UnsupportedBackend(),  # pyright: ignore[reportArgumentType]
             device=torch.device("cpu"),
             num_envs=1,
-            joint_qpos_ids=np.array([0], dtype=np.int64),
-            joint_qvel_ids=np.array([0], dtype=np.int64),
+            joint_qpos_ids=torch.tensor([0], dtype=torch.int64),
+            joint_qvel_ids=torch.tensor([0], dtype=torch.int64),
             body_names=("pelvis",),
-            body_ids=np.array([0], dtype=np.intp),
+            body_ids=torch.tensor([0], dtype=torch.int64),
         )
 
 
@@ -596,10 +596,10 @@ def test_tensor_state_store_accepts_cuda_family_and_current_exact_device(exact_d
         backend=Backend(),  # pyright: ignore[reportArgumentType]
         device=torch.device("cuda"),
         num_envs=1,
-        joint_qpos_ids=np.array([7], dtype=np.int64),
-        joint_qvel_ids=np.array([6], dtype=np.int64),
+        joint_qpos_ids=torch.tensor([7], dtype=torch.int64),
+        joint_qvel_ids=torch.tensor([6], dtype=torch.int64),
         body_names=("pelvis",),
-        body_ids=np.array([0], dtype=np.intp),
+        body_ids=torch.tensor([0], dtype=torch.int64),
     )
 
     assert store.device == current
@@ -625,8 +625,8 @@ def test_tensor_state_store_rejects_wrong_exact_cuda_device_before_allocation() 
             backend=Backend(),  # pyright: ignore[reportArgumentType]
             device=torch.device("cuda"),
             num_envs=1,
-            joint_qpos_ids=np.array([7], dtype=np.int64),
-            joint_qvel_ids=np.array([6], dtype=np.int64),
+            joint_qpos_ids=torch.tensor([7], dtype=torch.int64),
+            joint_qvel_ids=torch.tensor([6], dtype=torch.int64),
             body_names=("pelvis",),
-            body_ids=np.array([0], dtype=np.intp),
+            body_ids=torch.tensor([0], dtype=torch.int64),
         )
