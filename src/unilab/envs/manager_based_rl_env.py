@@ -316,6 +316,7 @@ class ManagerBasedRlEnv(TorchEnv):
     _tensor_reset_env_origins_nonzero: bool | None
     _tensor_reset_pose_bounds: torch.Tensor | None
     _tensor_reset_velocity_bounds: torch.Tensor | None
+    _tensor_reset_bounds_key: tuple[Any, ...] | None
 
     def __init__(self, cfg: ManagerBasedRlEnvCfg, backend: SimBackend, num_envs: int):
         if not isinstance(cfg, ManagerBasedRlEnvCfg):
@@ -349,6 +350,7 @@ class ManagerBasedRlEnv(TorchEnv):
         self._tensor_reset_env_origins_nonzero = None
         self._tensor_reset_pose_bounds = None
         self._tensor_reset_velocity_bounds = None
+        self._tensor_reset_bounds_key = None
 
         assert cfg.scene is not None
         default_qpos = resolve_scene_default_qpos(cfg.scene, backend)

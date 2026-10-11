@@ -269,6 +269,7 @@ class ManagerBasedRlEnv(Protocol):
 
     _tensor_reset_pose_bounds: torch.Tensor | None
     _tensor_reset_velocity_bounds: torch.Tensor | None
+    _tensor_reset_bounds_key: tuple[Any, ...] | None
 
     @property
     def physics_dt(self) -> float: ...
