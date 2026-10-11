@@ -536,7 +536,7 @@ class MotionCommand(CommandTerm):
             raise ValueError(
                 f"MotionCommand body order {tuple(body_names)} does not match {cfg.body_names}"
             )
-        motion_body_ids = self.robot.motion_body_ids[np.asarray(body_ids)]
+        motion_body_ids = self.robot.motion_body_ids[tuple(body_ids)]
         self.motion = self._make_motion_loader(cfg.motion_file, motion_body_ids)
         if self.motion.num_joints != len(self.robot.joint_names):
             raise ValueError(
@@ -604,17 +604,19 @@ class MotionCommand(CommandTerm):
         self._robot_joint_vel = torch.empty(
             (self.num_envs, num_joints), dtype=torch.float32, device=self._device
         )
-        self._env_origins = torch.as_tensor(
-            np.asarray(self._env.scene.env_origins, dtype=np.float32), device=self._device
-        )
-        self._soft_joint_limits = torch.as_tensor(
-            np.asarray(self.robot.data.soft_joint_pos_limits, dtype=np.float32),
-            device=self._device,
-        )
-        self._pose_range_torch = torch.as_tensor(np.asarray(self._pose_range), device=self._device)
-        self._velocity_range_torch = torch.as_tensor(
-            np.asarray(self._velocity_range), device=self._device
-        )
+        self._env_origins = self._env.scene.env_origins_torch(self._device)
+        self._soft_joint_limits = torch.from_numpy(
+            np.ascontiguousarray(
+                self.robot.data.soft_joint_pos_limits,
+                dtype=np.float32,
+            )
+        ).to(device=self._device)
+        self._pose_range_torch = torch.from_numpy(
+            np.ascontiguousarray(self._pose_range, dtype=np.float32)
+        ).to(device=self._device)
+        self._velocity_range_torch = torch.from_numpy(
+            np.ascontiguousarray(self._velocity_range, dtype=np.float32)
+        ).to(device=self._device)
         self._joint_position_range_torch = torch.as_tensor(
             self._joint_position_range, device=self._device
         )
@@ -1171,15 +1173,12 @@ class MotionCommand(CommandTerm):
             self._robot_body_quat_w.zero_()
             self._robot_body_quat_w[..., 0] = 1.0
         else:
-            root = torch.as_tensor(np.array(default_root, copy=True), device=self._device)
+            root = self.robot.data.default_root_state_torch(self._device)
             self._robot_body_pos_w.copy_(root[:, None, 0:3])
             self._robot_body_quat_w.copy_(root[:, None, 3:7])
         self._robot_body_lin_vel_w.zero_()
         self._robot_body_ang_vel_w.zero_()
-        default_joint_pos = torch.as_tensor(
-            np.array(self.robot.data.default_joint_pos, dtype=np.float32, copy=True),
-            device=self._device,
-        )
+        default_joint_pos = self.robot.data.default_joint_pos_torch(self._device)
         self._robot_joint_pos.copy_(default_joint_pos.expand(self.num_envs, -1))
         self._robot_joint_vel.zero_()
         self._robot_cache_step = self._env.common_step_counter
@@ -1204,7 +1203,7 @@ class MotionCommand(CommandTerm):
         offset = 0
         offsets: dict[str, tuple[int, int]] = {}
         for name, tail in tails.items():
-            width = int(np.prod(tail, dtype=np.int64))
+            width = math.prod(tail)
             offsets[name] = (offset, offset + width)
             offset += width
         cached = (tails, offsets)
@@ -1451,7 +1450,7 @@ def motion_joint_pos_rel_biased(env: ManagerBasedRlEnv, command_name: str) -> to
 
 
 def _positive_std(value: float, *, term_name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float, np.number)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{term_name} std must be a real number")
     result = float(value)
     if not math.isfinite(result) or result <= 0.0:
