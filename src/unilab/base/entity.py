@@ -1466,6 +1466,7 @@ class Entity:
         if not name:
             raise ValueError("Entity name must be a non-empty string")
         self.name = name
+        self._root_body_name = cfg.root_body_name
         self._backend_type = backend.backend_type
         self._backend = backend
         self._body_tensor_layouts: dict[tuple[str, ...], np.ndarray] = {}
