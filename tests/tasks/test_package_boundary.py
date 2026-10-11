@@ -18,6 +18,10 @@ _TASK_REGISTRY_MODULES = (
     "unilab.tasks.motion_tracking.g1",
 )
 
+_RUNTIME_NUMPY_ALLOWLIST = {
+    "src/unilab/tasks/motion_tracking/common/motion_loader.py",
+}
+
 
 def _imports(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -238,3 +242,32 @@ def test_flashsac_motion_owner_uses_generic_manager_runtime() -> None:
 def test_motion_direct_runtime_is_removed() -> None:
     direct_runtime = _REPO_ROOT / "src/unilab/tasks/motion_tracking/g1/torch_flashsac_env.py"
     assert not direct_runtime.exists()
+
+
+def test_manager_and_env_runtime_do_not_import_numpy() -> None:
+    runtime_roots = (
+        _REPO_ROOT / "src" / "unilab" / "managers",
+        _REPO_ROOT / "src" / "unilab" / "envs",
+    )
+    violations = [
+        (path.relative_to(_REPO_ROOT).as_posix(), module)
+        for root in runtime_roots
+        for path in sorted(root.rglob("*.py"))
+        for module in sorted(_imports(path))
+        if module == "numpy" or module.startswith("numpy.")
+    ]
+
+    assert violations == [], f"Manager/env NumPy imports remain: {violations}"
+
+
+def test_task_runtime_numpy_is_limited_to_cold_npz_loader() -> None:
+    task_root = _REPO_ROOT / "src" / "unilab" / "tasks"
+    violations = [
+        (path.relative_to(_REPO_ROOT).as_posix(), module)
+        for path in sorted(task_root.rglob("*.py"))
+        for module in sorted(_imports(path))
+        if (module == "numpy" or module.startswith("numpy."))
+        and path.relative_to(_REPO_ROOT).as_posix() not in _RUNTIME_NUMPY_ALLOWLIST
+    ]
+
+    assert violations == [], f"unallowlisted task NumPy imports remain: {violations}"
