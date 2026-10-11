@@ -478,7 +478,7 @@ class _GaitRewardTerm(_SensorTerm):
         )
         return values[:, 2], values[:, 5]
 
-    def _gate(self, env: ManagerBasedRlEnv) -> np.ndarray | torch.Tensor:
+    def _gate(self, env: ManagerBasedRlEnv) -> torch.Tensor:
         linvel = self._read_state_tensor(
             env,
             "pelvis linear velocity",
@@ -488,9 +488,7 @@ class _GaitRewardTerm(_SensorTerm):
         forward_speed = torch.clamp(_torch_values(linvel)[:, 0], min=0.0)
         return (forward_speed >= self._min_forward_speed).to(dtype=torch.float32)
 
-    def _gate_from_forward_speed(
-        self, forward_speed: np.ndarray | torch.Tensor
-    ) -> np.ndarray | torch.Tensor:
+    def _gate_from_forward_speed(self, forward_speed: np.ndarray | torch.Tensor) -> torch.Tensor:
         positive_speed = torch.clamp(_torch_values(forward_speed), min=0.0)
         return (positive_speed >= self._min_forward_speed).to(dtype=torch.float32)
 
@@ -580,11 +578,11 @@ class feet_phase_contact(_FootContactTerm):
         phase = _cached_gait_phase(env, self._context)
         left_target, right_target = compute_feet_phase_contact_targets(phase, self._swing_height)
         left_contact, right_contact = self._contact_pair(env)
-        left_values: np.ndarray | torch.Tensor = left_contact
-        right_values: np.ndarray | torch.Tensor = right_contact
-        left_match = _bool_values(_array_like(left_values) == left_target)
-        right_match = _bool_values(_array_like(right_values) == right_target)
-        return _values(0.5 * (left_match + right_match) * self._gate(env))
+        left_match = left_contact == _torch_values(left_target)
+        right_target_tensor = _torch_values(right_target).to(device=left_contact.device)
+        right_match = right_contact == right_target_tensor
+        gate = self._gate(env).to(device=left_match.device, dtype=torch.float32)
+        return (0.5 * (left_match + right_match) * gate).to(dtype=torch.float32)
 
 
 class feet_double_stance(_FootContactTerm):
@@ -594,21 +592,10 @@ class feet_double_stance(_FootContactTerm):
         del params
         command = _command(env, self.name, self._command_name)
         left_contact, right_contact = self._contact_pair(env)
-        command_tensor = (
-            command
-            if isinstance(command, torch.Tensor)
-            else torch.from_numpy(np.ascontiguousarray(command)).to(dtype=torch.float32)
-        )
-        contacts = [left_contact, right_contact]
-        tensors = [
-            contact.to(device=command_tensor.device, dtype=torch.bool)
-            if isinstance(contact, torch.Tensor)
-            else torch.from_numpy(np.ascontiguousarray(contact)).to(
-                device=command_tensor.device, dtype=torch.bool
-            )
-            for contact in contacts
-        ]
-        double_stance = (tensors[0] & tensors[1]).to(dtype=torch.float32)
+        command_tensor = _torch_values(command)
+        left = left_contact.to(device=command_tensor.device)
+        right = right_contact.to(device=command_tensor.device)
+        double_stance = (left & right).to(dtype=torch.float32)
         forward_mask = (command_tensor[:, 0].clamp(min=0.0) > 1.0e-6).to(dtype=torch.float32)
         return double_stance * forward_mask
 
@@ -628,15 +615,13 @@ class feet_air_time(_FootContactTerm):
     def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> np.ndarray | torch.Tensor:
         del params
         left_contact, right_contact = self._contact_pair(env)
-        if not isinstance(left_contact, torch.Tensor):
-            left_contact = torch.from_numpy(np.ascontiguousarray(left_contact)).to(
-                device=self._air_time.device, dtype=torch.bool
-            )
-        if not isinstance(right_contact, torch.Tensor):
-            right_contact = torch.from_numpy(np.ascontiguousarray(right_contact)).to(
-                device=self._air_time.device, dtype=torch.bool
-            )
-        contact = torch.stack((left_contact, right_contact), dim=1)
+        contact = torch.stack(
+            (
+                left_contact.to(device=self._air_time.device),
+                right_contact.to(device=self._air_time.device),
+            ),
+            dim=1,
+        )
         step_dt = _real(self.name, "step_dt", env.step_dt, minimum=0.0, strict_minimum=True)
         self._air_time = torch.where(
             contact,
@@ -855,20 +840,15 @@ class penalty_close_feet_xy(_SensorTerm):
             (self._feet_pos, _FOOT_POS_SENSORS),
             (env.num_envs, 6),
         )
-        feet_delta = values[:, :2] - values[:, 3:5]
-        if isinstance(values, torch.Tensor):
-            feet_dist = torch.linalg.vector_norm(feet_delta, dim=1)
-            feet_gap = torch.square(feet_dist - self._threshold)
-            return torch.where(
-                feet_dist < self._threshold,
-                feet_gap,
-                torch.zeros_like(feet_dist),
-            ).to(dtype=torch.float32)
-        feet_dist = np.linalg.norm(feet_delta, axis=1)
-        return np.asarray(
-            np.where(feet_dist < self._threshold, _square(feet_dist - self._threshold), 0.0),
-            dtype=np.float32,
-        )
+        positions = _torch_values(values)
+        feet_delta = positions[:, :2] - positions[:, 3:5]
+        feet_dist = torch.linalg.vector_norm(feet_delta, dim=1)
+        feet_gap = torch.square(feet_dist - self._threshold)
+        return torch.where(
+            feet_dist < self._threshold,
+            feet_gap,
+            torch.zeros_like(feet_dist),
+        ).to(dtype=torch.float32)
 
 
 # ---------------------------------------------------------------------------
