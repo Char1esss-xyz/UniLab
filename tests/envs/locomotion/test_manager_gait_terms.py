@@ -20,7 +20,7 @@ from unilab.managers import (
 )
 from unilab.managers._types import ManagerBasedRlEnv
 from unilab.managers.scene_entity_config import SceneEntityCfg
-from unilab.tasks.locomotion.common import manager_terms
+from unilab.tasks.locomotion.common import manager_terms, sensor_reward_terms
 
 CONTACTS = ("fl_contact", "fr_contact", "rl_contact", "rr_contact")
 POSITIONS = ("fl_pos", "fr_pos", "rl_pos", "rr_pos")
@@ -60,6 +60,8 @@ class _Scene:
 class _ParityScene:
     def __init__(self) -> None:
         self._tensor_read_plan = SimpleNamespace(
+            device=torch.device("cpu"),
+            sensor_names={},
             body_tensor_view=lambda entity, names: SimpleNamespace(
                 pos_w=torch.tensor([[[1.0, 2.0, 0.4]], [[-1.0, 0.5, 0.2]]], dtype=torch.float32)
             ),
@@ -67,6 +69,10 @@ class _ParityScene:
                 joint_pos=torch.tensor([[0.2, -0.1, 0.5], [-0.4, 0.3, 0.1]], dtype=torch.float32)
             ),
         )
+        self.values = {
+            "local_linvel": np.array([[0.2, 0.1, -0.3], [0.3, -0.2, 0.5]], dtype=np.float32),
+            "gyro": np.array([[0.1, -0.2, 0.4], [-0.3, 0.2, -0.1]], dtype=np.float32),
+        }
         self.robot = SimpleNamespace(
             data=SimpleNamespace(
                 root_link_lin_vel_b=np.array(
@@ -85,6 +91,17 @@ class _ParityScene:
         if name != "robot":
             raise KeyError(name)
         return self.robot
+
+    def bind_sensor_data(self, names):
+        names = tuple(names)
+        dimensions = tuple(self.values[name].shape[1] for name in names)
+
+        def read() -> np.ndarray:
+            return np.concatenate([self.values[name] for name in names], axis=1)
+
+        view = BackendSensorView("fake", names, dimensions, 2, read)
+        view.read()
+        return view
 
 
 class _Commands:
@@ -347,31 +364,38 @@ def test_runtime_nonfinite_sensor_data_reports_term_and_backend() -> None:
 
 def test_base_reward_terms_match_go2_flat_equations() -> None:
     env = _parity_env()
-    asset = SceneEntityCfg("robot")
-    data = cast(Any, env).scene.robot.data
+    data = cast(Any, env).scene
+    local_linvel = data.values["local_linvel"]
+    gyro = data.values["gyro"]
     root_pos_w = torch.tensor([[[1.0, 2.0, 0.4]], [[-1.0, 0.5, 0.2]]], dtype=torch.float32)[:, 0]
     joint_pos = torch.tensor([[0.2, -0.1, 0.5], [-0.4, 0.3, 0.1]], dtype=torch.float32)
     default_joint_pos = torch.tensor([[0.1, -0.2, 0.5], [-0.1, 0.1, 0.0]], dtype=torch.float32)
     command = cast(Any, env).command_manager.command
-    std = 0.5
+    sigma = 0.5
     actual = {
         "track_xy": _reward_value(
             env,
-            manager_terms.track_lin_vel_xy_exp,
-            std=std,
+            sensor_reward_terms.track_lin_vel,
+            tracking_sigma=sigma,
+            sensor_name="local_linvel",
             command_name="twist",
-            asset_cfg=asset,
         ),
         "track_yaw": _reward_value(
             env,
-            manager_terms.track_ang_vel_z_exp,
-            std=std,
+            sensor_reward_terms.track_ang_vel,
+            tracking_sigma=sigma,
+            sensor_name="gyro",
             command_name="twist",
-            asset_cfg=SceneEntityCfg("robot"),
         ),
-        "lin_z": _reward_value(env, manager_terms.lin_vel_z_l2, asset_cfg=SceneEntityCfg("robot")),
+        "lin_z": _reward_value(
+            env,
+            sensor_reward_terms.lin_vel_z,
+            sensor_name="local_linvel",
+        ),
         "ang_xy": _reward_value(
-            env, manager_terms.ang_vel_xy_l2, asset_cfg=SceneEntityCfg("robot")
+            env,
+            sensor_reward_terms.ang_vel_xy,
+            sensor_name="gyro",
         ),
         "height": _reward_value(
             env,
@@ -385,37 +409,63 @@ def test_base_reward_terms_match_go2_flat_equations() -> None:
     }
     expected = {
         "track_xy": np.exp(
-            -np.sum(np.square(command[:, :2] - data.root_link_lin_vel_b[:, :2]), axis=1) / std**2
+            -np.sum(np.square(command[:, :2] - local_linvel[:, :2]), axis=1) / sigma
         ),
-        "track_yaw": np.exp(-np.square(command[:, 2] - data.root_link_ang_vel_b[:, 2]) / std**2),
-        "lin_z": np.square(data.root_link_lin_vel_b[:, 2]),
-        "ang_xy": np.sum(np.square(data.root_link_ang_vel_b[:, :2]), axis=1),
+        "track_yaw": np.exp(-np.square(command[:, 2] - gyro[:, 2]) / sigma),
+        "lin_z": np.square(local_linvel[:, 2]),
+        "ang_xy": np.sum(np.square(gyro[:, :2]), axis=1),
         "height": torch.square(root_pos_w[:, 2] - 0.3),
         "pose": (joint_pos - default_joint_pos).abs().sum(dim=1),
     }
     for name in expected:
         assert actual[name].shape == (2,)
         assert actual[name].dtype == torch.float32
-        torch.testing.assert_close(
-            actual[name],
-            torch.from_numpy(np.ascontiguousarray(expected[name])),
-            rtol=1e-6,
-            atol=1e-7,
-        )
+        expected_tensor = expected[name]
+        if isinstance(expected_tensor, torch.Tensor):
+            expected_tensor = expected_tensor.to(device=actual[name].device)
+        if isinstance(expected_tensor, np.ndarray):
+            expected_tensor = torch.from_numpy(np.ascontiguousarray(expected_tensor))
+        torch.testing.assert_close(actual[name], expected_tensor, rtol=1e-6, atol=1e-7)
 
 
 def test_base_reward_terms_fail_closed_at_nearest_boundary() -> None:
     env = _parity_env()
-    with pytest.raises(ValueError, match="track_lin_vel_xy_exp std must be greater than 0.0"):
-        _reward_value(env, manager_terms.track_lin_vel_xy_exp, std=0.0, command_name="twist")
-    with pytest.raises(KeyError, match="track_ang_vel_z_exp command capability 'missing'"):
-        _reward_value(env, manager_terms.track_ang_vel_z_exp, std=0.5, command_name="missing")
+    with pytest.raises(ValueError, match="track_lin_vel tracking_sigma must be greater than 0.0"):
+        _reward_value(
+            env,
+            sensor_reward_terms.track_lin_vel,
+            tracking_sigma=0.0,
+            sensor_name="local_linvel",
+            command_name="twist",
+        )
+    with pytest.raises(KeyError, match="track_ang_vel command capability 'missing'"):
+        _reward_value(
+            env,
+            sensor_reward_terms.track_ang_vel,
+            tracking_sigma=0.5,
+            sensor_name="gyro",
+            command_name="missing",
+        )
     with pytest.raises(ValueError, match="base_height_l2 target_height must be finite"):
         _reward_value(env, manager_terms.base_height_l2, target_height=np.nan)
 
-    cast(Any, env).scene.robot.data.root_link_lin_vel_b[1, 2] = np.inf
-    with pytest.raises(ValueError, match="lin_vel_z_l2 root linear velocity contains NaN or Inf"):
-        _reward_value(env, manager_terms.lin_vel_z_l2)
+    scene = cast(Any, env).scene
+    scene.values = {
+        "local_linvel": cast(Any, env).scene.robot.data.root_link_lin_vel_b.copy(),
+        "gyro": cast(Any, env).scene.robot.data.root_link_ang_vel_b.copy(),
+    }
+    scene.values["local_linvel"][1, 2] = np.inf
+    scene.bind_sensor_data = lambda names: SimpleNamespace(
+        dimensions=tuple(3 for _ in names),
+        backend_type="fake",
+        read=lambda: np.concatenate([scene.values[name] for name in names], axis=1),
+    )
+    with pytest.raises(ValueError, match="lin_vel_z sensor 'local_linvel' contains NaN or Inf"):
+        _reward_value(
+            env,
+            sensor_reward_terms.lin_vel_z,
+            sensor_name="local_linvel",
+        )
 
     with pytest.raises(KeyError, match="RewardManager term 'parity'.*asset_cfg.*missing"):
         _reward_value(

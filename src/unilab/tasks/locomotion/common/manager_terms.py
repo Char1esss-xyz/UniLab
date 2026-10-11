@@ -145,103 +145,6 @@ class SensorTermBase(ManagerTermBase):
             ) from exc
 
 
-def track_lin_vel_xy_exp(
-    env: ManagerBasedRlEnv,
-    std: float,
-    command_name: str,
-    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> np.ndarray | torch.Tensor:
-    """Track commanded planar velocity with the legacy independent exponential kernel."""
-    scale = _real("track_lin_vel_xy_exp", "std", std, minimum=0.0, strict_minimum=True)
-    actual = _state(
-        "track_lin_vel_xy_exp",
-        "root linear velocity",
-        _asset(env, asset_cfg).data.root_link_lin_vel_b,
-        (env.num_envs, 3),
-    )
-    command = _command(env, "track_lin_vel_xy_exp", command_name)
-    if isinstance(command, torch.Tensor):
-        actual_t = (
-            actual
-            if isinstance(actual, torch.Tensor)
-            else torch.as_tensor(actual, device=command.device, dtype=command.dtype)
-        )
-        actual_tensor = cast(torch.Tensor, actual_t)
-        delta_t = command[:, :2] - actual_tensor[:, :2]
-        error = torch.sum(delta_t.square(), dim=1)
-    else:
-        error = np.sum(np.square(command[:, :2] - actual[:, :2]), axis=1)
-    return _exp_scaled(error, scale)
-
-
-def track_ang_vel_z_exp(
-    env: ManagerBasedRlEnv,
-    std: float,
-    command_name: str,
-    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> np.ndarray | torch.Tensor:
-    """Track commanded yaw velocity without folding roll/pitch into the kernel."""
-    scale = _real("track_ang_vel_z_exp", "std", std, minimum=0.0, strict_minimum=True)
-    actual = _state(
-        "track_ang_vel_z_exp",
-        "root angular velocity",
-        _asset(env, asset_cfg).data.root_link_ang_vel_b,
-        (env.num_envs, 3),
-    )
-    command = _command(env, "track_ang_vel_z_exp", command_name)
-    if isinstance(command, torch.Tensor):
-        actual_t = (
-            actual
-            if isinstance(actual, torch.Tensor)
-            else torch.as_tensor(actual, device=command.device, dtype=command.dtype)
-        )
-        actual_tensor = cast(torch.Tensor, actual_t)
-        error = (command[:, 2] - actual_tensor[:, 2]).square()
-    else:
-        error = np.square(command[:, 2] - actual[:, 2])
-    return _exp_scaled(error, scale)
-
-
-def _exp_scaled(error: np.ndarray | torch.Tensor, scale: float):
-    if isinstance(error, torch.Tensor):
-        return torch.exp(-error / (scale * scale))
-    return torch.as_tensor(np.asarray(np.exp(-error / (scale * scale)), dtype=np.float32))
-
-
-def _torch_state(value: np.ndarray, *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
-    return torch.from_numpy(np.ascontiguousarray(value)).to(dtype=dtype)
-
-
-def lin_vel_z_l2(
-    env: ManagerBasedRlEnv,
-    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> torch.Tensor:
-    """Penalize vertical root velocity independently from planar tracking."""
-    velocity = _state(
-        "lin_vel_z_l2",
-        "root linear velocity",
-        _asset(env, asset_cfg).data.root_link_lin_vel_b,
-        (env.num_envs, 3),
-    )
-    velocity_tensor = _torch_state(velocity)
-    return velocity_tensor[:, 2].square()
-
-
-def ang_vel_xy_l2(
-    env: ManagerBasedRlEnv,
-    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> torch.Tensor:
-    """Penalize root roll/pitch angular velocity independently from yaw tracking."""
-    velocity = _state(
-        "ang_vel_xy_l2",
-        "root angular velocity",
-        _asset(env, asset_cfg).data.root_link_ang_vel_b,
-        (env.num_envs, 3),
-    )
-    velocity_tensor = _torch_state(velocity)
-    return velocity_tensor[:, :2].square().sum(dim=1)
-
-
 class base_height_l2(ManagerTermBase):
     """Penalize world-frame root height error for the flat-ground pilot."""
 
@@ -632,18 +535,18 @@ def _command_tensor(
     return _torch_state(command)
 
 
+def _torch_state(value: np.ndarray, *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+    return torch.from_numpy(np.ascontiguousarray(value)).to(dtype=dtype)
+
+
 __all__ = [
     "SensorTermBase",
     "alive",
-    "ang_vel_xy_l2",
     "base_height_l2",
     "feet_air_while_standing",
     "feet_phase_contact",
     "feet_phase_swing_height",
     "joint_deviation_l1",
-    "lin_vel_z_l2",
     "quadruped_gait_phase",
     "stand_still_l1",
-    "track_ang_vel_z_exp",
-    "track_lin_vel_xy_exp",
 ]
