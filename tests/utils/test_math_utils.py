@@ -1,10 +1,10 @@
-"""Tests for quaternion helpers in unilab.utils.rotation."""
+"""Tests for quaternion helpers in the base-owned host rotation boundary."""
 
 from __future__ import annotations
 
 import numpy as np
 
-from unilab.utils.rotation import (
+from unilab.base.rotation import (
     np_matrix_first_two_cols_from_quat,
     np_matrix_from_quat,
     np_quat_angular_velocity,

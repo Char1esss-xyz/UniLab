@@ -10,12 +10,12 @@ import pytest
 import torch
 
 from unilab.base.entity import EntityTensorBodyStateView
+from unilab.base.rotation import np_matrix_first_two_cols_from_quat
 from unilab.managers import ManagerTermBaseCfg
 from unilab.managers._types import ManagerBasedRlEnv
 from unilab.tasks.motion_tracking.common import manager_terms as mt
 from unilab.tasks.motion_tracking.common.manager_terms import MotionCommand
 from unilab.tasks.motion_tracking.common.tensor_rotation import quat_to_rot6
-from unilab.utils.rotation import np_matrix_first_two_cols_from_quat
 
 
 class _MotionCommand(MotionCommand):

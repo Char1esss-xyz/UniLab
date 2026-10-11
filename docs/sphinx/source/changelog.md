@@ -56,6 +56,14 @@ PyPI 版本变更与未发布变更；发布日期采用 PyPI 上传日期。完
   action，不再调用 `np.random.uniform`。该变更移除训练中最后一个
   environment-owned 全局 NumPy RNG 语义（#2124）。
 
+- The transition-shim module `unilab.utils.rotation` was removed without a
+  compatibility alias. Its base-owner host math moved to
+  `unilab.base.rotation`, while motion NPZ continuity and angular-velocity
+  conversion now live inside the cold `MotionLoader` owner.
+  过渡 shim `unilab.utils.rotation` 已移除且不保留兼容 alias。base-owner
+  host 数学迁移到 `unilab.base.rotation`；motion NPZ 连续性与角速度转换则
+  收进 cold `MotionLoader` owner 内部。
+
 - Production training now enters through the sole Manager-Based factory and the
   scoped tensor backend set. Retired task owners, the WarpSAC config tree, and
   task-owned direct training environment classes were removed; fused task

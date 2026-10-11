@@ -1,3 +1,11 @@
+"""NumPy host-bound rotation helpers owned by the base/reset boundary.
+
+These helpers are intentionally private to ``unilab.base``. They serve the
+explicit reset/entity host boundary; task cold loaders own their data-format
+conversion locally rather than depending on this transition shim. No
+compatibility import for ``unilab.utils.rotation`` is retained.
+"""
+
 from __future__ import annotations
 
 import numpy as np

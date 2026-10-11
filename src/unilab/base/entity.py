@@ -38,7 +38,7 @@ from unisim.dr.types import (
     IntervalRandomizationPlan,
 )
 
-from unilab.utils.rotation import np_quat_apply, np_quat_apply_inverse, np_yaw_from_quat
+from unilab.base.rotation import np_quat_apply, np_quat_apply_inverse, np_yaw_from_quat
 
 if TYPE_CHECKING:
     from unilab.base.reset_state import ResetStateTransaction
