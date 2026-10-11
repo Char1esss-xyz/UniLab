@@ -18,14 +18,13 @@ from unilab.utils.rotation import np_quat_angular_velocity, np_quat_ensure_conti
 class MotionData:
     """Container for motion data at specific frame(s)."""
 
-    # NumPy denotes the cold NPZ decode carrier; TensorMotionCommand stores
-    # device-resident Torch carriers in the same owner-shaped container.
-    joint_pos: np.ndarray | torch.Tensor  # (N, num_joints)
-    joint_vel: np.ndarray | torch.Tensor  # (N, num_joints)
-    body_pos_w: np.ndarray | torch.Tensor  # (N, num_bodies, 3)
-    body_quat_w: np.ndarray | torch.Tensor  # (N, num_bodies, 4)
-    body_lin_vel_w: np.ndarray | torch.Tensor  # (N, num_bodies, 3)
-    body_ang_vel_w: np.ndarray | torch.Tensor  # (N, num_bodies, 3)
+    # Device-resident Torch carriers owned by TensorMotionCommand.
+    joint_pos: torch.Tensor  # (N, num_joints)
+    joint_vel: torch.Tensor  # (N, num_joints)
+    body_pos_w: torch.Tensor  # (N, num_bodies, 3)
+    body_quat_w: torch.Tensor  # (N, num_bodies, 4)
+    body_lin_vel_w: torch.Tensor  # (N, num_bodies, 3)
+    body_ang_vel_w: torch.Tensor  # (N, num_bodies, 3)
 
 
 def quat_slerp(q1: np.ndarray, q2: np.ndarray, t: float) -> np.ndarray:
@@ -298,3 +297,15 @@ class MotionLoader:
             axis=1,
         )
         return torch.from_numpy(np.ascontiguousarray(host)).to(device=device)
+
+    def clip_offsets_torch(self, device: str | torch.device) -> torch.Tensor:
+        """Return immutable clip start frames as a device-resident Torch table."""
+        return torch.from_numpy(np.array(self.clip_offsets, copy=True)).to(
+            device=device, dtype=torch.int64
+        )
+
+    def clip_end_frames_torch(self, device: str | torch.device) -> torch.Tensor:
+        """Return immutable clip end frames as a device-resident Torch table."""
+        return torch.from_numpy(np.array(self.clip_end_frames, copy=True)).to(
+            device=device, dtype=torch.int64
+        )

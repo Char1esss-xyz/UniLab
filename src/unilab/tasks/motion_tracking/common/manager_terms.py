@@ -568,13 +568,9 @@ class MotionCommand(CommandTerm):
 
         num_bodies = len(cfg.body_names)
         num_joints = self.motion.num_joints
+        self._clip_offsets_torch = self.motion.clip_offsets_torch(self._device)
+        self._clip_end_frames_torch = self.motion.clip_end_frames_torch(self._device)
         self._motion_features = self._make_motion_features(self._device)
-        self._clip_offsets_torch = torch.as_tensor(
-            self.motion.clip_offsets, dtype=torch.int64, device=self._device
-        )
-        self._clip_end_frames_torch = torch.as_tensor(
-            self.motion.clip_end_frames, dtype=torch.int64, device=self._device
-        )
         self._motion_data = MotionData(
             joint_pos=torch.empty((self.num_envs, num_joints), device=self._device),
             joint_vel=torch.empty((self.num_envs, num_joints), device=self._device),
