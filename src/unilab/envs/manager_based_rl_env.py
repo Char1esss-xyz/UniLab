@@ -533,7 +533,38 @@ class ManagerBasedRlEnv(TorchEnv):
                 )
                 term = manager.get_term_cfg(name).func
                 specs.extend(self._manager_term_body_read_specs(manager_name, name, term))
+                if manager_name == "termination" and term is mdp.bad_orientation:
+                    entity_name = self._termination_entity_name(manager, name)
+                    if not self._entity_declares_packed_root(entity_name):
+                        continue
+                    specs.append(
+                        SceneTensorReadSpec(
+                            entity=entity_name,
+                            body_names=(self._term_root_body_name(entity_name),),
+                        )
+                    )
         return specs
+
+    def _term_root_body_name(self, entity_name: str) -> str:
+        entity = self.scene[entity_name]
+        root_body_name = getattr(entity, "_root_body_name", None)
+        if not isinstance(root_body_name, str) or not root_body_name:
+            raise TypeError(
+                "ManagerBasedRlEnv tensor root-state term for entity "
+                f"'{entity_name}' requires a declared root_body_name"
+            )
+        return root_body_name
+
+    def _entity_declares_packed_root(self, entity_name: str) -> bool:
+        entity = self.scene[entity_name]
+        root_body_name = getattr(entity, "_root_body_name", None)
+        body_names = getattr(entity, "_body_names", None)
+        return isinstance(root_body_name, str) and bool(root_body_name) and body_names is not None
+
+    @staticmethod
+    def _termination_entity_name(manager: RewardManager | TerminationManager, name: str) -> str:
+        asset_cfg = manager.get_term_cfg(name).params.get("asset_cfg")
+        return asset_cfg.name if isinstance(asset_cfg, SceneEntityCfg) else "robot"
 
     def _task_tensor_state_read_specs(self) -> list[SceneTensorReadSpec]:
         """Collect explicit task-owned state-only packed reads."""
