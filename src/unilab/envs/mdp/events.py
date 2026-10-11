@@ -2103,19 +2103,23 @@ def reset_root_state_uniform(
 
 def _tensor_se3_bounds(range_dict: dict[str, tuple[float, float]] | None) -> torch.Tensor:
     try:
-        bounds = np.asarray(
-            [(range_dict or {}).get(key, (0.0, 0.0)) for key in _SE3_KEYS],
-            dtype=np.float32,
-        )
-    except (TypeError, ValueError) as exc:
+        values = [
+            [
+                float((range_dict or {}).get(key, (0.0, 0.0))[0]),
+                float((range_dict or {}).get(key, (0.0, 0.0))[1]),
+            ]
+            for key in _SE3_KEYS
+        ]
+        bounds = torch.tensor(values, dtype=torch.float32)
+    except (TypeError, ValueError, RuntimeError) as exc:
         raise ValueError(
             "tensor reset SE(3) ranges must map each key to a numeric (min, max) pair"
         ) from exc
-    if bounds.shape != (len(_SE3_KEYS), 2) or not np.isfinite(bounds).all():
+    if bounds.shape != (len(_SE3_KEYS), 2) or not bool(torch.isfinite(bounds).all()):
         raise ValueError("tensor reset SE(3) ranges must be finite (min, max) pairs")
-    if np.any(bounds[:, 0] > bounds[:, 1]):
+    if bool((bounds[:, 0] > bounds[:, 1]).any()):
         raise ValueError("tensor reset SE(3) range minimum exceeds maximum")
-    return torch.as_tensor(bounds)
+    return bounds
 
 
 def _tensor_quat_from_euler_xyz(
