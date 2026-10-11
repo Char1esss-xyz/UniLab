@@ -299,6 +299,20 @@ def test_standing_penalties_match_a2_legacy_gates() -> None:
     np.testing.assert_array_equal(feet_air, [2.0, 0.0])
 
 
+def test_feet_air_while_standing_fails_closed_without_packed_sensors() -> None:
+    env = _env()
+    cfg = RewardTermCfg(
+        func=manager_terms.feet_air_while_standing,
+        weight=1.0,
+        params={"sensor_names": CONTACTS, "command_name": "twist"},
+    )
+    built = manager_terms.feet_air_while_standing(cfg=cfg, env=cast(Any, env))
+    cast(Any, env).scene._tensor_read_plan.sensor_names = {"robot": ()}
+
+    with pytest.raises(NotImplementedError, match="packed Torch read plan"):
+        built(env)
+
+
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_foot_rewards_match_legacy_equations_and_read_only_bound_views(dtype) -> None:
     scene = _Scene()
