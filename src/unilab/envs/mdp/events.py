@@ -562,9 +562,7 @@ class _ModelFieldRandomizer(ManagerTermBase):
                 raise TypeError(
                     f"EventManager term '{self._term_name}' parameter 'axes' must be a sequence"
                 )
-            if any(
-                isinstance(axis, bool) or not isinstance(axis, (int, np.integer)) for axis in value
-            ):
+            if any(isinstance(axis, bool) or not isinstance(axis, int) for axis in value):
                 raise TypeError(
                     f"EventManager term '{self._term_name}' parameter 'axes' must contain integers"
                 )
@@ -590,7 +588,7 @@ class _ModelFieldRandomizer(ManagerTermBase):
         if (
             isinstance(value, list)
             and len(value) == len(names)
-            and any(isinstance(item, (tuple, list, np.ndarray)) for item in value)
+            and any(isinstance(item, (tuple, list, torch.Tensor)) for item in value)
         ):
             per_entity = list(value)
             value = None
@@ -914,7 +912,7 @@ class PdGains(ManagerTermBase):
         self._device_default_kp: torch.Tensor | None = None
         self._device_default_kd: torch.Tensor | None = None
 
-    def _device_gain_table(self, values: np.ndarray, device: torch.device) -> torch.Tensor:
+    def _device_gain_table(self, values: torch.Tensor, device: torch.device) -> torch.Tensor:
         """Cache one immutable gain-default table on the reset device."""
         return _device_reset_table(values, device)
 
@@ -1694,8 +1692,8 @@ class PushBySettingVelocity(ManagerTermBase):
 
     def _host_uniform(
         self,
-        lower: np.ndarray,
-        upper: np.ndarray,
+        lower: torch.Tensor,
+        upper: torch.Tensor,
         *,
         size: tuple[int, ...],
         env: ManagerBasedRlEnv,
