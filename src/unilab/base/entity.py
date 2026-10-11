@@ -3237,7 +3237,7 @@ class Entity:
 
     def write_joint_armature_to_sim(
         self,
-        values: np.ndarray,
+        values: torch.Tensor,
         joint_ids: np.ndarray | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
@@ -3287,7 +3287,7 @@ class Entity:
 
     def write_geom_friction_to_sim(
         self,
-        values: np.ndarray,
+        values: torch.Tensor,
         geom_ids: np.ndarray | Sequence[int] | slice | None = None,
         env_ids: torch.Tensor | slice | None = None,
         *,
