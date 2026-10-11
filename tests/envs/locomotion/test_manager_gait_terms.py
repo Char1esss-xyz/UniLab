@@ -311,7 +311,10 @@ def test_foot_rewards_use_compiled_tensor_sensors_without_host_reads(device: str
         requests.append((entity, names))
         return SimpleNamespace(values={name: values[name] for name in names})
 
-    cast(Any, scene)._tensor_read_plan = SimpleNamespace(sensor_tensor_views=sensor_tensor_views)
+    cast(Any, scene)._tensor_read_plan = SimpleNamespace(
+        sensor_names={"robot": CONTACTS + POSITIONS},
+        sensor_tensor_views=sensor_tensor_views,
+    )
     torch.testing.assert_close(manager.compute(dt=0.02), expected)
     assert scene.calls == calls
     assert requests == [("robot", CONTACTS), ("robot", POSITIONS)]

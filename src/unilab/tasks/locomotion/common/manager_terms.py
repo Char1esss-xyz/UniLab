@@ -354,7 +354,8 @@ class _FootSensorTerm(_GaitTerm):
 
     def _read(self) -> torch.Tensor:
         read_plan = getattr(self._env.scene, "_tensor_read_plan", None)
-        if read_plan is not None:
+        sensor_names = getattr(read_plan, "sensor_names", {}).get("robot", ())
+        if read_plan is not None and set(self._sensor_names).issubset(set(sensor_names)):
             values = read_plan.sensor_tensor_views("robot", self._sensor_names).values
             return torch.cat([values[name] for name in self._sensor_names], dim=1)
         try:
@@ -399,6 +400,24 @@ class feet_phase_contact(_FootSensorTerm):
         # ``reduce="netforce"`` variants report world-frame force instead and
         # are outside this contract.
         self._columns = starts
+
+    @property
+    def tensor_sensor_names(self) -> tuple[str, ...]:
+        return self._sensor_names
+
+    def _read_contact(self) -> torch.Tensor:
+        read_plan = getattr(self._env.scene, "_tensor_read_plan", None)
+        sensor_names = getattr(read_plan, "sensor_names", {}).get("robot", ())
+        if read_plan is not None and set(self._sensor_names).issubset(set(sensor_names)):
+            values = read_plan.sensor_tensor_views("robot", self._sensor_names).values
+            return torch.cat([values[name] for name in self._sensor_names], dim=1)
+        try:
+            return _torch_state(self._view.read())
+        except (KeyError, TypeError, ValueError, NotImplementedError) as exc:
+            raise type(exc)(
+                f"Manager term '{self.name}' named-foot-sensor capability failed on "
+                f"backend '{self._view.backend_type}': {exc}"
+            ) from exc
 
     def __call__(self, env: _GaitEnv, **params: Any) -> torch.Tensor:
         del params
@@ -469,6 +488,7 @@ class feet_air_while_standing(ManagerTermBase):
         if unexpected:
             raise TypeError(f"{self.name} received unsupported parameters: {sorted(unexpected)}")
         sensor_names = _names(self.name, cfg.params.get("sensor_names"))
+        self._sensor_names = sensor_names
         command_name = cfg.params.get("command_name")
         if not isinstance(command_name, str) or not command_name:
             raise ValueError(f"{self.name} command_name must be a non-empty string")
@@ -505,22 +525,32 @@ class feet_air_while_standing(ManagerTermBase):
         # are outside this contract.
         self._columns = starts
 
-    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
-        del params
+    @property
+    def tensor_sensor_names(self) -> tuple[str, ...]:
+        return self._sensor_names
+
+    def _read_contact(self) -> torch.Tensor:
+        read_plan = getattr(self._env.scene, "_tensor_read_plan", None)
+        sensor_names = getattr(read_plan, "sensor_names", {}).get("robot", ())
+        if read_plan is not None and set(self._sensor_names).issubset(set(sensor_names)):
+            values = read_plan.sensor_tensor_views("robot", self._sensor_names).values
+            return torch.cat([values[name] for name in self._sensor_names], dim=1)
         try:
-            values = self._view.read()
+            return _torch_state(self._view.read())
         except (KeyError, TypeError, ValueError, NotImplementedError) as exc:
             raise type(exc)(
                 f"Manager term '{self.name}' named-foot-sensor capability failed on "
                 f"backend '{self._view.backend_type}': {exc}"
             ) from exc
-        contact = values[:, self._columns] > self._contact_threshold
-        contact_tensor = _torch_state(contact)
+
+    def __call__(self, env: ManagerBasedRlEnv, **params: Any) -> torch.Tensor:
+        del params
+        contact = self._read_contact()[:, self._columns] > self._contact_threshold
         standing = (
             torch.linalg.vector_norm(_command_tensor(env, self.name, self._command_name), dim=1)
             <= self._command_threshold
         )
-        air = contact_tensor.logical_not().sum(dim=1)
+        air = contact.logical_not().sum(dim=1)
         return (air * standing).to(dtype=torch.float32)
 
 
