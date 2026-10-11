@@ -482,7 +482,7 @@ class _ModelFieldRandomizer(ManagerTermBase):
         self,
         entity: Entity,
         asset_cfg: SceneEntityCfg,
-    ) -> tuple[np.ndarray, np.ndarray, tuple[str, ...]]:
+    ) -> tuple[np.ndarray, torch.Tensor, tuple[str, ...]]:
         raise NotImplementedError
 
     def _write(
@@ -498,10 +498,10 @@ class _ModelFieldRandomizer(ManagerTermBase):
     def _select_string_ranges(
         self,
         local_ids: np.ndarray,
-        defaults: np.ndarray,
+        defaults: torch.Tensor,
         names: tuple[str, ...],
         ranges: Any,
-    ) -> tuple[np.ndarray, np.ndarray, tuple[str, ...], Any]:
+    ) -> tuple[np.ndarray, torch.Tensor, tuple[str, ...], Any]:
         if not isinstance(ranges, dict) or not ranges:
             return local_ids, defaults, names, ranges
         keys = tuple(ranges)
@@ -533,15 +533,13 @@ class _ModelFieldRandomizer(ManagerTermBase):
                         f"selected name '{names[index]}'"
                     )
                 assigned[index] = bounds
-        selected = np.asarray(
-            [index for index, value in enumerate(assigned) if value is not None],
-            dtype=np.intp,
-        )
+        selected = [index for index, value in enumerate(assigned) if value is not None]
+        selected_tensor = torch.tensor(selected, dtype=torch.int64)
         canonical_ndim = 1 if self._field_width == 1 else 2
         if defaults.ndim == canonical_ndim:
-            selected_defaults = defaults[selected]
+            selected_defaults = defaults.index_select(0, selected_tensor)
         elif defaults.ndim == canonical_ndim + 1:
-            selected_defaults = defaults[:, selected]
+            selected_defaults = defaults.index_select(1, selected_tensor)
         else:
             raise ValueError(
                 f"EventManager term '{self._term_name}' bound an invalid default table with "
@@ -799,7 +797,7 @@ class GeomFriction(_ModelFieldRandomizer):
         self,
         entity: Entity,
         asset_cfg: SceneEntityCfg,
-    ) -> tuple[np.ndarray, np.ndarray, tuple[str, ...]]:
+    ) -> tuple[np.ndarray, torch.Tensor, tuple[str, ...]]:
         local_ids, defaults = entity.bind_geom_friction_write(
             asset_cfg.geom_ids,
             term_name=self._term_name,
@@ -833,7 +831,7 @@ class JointArmature(_ModelFieldRandomizer):
         self,
         entity: Entity,
         asset_cfg: SceneEntityCfg,
-    ) -> tuple[np.ndarray, np.ndarray, tuple[str, ...]]:
+    ) -> tuple[np.ndarray, torch.Tensor, tuple[str, ...]]:
         local_ids, defaults = entity.bind_joint_armature_write(
             asset_cfg.joint_ids,
             term_name=self._term_name,
