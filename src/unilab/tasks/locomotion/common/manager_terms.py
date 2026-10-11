@@ -89,7 +89,7 @@ def _state(term: str, capability: str, value: Any, shape: tuple[int, ...]) -> np
     return value
 
 
-def _command(env: ManagerBasedRlEnv, term: str, command_name: str) -> np.ndarray | torch.Tensor:
+def _command(env: ManagerBasedRlEnv, term: str, command_name: str) -> torch.Tensor:
     if not isinstance(command_name, str) or not command_name:
         raise ValueError(f"{term} command_name must be a non-empty string")
     try:
