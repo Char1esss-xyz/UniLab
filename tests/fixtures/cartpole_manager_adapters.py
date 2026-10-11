@@ -143,15 +143,21 @@ def reset_joints_by_offset(
     joint_ids = asset_cfg.joint_ids
     default_position = asset.data.default_joint_pos[host_ids][:, joint_ids]
     default_velocity = asset.data.default_joint_vel[host_ids][:, joint_ids]
-    position = default_position + env.rng.uniform(
-        position_lower,
-        position_upper,
-        default_position.shape,
+    position = (
+        default_position
+        + env.torch_rng.uniform(
+            position_lower,
+            position_upper,
+            default_position.shape,
+        ).numpy()
     )
-    velocity = default_velocity + env.rng.uniform(
-        velocity_lower,
-        velocity_upper,
-        default_velocity.shape,
+    velocity = (
+        default_velocity
+        + env.torch_rng.uniform(
+            velocity_lower,
+            velocity_upper,
+            default_velocity.shape,
+        ).numpy()
     )
     asset.write_joint_state_to_sim(
         position.astype(default_position.dtype, copy=False),

@@ -264,9 +264,6 @@ class ManagerBasedRlEnv(Protocol):
     def device(self) -> torch.device: ...
 
     @property
-    def rng(self) -> np.random.Generator: ...
-
-    @property
     def torch_rng(self) -> TorchManagerRng: ...
 
     @property

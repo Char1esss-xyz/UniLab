@@ -137,10 +137,10 @@ def test_partial_reset_temporal_group_falls_back_and_preserves_rows() -> None:
     history_before = manager._group_obs_term_history_buffer["policy"]["state"].buffer.clone()
     delay_before = manager._group_obs_term_delay_buffer["policy"]["delayed"].peek().clone()
 
-    rng_state = env.rng.bit_generator.state
+    rng_state = env.torch_rng.get_state()
     rows = manager.compute(update_history=True, env_ids=ids)
 
-    env.rng.bit_generator.state = rng_state
+    env.torch_rng.set_state(rng_state)
     full = manager.compute(update_history=True, env_ids=ids)
     np.testing.assert_array_equal(rows["policy"], full["policy"])
     assert rows["policy"].shape[0] == len(ids)
@@ -157,9 +157,9 @@ def test_partial_reset_temporal_group_falls_back_and_preserves_rows() -> None:
     )
 
     # Reference: the full-batch pipeline sliced to the reset rows agrees.
-    env.rng.bit_generator.state = rng_state
+    env.torch_rng.set_state(rng_state)
     reference = manager.compute(update_history=True)["policy"][ids]
-    env.rng.bit_generator.state = rng_state
+    env.torch_rng.set_state(rng_state)
     np.testing.assert_array_equal(rows["policy"], reference)
 
 

@@ -45,7 +45,6 @@ class FakeEntity:
 class FakeEnv:
     def __init__(self, seed: int = 7, num_envs: int = 4) -> None:
         self.num_envs = num_envs
-        self.rng = np.random.default_rng(seed)
         self.torch_rng = TorchManagerRng.seeded(seed)
         self.scene = {"robot": FakeEntity()}
         self.max_episode_length_s = 2.0
