@@ -187,15 +187,29 @@ def _sample_distribution(
 
 
 def _selected_reset_defaults_tensor(
-    defaults: np.ndarray,
+    defaults: np.ndarray | torch.Tensor,
     env_ids: torch.Tensor,
     *,
     canonical_ndim: int,
     device: torch.device,
 ) -> torch.Tensor:
-    rows = env_ids.detach().cpu().numpy()
-    selected = _selected_reset_defaults(defaults, rows, canonical_ndim=canonical_ndim)
-    return torch.from_numpy(np.ascontiguousarray(selected)).to(dtype=torch.float64, device=device)
+    """Select entity-local event defaults without a host row conversion."""
+    table = (
+        defaults
+        if isinstance(defaults, torch.Tensor)
+        else torch.from_numpy(np.ascontiguousarray(defaults))
+    )
+    rows = env_ids.to(dtype=torch.int64, device=device)
+    selected = table.to(dtype=torch.float64, device=device)
+    if table.ndim == canonical_ndim:
+        return selected.expand((rows.numel(), *selected.shape)).clone()
+    if table.ndim == canonical_ndim + 1:
+        return selected.index_select(0, rows)
+    raise ValueError(
+        f"Selected event default table has shape {tuple(table.shape)}; expected "
+        f"a {canonical_ndim}-D selected-column table or a per-environment "
+        f"(*, {canonical_ndim}) table"
+    )
 
 
 def _model_field_default_rows(
@@ -302,24 +316,6 @@ def resolve_env_ids(env: ManagerBasedRlEnv, env_ids: torch.Tensor | None) -> tor
     if isinstance(env_ids, torch.Tensor):
         return env_ids.detach().cpu().to(dtype=torch.int64)
     return torch.as_tensor(env_ids, dtype=torch.int64)
-
-
-def _selected_reset_defaults(
-    defaults: np.ndarray,
-    env_ids: np.ndarray,
-    *,
-    canonical_ndim: int,
-) -> np.ndarray:
-    """Select canonical or per-environment reset defaults for concrete rows."""
-    if defaults.ndim == canonical_ndim:
-        return np.broadcast_to(defaults, (env_ids.size, *defaults.shape))
-    if defaults.ndim == canonical_ndim + 1:
-        return defaults[env_ids]
-    raise ValueError(
-        f"Reset default table has shape {defaults.shape}; expected a canonical "
-        f"{canonical_ndim}-D table or a per-environment "
-        f"({env_ids.size}, *canonical) table"
-    )
 
 
 def _probe_device_reset_randomization(env: ManagerBasedRlEnv) -> bool:
