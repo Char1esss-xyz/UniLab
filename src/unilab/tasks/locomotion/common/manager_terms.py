@@ -288,7 +288,7 @@ class _GaitTerm(ManagerTermBase):
 
     def _counter(self, env: _GaitEnv) -> int:
         counter = env.common_step_counter
-        if isinstance(counter, (bool, np.bool_)) or not isinstance(counter, (int, np.integer)):
+        if isinstance(counter, bool) or not isinstance(counter, int):
             raise TypeError(f"{self.name} common_step_counter must be an integer")
         if counter < 0:
             raise ValueError(f"{self.name} common_step_counter must be non-negative")
@@ -383,7 +383,9 @@ class feet_phase_contact(_FootSensorTerm):
                 f"{self.name} contact sensors must each expose 1-D found or 3-D force; "
                 f"received {self._view.dimensions} on backend '{self._view.backend_type}'"
             )
-        starts = np.cumsum((0, *self._view.dimensions[:-1]), dtype=np.int64)
+        starts = torch.cumsum(
+            torch.tensor((0, *self._view.dimensions[:-1]), dtype=torch.int64), dim=0
+        )
         # MuJoCo ``<contact data="force">`` sensors report the force in the
         # contact frame whose first axis is the contact normal, so the gating
         # component is column 0 for both 1-D ``found`` and 3-D ``force``.
@@ -504,7 +506,9 @@ class feet_air_while_standing(ManagerTermBase):
                 f"{self.name} contact sensors must each expose 1-D found or 3-D force; "
                 f"received {self._view.dimensions} on backend '{self._view.backend_type}'"
             )
-        starts = np.cumsum((0, *self._view.dimensions[:-1]), dtype=np.int64)
+        starts = torch.cumsum(
+            torch.tensor((0, *self._view.dimensions[:-1]), dtype=torch.int64), dim=0
+        )
         # MuJoCo ``<contact data="force">`` sensors report the force in the
         # contact frame whose first axis is the contact normal, so the gating
         # component is column 0 for both 1-D ``found`` and 3-D ``force``.
