@@ -192,13 +192,9 @@ class _SensorTerm(SensorTermBase):
     ) -> np.ndarray | torch.Tensor:
         view, sensor_names = binding
         read_plan = getattr(env.scene, "_tensor_read_plan", None)
-        if read_plan is not None and read_plan.device.type == "cuda":
-            owner_sensors = set(read_plan.sensor_names.get("robot", ()))
-            if not set(sensor_names).issubset(owner_sensors):
-                # Device-resident adapters currently publish only the audited
-                # named IMU subset. Body-frame task sensors still use their
-                # validated host cache until carrier migration completes.
-                read_plan = None
+        owner_sensors = set(getattr(read_plan, "sensor_names", {}).get("robot", ()))
+        if read_plan is not None and not set(sensor_names).issubset(owner_sensors):
+            read_plan = None
         if read_plan is None:
             return _state(self.name, capability, self._read(view, self.name), shape)
         entity = env.scene["robot"]
@@ -500,11 +496,11 @@ class _GaitRewardTerm(_SensorTerm):
     def _phase_reward_inputs(
         self, env: _G1Env
     ) -> tuple[
-        np.ndarray | torch.Tensor,
-        np.ndarray | torch.Tensor,
-        np.ndarray | torch.Tensor,
-        np.ndarray | torch.Tensor,
-        np.ndarray | torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
     ]:
         """Read foot height, forward speed, and both height targets in one call."""
         values = self._read_state_tensor(
@@ -515,15 +511,14 @@ class _GaitRewardTerm(_SensorTerm):
         )
         phase = _cached_gait_phase(env, self._context)
         left_target, right_target = compute_feet_phase_height_targets(phase, self._swing_height)
-        if isinstance(values, torch.Tensor):
-            if not isinstance(left_target, torch.Tensor):
-                left_target = torch.as_tensor(left_target, device=values.device)
-                right_target = torch.as_tensor(right_target, device=values.device)
-            return values[:, 2], values[:, 5], values[:, 6], left_target, right_target
-        # HOST_BRIDGE reference terms still publish NumPy sensors. Convert the
-        # shared Torch phase target once at this explicit public boundary.
-        left_target = np.asarray(torch.as_tensor(left_target).cpu())
-        right_target = np.asarray(torch.as_tensor(right_target).cpu())
+        if not isinstance(left_target, torch.Tensor):
+            left_target = torch.as_tensor(left_target, device=values.device)
+        if not isinstance(right_target, torch.Tensor):
+            right_target = torch.as_tensor(right_target, device=values.device)
+        if not isinstance(values, torch.Tensor):
+            values = torch.from_numpy(np.ascontiguousarray(values)).to(
+                device=left_target.device, dtype=left_target.dtype
+            )
         return values[:, 2], values[:, 5], values[:, 6], left_target, right_target
 
 
