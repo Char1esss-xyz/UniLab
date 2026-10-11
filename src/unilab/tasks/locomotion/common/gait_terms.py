@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 import numpy as np
 import torch
 
-from unilab.managers.manager_base import ManagerTermBaseCfg
+from unilab.managers.manager_base import ManagerTermBase, ManagerTermBaseCfg
 from unilab.managers.scene_entity_config import SceneEntityCfg
 
 from .manager_terms import SensorTermBase, _command, _real, _state
@@ -419,43 +419,67 @@ class feet_slip(_FootContactTerm):
         return cost.to(dtype=torch.float32)
 
 
-def feet_clearance(
-    env: ManagerBasedRlEnv,
-    target_height: float,
-    command_name: str | None = None,
-    command_threshold: float = 0.01,
-    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> torch.Tensor:
+class feet_clearance(ManagerTermBase):
     """Penalize clearance-height deviation weighted by planar foot velocity.
 
     Mirrors mjlab ``feet_clearance`` with foot heights taken from world-frame
     foot body z (exact on flat terrain) instead of a terrain height sensor.
     """
-    target = _real("feet_clearance", "target_height", target_height)
-    threshold = _real("feet_clearance", "command_threshold", command_threshold, minimum=0.0)
-    name = _command_name_param("feet_clearance", command_name, required=False)
-    asset = cast("Entity", env.scene[asset_cfg.name])
-    positions = asset.data.body_link_pos_w[:, asset_cfg.body_ids, :]
-    velocities = asset.data.body_link_lin_vel_w[:, asset_cfg.body_ids, :]
-    if not isinstance(positions, np.ndarray) or positions.ndim != 3 or positions.shape[2] != 3:
-        raise ValueError(
-            f"feet_clearance foot body position must have shape ({env.num_envs}, num_feet, 3), "
-            f"got {getattr(positions, 'shape', None)}"
+
+    def __init__(self, cfg: ManagerTermBaseCfg, env: ManagerBasedRlEnv):
+        super().__init__(env)
+        self._target_height = _real(
+            self.name,
+            "target_height",
+            cfg.params["target_height"],
         )
-    positions = _state("feet_clearance", "foot body position", positions, positions.shape)
-    velocities = _state("feet_clearance", "foot body velocity", velocities, positions.shape)
-    position_tensor = _torch_state(positions)
-    velocity_tensor = _torch_state(velocities)
-    delta = (position_tensor[:, :, 2] - target).abs()
-    vel_norm = torch.linalg.vector_norm(velocity_tensor[:, :, :2], dim=2)
-    cost = (delta * vel_norm).sum(dim=1)
-    gate = _command_gate(env, "feet_clearance", name, threshold)
-    if gate is not None:
-        gate_tensor = (
-            gate if isinstance(gate, torch.Tensor) else _torch_state(gate, dtype=torch.bool)
+        self._command_name = _command_name_param(
+            self.name,
+            cfg.params.get("command_name"),
+            required=False,
         )
-        cost = cost * gate_tensor
-    return cost.to(dtype=torch.float32)
+        self._command_threshold = _real(
+            self.name,
+            "command_threshold",
+            cfg.params.get("command_threshold", 0.01),
+            minimum=0.0,
+        )
+        asset_cfg = cfg.params.get("asset_cfg", _DEFAULT_ASSET_CFG)
+        if not isinstance(asset_cfg, SceneEntityCfg):
+            raise TypeError(f"{self.name} asset_cfg must be a SceneEntityCfg")
+        asset = cast("Entity", env.scene[asset_cfg.name])
+        self._asset_cfg = asset_cfg
+        self._entity_name = asset_cfg.name
+        self._body_names = _selected_body_names(asset, asset_cfg)
+
+    @property
+    def tensor_body_names(self) -> tuple[str, ...]:
+        return self._body_names
+
+    @property
+    def entity_name(self) -> str:
+        return self._entity_name
+
+    def __call__(
+        self,
+        env: ManagerBasedRlEnv,
+        target_height: float = 0.1,
+        command_name: str | None = None,
+        command_threshold: float = 0.01,
+        asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    ) -> torch.Tensor:
+        del target_height, command_name, command_threshold, asset_cfg
+        body = _feet_body_tensor_view(self.name, env, self._asset_cfg, self._body_names)
+        delta = (body.pos_w[:, :, 2] - self._target_height).abs()
+        vel_norm = torch.linalg.vector_norm(body.lin_vel_w[:, :, :2], dim=2)
+        cost = (delta * vel_norm).sum(dim=1)
+        gate = _command_gate(env, self.name, self._command_name, self._command_threshold)
+        if gate is not None:
+            gate_tensor = (
+                gate if isinstance(gate, torch.Tensor) else _torch_state(gate, dtype=torch.bool)
+            )
+            cost = cost * gate_tensor
+        return cost.to(dtype=torch.float32)
 
 
 class self_collision_cost(_FootContactTerm):
@@ -531,25 +555,40 @@ class angular_momentum_penalty(SensorTermBase):
 # the same named contact-sensor groups as the gait rewards.
 
 
-def foot_height(
-    env: ManagerBasedRlEnv,
-    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-) -> torch.Tensor:
+class foot_height(ManagerTermBase):
     """Per-foot vertical clearance above the terrain, shape ``(num_envs, num_feet)``.
 
     mjlab reads this from a ``TerrainHeightSensor`` ring around each foot; the
     UniLab port returns the world-frame foot body z, which is identical on flat
     terrain.
     """
-    asset = cast("Entity", env.scene[asset_cfg.name])
-    positions = asset.data.body_link_pos_w[:, asset_cfg.body_ids, :]
-    if not isinstance(positions, np.ndarray) or positions.ndim != 3 or positions.shape[2] != 3:
-        raise ValueError(
-            f"foot_height foot body position must have shape ({env.num_envs}, num_feet, 3), "
-            f"got {getattr(positions, 'shape', None)}"
-        )
-    positions = _state("foot_height", "foot body position", positions, positions.shape)
-    return _torch_state(positions)[:, :, 2]
+
+    def __init__(self, cfg: ManagerTermBaseCfg, env: ManagerBasedRlEnv):
+        super().__init__(env)
+        asset_cfg = cfg.params.get("asset_cfg", _DEFAULT_ASSET_CFG)
+        if not isinstance(asset_cfg, SceneEntityCfg):
+            raise TypeError(f"{self.name} asset_cfg must be a SceneEntityCfg")
+        asset = cast("Entity", env.scene[asset_cfg.name])
+        self._asset_cfg = asset_cfg
+        self._entity_name = asset_cfg.name
+        self._body_names = _selected_body_names(asset, asset_cfg)
+
+    @property
+    def tensor_body_names(self) -> tuple[str, ...]:
+        return self._body_names
+
+    @property
+    def entity_name(self) -> str:
+        return self._entity_name
+
+    def __call__(
+        self,
+        env: ManagerBasedRlEnv,
+        asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    ) -> torch.Tensor:
+        del asset_cfg
+        body = _feet_body_tensor_view(self.name, env, self._asset_cfg, self._body_names)
+        return body.pos_w[:, :, 2]
 
 
 class foot_air_time(_FootContactTerm):
