@@ -62,12 +62,12 @@ class _Vec3SensorTerm(SensorTermBase):
 
     def _read_sensor_tensor(self, env: ManagerBasedRlEnv) -> np.ndarray | torch.Tensor:
         read_plan = getattr(env.scene, "_tensor_read_plan", None)
-        if read_plan is None or not set(self.tensor_sensor_names).issubset(
-            set(getattr(read_plan, "sensor_names", {}).get("robot", ()))
-        ):
-            return self._read_sensor(env)
-        if not hasattr(read_plan, "sensor_tensor_views"):
-            return self._read_sensor(env)
+        owner_sensors = set(getattr(read_plan, "sensor_names", {}).get("robot", ()))
+        if read_plan is None or not set(self.tensor_sensor_names).issubset(owner_sensors):
+            raise NotImplementedError(
+                f"Manager term '{self.name}' requires its named sensors "
+                f"{self.tensor_sensor_names} in the packed Torch read plan"
+            )
         entity = env.scene["robot"]
         values = read_plan.sensor_tensor_views(entity, self.tensor_sensor_names).values[
             self._sensor_name

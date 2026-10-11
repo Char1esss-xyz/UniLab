@@ -20,6 +20,12 @@ class _Scene:
     def __init__(self, values: dict[str, np.ndarray]) -> None:
         self.values = values
         self.bound_names: tuple[str, ...] | None = None
+        self.refresh_tensor_read_plan()
+
+    def __getitem__(self, name: str) -> SimpleNamespace:
+        if name != "robot":
+            raise KeyError(name)
+        return SimpleNamespace()
 
     def bind_sensor_data(self, names) -> BackendSensorView:
         names = tuple(names)
@@ -32,6 +38,20 @@ class _Scene:
         view = BackendSensorView("fake", names, dimensions, 2, read)
         view.read()  # Mirror SimBackend.bind_sensor_data materialization validation.
         return view
+
+    def refresh_tensor_read_plan(self, device: torch.device = torch.device("cpu")) -> None:
+        values = {
+            name: torch.as_tensor(value, device=device) for name, value in self.values.items()
+        }
+
+        def sensor_tensor_views(entity, names):
+            return SimpleNamespace(values={name: values[name] for name in names})
+
+        self._tensor_read_plan = SimpleNamespace(
+            device=device,
+            sensor_names={"robot": tuple(self.values)},
+            sensor_tensor_views=sensor_tensor_views,
+        )
 
 
 class _Commands:
