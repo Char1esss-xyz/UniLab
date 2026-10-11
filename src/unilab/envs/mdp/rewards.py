@@ -263,11 +263,9 @@ def joint_pos_limits(
 ) -> torch.Tensor:
     """Penalize joint positions if they cross the soft limits."""
     asset = cast("Entity", env.scene[asset_cfg.name])
-    limits = torch.as_tensor(
-        asset.data.soft_joint_pos_limits,
-        dtype=torch.float32,
-        device=getattr(env, "device", torch.device("cpu")),
-    )[asset_cfg.joint_ids]
+    limits = asset.data.soft_joint_pos_limits_torch(getattr(env, "device", torch.device("cpu")))[
+        asset_cfg.joint_ids
+    ]
     joint_pos = torch.as_tensor(
         asset.data.joint_pos[:, asset_cfg.joint_ids],
         dtype=torch.float32,
@@ -308,10 +306,8 @@ class posture(ManagerTermBase):
         self._std = _resolve_std_dict(
             self.name, "std", cfg.params.get("std"), _selected_joint_names(asset, asset_cfg)
         )
-        self._default_joint_pos = torch.as_tensor(
-            asset.data.default_joint_pos,
-            dtype=torch.float32,
-            device=getattr(env, "device", torch.device("cpu")),
+        self._default_joint_pos = asset.data.default_joint_pos_torch(
+            getattr(env, "device", torch.device("cpu"))
         )
         self._std = torch.tensor(
             self._std, dtype=torch.float32, device=getattr(env, "device", torch.device("cpu"))
@@ -385,10 +381,8 @@ class variable_posture(ManagerTermBase):
                 f"{self.name} walking_threshold must be below running_threshold, got "
                 f"{self._walking_threshold} >= {self._running_threshold}"
             )
-        self._default_joint_pos = torch.as_tensor(
-            asset.data.default_joint_pos,
-            dtype=torch.float32,
-            device=getattr(env, "device", torch.device("cpu")),
+        self._default_joint_pos = asset.data.default_joint_pos_torch(
+            getattr(env, "device", torch.device("cpu"))
         )
         device = getattr(env, "device", torch.device("cpu"))
         self._std_standing = torch.tensor(std_standing, dtype=torch.float32, device=device)
