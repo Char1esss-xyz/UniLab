@@ -43,9 +43,53 @@ uv run train --num-envs 16 --max-iterations 2 --device cpu algo.save_interval=1
 uv run train --resume-path /path/to/model_200.pt --max-iterations 1000
 ```
 
+训练过程中按 `Ctrl+C` 会先保存一个带有 `_interrupt.pt` 后缀的 checkpoint，
+然后再退出。下一次启动时把这个文件传给 `--resume-path` 即可继续；建议把保存间隔调小，
+例如 `algo.save_interval=100`，这样即使机器断电也只会丢失最近一小段训练：
+
+```bash
+uv run train --device cuda --num-envs 1024 --max-iterations 5000 \
+  algo.save_interval=100
+```
+
 `--max-iterations` 表示本次新增训练迭代数。续训恢复模型、优化器、训练进度和日志计数；
 不恢复模拟器的瞬时物理状态。续训应使用与 checkpoint 相同的网络和环境配置，
 例如通过命令末尾的 Hydra 参数设置 `algo.seed=1`。
+
+播放训练好的 checkpoint 并导出 MuJoCo 视频：
+
+```bash
+uv run play \
+  --checkpoint logs/rsl_rl_ppo/WheelbipeV14Flat/<训练目录>/model_20000.pt \
+  --device cuda \
+  --steps 200 \
+  --output playback.mp4
+```
+
+MuJoCo 播放入口使用确定性策略，默认运行一个环境并输出 MP4。只做无渲染的回合统计时使用
+`--render-mode none`；增加 `--num-envs` 可以同时评估多个环境。
+
+播放时已接入 `/home/chaz/wheeled-legged_RL` 中的 V14 USD 视觉网格，视觉网格不参与碰撞。
+近距离查看完整外观可使用：
+
+```bash
+uv run play \
+  --checkpoint logs/rsl_rl_ppo/WheelbipeV14Flat/<训练目录>/model_20000.pt \
+  --device cpu --steps 200 --output wheelbipe_full.mp4 \
+  --cam-distance 2.0 --cam-elevation -15 --cam-azimuth 90
+```
+
+生成或更新本地视觉缓存（缓存目录已被 `.gitignore` 忽略）：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run --with usd-core \
+  python tools/convert_wheelbipe_usd_visuals.py \
+  /home/chaz/wheeled-legged_RL/source/agent_world/agent_world/assets/usd_files/wheelbipeV14_2_1/configuration/wheelbipeV14_2_base.usd \
+  .unilab_assets/wheelbipe_v14_visuals
+UV_CACHE_DIR=/tmp/uv-cache uv run python tools/attach_mujoco_visuals.py \
+  src/unilab/assets/robots/wheelbipe_v14/robot.xml \
+  .unilab_assets/wheelbipe_v14_visuals/manifest.json
+```
 
 任务参数位于 `src/unilab/conf/ppo/task/wheelbipe_v14_flat/`，
 PPO 参数位于 `src/unilab/conf/ppo/config.yaml`。

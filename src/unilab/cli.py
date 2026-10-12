@@ -37,3 +37,33 @@ def train_main(argv: Sequence[str] | None = None) -> None:
     from unilab.scripts.train_rsl_rl import main
 
     main(overrides)
+
+
+def play_main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Play a trained Wheelbipe V14 Flat PPO policy.")
+    parser.add_argument("--checkpoint", required=True, help="Path to model_*.pt checkpoint")
+    parser.add_argument("--config", dest="config_path", help="Optional path to config.yaml")
+    parser.add_argument("--device", choices=("cpu", "mps", "cuda"))
+    parser.add_argument("--num-envs", type=int, default=1)
+    parser.add_argument("--steps", type=int, default=200)
+    parser.add_argument("--output", default="playback.mp4", help="Output MP4 path")
+    parser.add_argument("--render-mode", choices=("record", "none"), default="record")
+    parser.add_argument("--cam-distance", type=float, help="Camera distance for recorded playback")
+    parser.add_argument("--cam-elevation", type=float, help="Camera elevation in degrees")
+    parser.add_argument("--cam-azimuth", type=float, help="Camera azimuth in degrees")
+    args = parser.parse_args(argv)
+
+    from unilab.scripts.play_rsl_rl import main
+
+    main(
+        args.checkpoint,
+        config_path=args.config_path,
+        device=args.device,
+        num_envs=args.num_envs,
+        steps=args.steps,
+        output=args.output,
+        render_mode=args.render_mode,
+        cam_distance=args.cam_distance,
+        cam_elevation=args.cam_elevation,
+        cam_azimuth=args.cam_azimuth,
+    )

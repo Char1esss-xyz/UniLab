@@ -35,12 +35,15 @@ dependencies = [
     "tensordict",
     "rsl-rl-lib>=5.0.0",
     "tensorboard>=2.21.0",
+    "imageio>=2.34",
+    "imageio-ffmpeg>=0.5",
     "setuptools",
     "typing-extensions",
 ]
 
 [project.scripts]
 train = "unilab.cli:train_main"
+play = "unilab.cli:play_main"
 
 [project.urls]
 Homepage = "https://unilabsim.github.io"

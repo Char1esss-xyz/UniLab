@@ -59,6 +59,7 @@ def train(cfg: DictConfig) -> Path:
     log_dir.mkdir(parents=True, exist_ok=False)
     OmegaConf.save(cfg, log_dir / "config.yaml", resolve=True)
     env = create_env(cfg, num_envs=int(cfg.algo.num_envs), env_cfg_override=env_overrides)
+    runner: OnPolicyRunner | None = None
     try:
         wrapped_env = RslRlVecEnvAdapter(env, device=device)
         raw_train_cfg = OmegaConf.to_container(cfg.algo, resolve=True)
@@ -78,6 +79,12 @@ def train(cfg: DictConfig) -> Path:
             num_learning_iterations=int(cfg.algo.max_iterations), init_at_random_ep_len=True
         )
         runner.save(str(log_dir / f"model_{runner.current_learning_iteration}.pt"))
+    except KeyboardInterrupt:
+        if runner is not None:
+            interrupt_path = log_dir / f"model_{runner.current_learning_iteration}_interrupt.pt"
+            runner.save(str(interrupt_path))
+            print(f"Interrupted; checkpoint saved to {interrupt_path}")
+        raise
     finally:
         env.close()
     return log_dir
