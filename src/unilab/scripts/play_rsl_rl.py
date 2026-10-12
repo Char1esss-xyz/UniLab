@@ -30,6 +30,22 @@ def _load_config(checkpoint: Path, config_path: Path | None) -> DictConfig:
         return compose(config_name="config")
 
 
+def _remove_gimbal_references(cfg: DictConfig) -> None:
+    """Keep older checkpoint configs usable after the optional gimbal was removed."""
+    robot = OmegaConf.select(cfg, "env.scene.entities.robot")
+    if robot is None:
+        return
+    for field in ("body_names", "joint_names", "actuator_names", "geom_names"):
+        values = OmegaConf.select(robot, field)
+        if values is not None:
+            OmegaConf.update(
+                cfg,
+                f"env.scene.entities.robot.{field}",
+                [value for value in values if "gimbal" not in str(value)],
+                force_add=True,
+            )
+
+
 def _resolve_device(cfg: DictConfig, requested: str | None) -> str:
     device = requested or str(OmegaConf.select(cfg, "training.device") or get_default_device())
     if torch.device(device).type not in {"cpu", "mps", "cuda"}:
@@ -64,6 +80,7 @@ def play(
         raise ValueError("render_mode must be 'record' or 'none'")
 
     cfg = _load_config(checkpoint, config_path)
+    _remove_gimbal_references(cfg)
     if (
         str(cfg.training.task_name) != "WheelbipeV14Flat"
         or str(cfg.training.sim_backend) != "mujoco"

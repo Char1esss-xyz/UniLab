@@ -70,7 +70,9 @@ MuJoCo 播放入口使用确定性策略，默认运行一个环境并输出 MP4
 `--render-mode none`；增加 `--num-envs` 可以同时评估多个环境。
 
 播放时已接入 `/home/chaz/wheeled-legged_RL` 中的 V14 USD 视觉网格，视觉网格不参与碰撞。
-近距离查看完整外观可使用：
+当前 MuJoCo 模型只保留底盘和轮腿，云台视觉、刚体、关节和执行器均已移除。
+旧 checkpoint 的策略维度仍可用于短时播放验证，但物理模型已变化，正式训练请重新开始。
+近距离查看底盘外观可使用：
 
 ```bash
 uv run play \

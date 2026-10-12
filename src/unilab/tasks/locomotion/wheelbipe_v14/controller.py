@@ -60,7 +60,11 @@ class WheelbipeMotor(ActionTerm):
         self.count = env.num_envs
         self.generator = env.torch_rng.generator
         asset = ASSETS_ROOT_PATH / "robots/wheelbipe_v14"
-        self.names = json.loads((asset / "conversion.json").read_text())["joints"]
+        self.names = [
+            name
+            for name in json.loads((asset / "conversion.json").read_text())["joints"]
+            if not name.startswith("gimbal_")
+        ]
         self.joints = len(self.names)
         self.policy_ids = [self.names.index(name) for name in POLICY_JOINTS]
         self.reset_ids = [
@@ -69,8 +73,6 @@ class WheelbipeMotor(ActionTerm):
             for side in ("left", "right")
         ]
         self.spring_ids = [self.names.index(f"{side}_spring2_joint") for side in ("left", "right")]
-        self.pitch_id = self.names.index("gimbal_pitch_joint")
-        self.yaw_id = self.names.index("gimbal_yaw_joint")
         self.body_names = ["base_link"] + [name.replace("_joint", "_link") for name in self.names]
         self.body_ids = self.backend.get_body_ids(self.body_names)
         self.base_id = self.backend.get_body_id("base_link")
@@ -79,7 +81,7 @@ class WheelbipeMotor(ActionTerm):
         self.bad_contacts = [
             index
             for index, name in enumerate(self.body_names)
-            if name == "base_link" or "gimbal" in name or "guide" in name
+            if name == "base_link" or "guide" in name
         ]
         self.wheel_contacts = [
             self.body_names.index(f"{side}_wheel_link") for side in ("left", "right")
@@ -93,8 +95,6 @@ class WheelbipeMotor(ActionTerm):
         self.kd[:, self.policy_ids[:4]] = 2
         self.kd[:, self.policy_ids[4:]] = 0.2
         self.kd[:, self.spring_ids] = 50
-        self.kp[:, self.pitch_id] = 20
-        self.kd[:, [self.pitch_id, self.yaw_id]] = 0.5
         self.nominal_kp = self.kp[0].clone()
         self.nominal_kd = self.kd[0].clone()
         self.limits = tensor(self.backend.get_actuator_ctrl_range())
@@ -109,7 +109,6 @@ class WheelbipeMotor(ActionTerm):
         self.last_velocity = self.zeros(6)
         self.acceleration = self.zeros(6)
         self.spring_offset = self.zeros(2)
-        self.yaw_target = self.zeros()
         self.command = self.zeros(3)
         self.height_command = self.zeros() + 0.3
         self.heading_target = self.zeros()
@@ -216,8 +215,6 @@ class WheelbipeMotor(ActionTerm):
                 friction, viscous = (0.25, 1), (0.05, 0.2)
             elif name.endswith("wheel_joint"):
                 friction, viscous = (0.05, 0.25), (0, 0.01)
-            elif "gimbal" in name:
-                friction, viscous = (0.002, 0.01), (0.002, 0.01)
             elif "guide" in name or name.endswith("spring2_joint"):
                 continue
             else:
@@ -281,8 +278,6 @@ class WheelbipeMotor(ActionTerm):
             )
         self.last_gain_reset[gain_ids] = self._env.step_counter
         self.spring_offset[ids] = self.uniform(-50, 50, (count, 2))
-        self.yaw_target[ids] = self.uniform(-math.pi, math.pi, (count,))
-        qvel[:, 6 + self.yaw_id] = self.yaw_target[ids]
         self.age[ids] = 0
         self.ground_start[ids] = ground
         self.zero_torque_until[ids] = ground.double() * 0.2
@@ -420,8 +415,6 @@ class WheelbipeMotor(ActionTerm):
         disabled = (self.age < self.zero_torque_until).nonzero().flatten()
         ctrl[disabled[:, None], self.policy_ids] = 0
         ctrl[:, self.spring_ids] += spring_force(position[:, self.spring_ids], self.spring_offset)
-        ctrl[:, self.pitch_id] += self.kp[:, self.pitch_id] * (-0.5 - position[:, self.pitch_id])
-        ctrl[:, self.yaw_id] += self.kd[:, self.yaw_id] * self.yaw_target
         ctrl *= self.effort_scale
         self.motor_torque.copy_(ctrl.clamp(self.limits[:, 0], self.limits[:, 1]))
         ctrl -= self.coulomb * torch.tanh(velocity / 0.01) + self.viscous * velocity

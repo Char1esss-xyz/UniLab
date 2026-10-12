@@ -11,8 +11,6 @@ env:
         root_body_name: base_link
         body_names:
         - base_link
-        - gimbal_yaw_link
-        - gimbal_pitch_link
         - left_bottom1_guide_link
         - left_bottom2_guide_link
         - left_bottom3_guide_link
@@ -48,8 +46,6 @@ env:
         - right_spring2_link
         - right_rear_guide_link
         joint_names:
-        - gimbal_yaw_joint
-        - gimbal_pitch_joint
         - left_bottom1_guide_joint
         - left_bottom2_guide_joint
         - left_bottom3_guide_joint
@@ -85,8 +81,6 @@ env:
         - right_spring2_joint
         - right_rear_guide_joint
         actuator_names:
-        - gimbal_yaw_joint
-        - gimbal_pitch_joint
         - left_bottom1_guide_joint
         - left_bottom2_guide_joint
         - left_bottom3_guide_joint
@@ -123,8 +117,6 @@ env:
         - right_rear_guide_joint
         geom_names:
         - base_link_collision_0
-        - gimbal_yaw_link_collision_0
-        - gimbal_pitch_link_collision_0
         - left_bottom1_guide_link_collision_0
         - left_bottom2_guide_link_collision_0
         - left_bottom3_guide_link_collision_0
