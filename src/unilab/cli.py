@@ -10,13 +10,14 @@ def train_main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Train Wheelbipe V14 Flat with PPO and MuJoCo.")
     parser.add_argument("--algo", choices=("ppo",), default="ppo")
     parser.add_argument("--task", choices=("wheelbipe_v14_flat",), default="wheelbipe_v14_flat")
-    parser.add_argument("--sim", choices=("mujoco",), default="mujoco")
+    parser.add_argument("--sim", choices=("mujoco", "mjwarp"), default="mujoco")
     parser.add_argument("--num-envs", type=int)
     parser.add_argument("--max-iterations", type=int)
     parser.add_argument("--device", choices=("cpu", "mps", "cuda"))
     parser.add_argument("--resume-path")
     parser.add_argument("--log-root")
     args, overrides = parser.parse_known_args(argv)
+    overrides.append(f"task=wheelbipe_v14_flat/{args.sim}")
     for override in overrides:
         if "=" not in override or override.startswith("--"):
             parser.error(f"Expected a Hydra override such as algo.seed=1, received {override!r}")
@@ -43,6 +44,7 @@ def play_main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Play a trained Wheelbipe V14 Flat PPO policy.")
     parser.add_argument("--checkpoint", required=True, help="Path to model_*.pt checkpoint")
     parser.add_argument("--config", dest="config_path", help="Optional path to config.yaml")
+    parser.add_argument("--sim", choices=("mujoco", "mjwarp"))
     parser.add_argument("--device", choices=("cpu", "mps", "cuda"))
     parser.add_argument("--num-envs", type=int, default=1)
     parser.add_argument("--steps", type=int, default=200)
@@ -66,4 +68,19 @@ def play_main(argv: Sequence[str] | None = None) -> None:
         cam_distance=args.cam_distance,
         cam_elevation=args.cam_elevation,
         cam_azimuth=args.cam_azimuth,
+        sim_backend=args.sim,
     )
+
+
+def control_main(argv: Sequence[str] | None = None) -> None:
+    """Run the offline MuJoCo keyboard controller."""
+    from unilab.scripts.manual_mujoco import main
+
+    main(list(argv) if argv is not None else None)
+
+
+def manual_play_main(argv: Sequence[str] | None = None) -> None:
+    """Run a trained policy with keyboard-controlled velocity commands."""
+    from unilab.scripts.manual_policy_mujoco import main
+
+    main(list(argv) if argv is not None else None)

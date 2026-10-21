@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
+from typing import Any, cast
 
 import torch
 
@@ -32,10 +33,10 @@ POLICY_JOINTS = (
 )
 
 
-def tensor(values):
+def tensor(values, *, device: str | torch.device = "cpu", dtype=torch.float64):
     if isinstance(values, torch.Tensor):
-        return values.to(dtype=torch.float64).clone()
-    return torch.tensor(values, dtype=torch.float64)
+        return values.to(device=device, dtype=dtype).clone()
+    return torch.tensor(values, device=device, dtype=dtype)
 
 
 @dataclass(kw_only=True)
@@ -54,9 +55,14 @@ class WheelbipeMotor(ActionTerm):
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
-        if env.device.type != "cpu":
-            raise ValueError("Wheelbipe MuJoCo control requires manager_torch_device=cpu")
         self.backend = env.backend
+        self.device = torch.device(env.device)
+        self._device_resident = self.backend.backend_type == "mjwarp"
+        self.dtype = torch.float32 if self._device_resident else torch.float64
+        # ManagerBasedRlEnv refreshes the scene packet once per physics boundary.
+        # All controller reads below then slice that packet without another
+        # backend sensor crossing.
+        self.uses_tensor_state_packet = self._device_resident
         self.count = env.num_envs
         self.generator = env.torch_rng.generator
         asset = ASSETS_ROOT_PATH / "robots/wheelbipe_v14"
@@ -74,10 +80,14 @@ class WheelbipeMotor(ActionTerm):
         ]
         self.spring_ids = [self.names.index(f"{side}_spring2_joint") for side in ("left", "right")]
         self.body_names = ["base_link"] + [name.replace("_joint", "_link") for name in self.names]
+        # Declaring bodies gives ManagerBasedRlEnv a device-resident read plan,
+        # which is also the reset transaction boundary required by MJWarp.
+        self.tensor_body_names = tuple(self.body_names) if self._device_resident else None
         self.body_ids = self.backend.get_body_ids(self.body_names)
         self.base_id = self.backend.get_body_id("base_link")
         self.wheel_ids = self.backend.get_body_ids(["left_wheel_link", "right_wheel_link"])
         self.contact_names = [f"contact_{name}" for name in self.body_names]
+        self.tensor_sensor_names = tuple(self.contact_names) if self._device_resident else None
         self.bad_contacts = [
             index
             for index, name in enumerate(self.body_names)
@@ -86,8 +96,8 @@ class WheelbipeMotor(ActionTerm):
         self.wheel_contacts = [
             self.body_names.index(f"{side}_wheel_link") for side in ("left", "right")
         ]
-        self.home = tensor(self.backend.get_keyframe_qpos("home"))
-        self.home_velocity = tensor(self.backend.get_init_qvel())
+        self.home = self._tensor(self.backend.get_keyframe_qpos("home"))
+        self.home_velocity = self._tensor(self.backend.get_init_qvel())
         self.kinematics = ClosedChainKinematics(asset / "scene_flat.xml", self.names)
         self.kp = self.zeros(self.joints)
         self.kd = self.zeros(self.joints) + 0.01
@@ -97,7 +107,7 @@ class WheelbipeMotor(ActionTerm):
         self.kd[:, self.spring_ids] = 50
         self.nominal_kp = self.kp[0].clone()
         self.nominal_kd = self.kd[0].clone()
-        self.limits = tensor(self.backend.get_actuator_ctrl_range())
+        self.limits = self._tensor(self.backend.get_actuator_ctrl_range())
         self.effort_scale = self.zeros(self.joints) + 1
         self.coulomb = self.zeros(self.joints)
         self.viscous = self.zeros(self.joints)
@@ -105,27 +115,34 @@ class WheelbipeMotor(ActionTerm):
         self.previous = self.zeros(6)
         self.before_previous = self.zeros(6)
         self.motor_torque = self.zeros(self.joints)
-        self.last_gain_reset = torch.full((self.count,), -720, dtype=torch.int64)
+        self.last_gain_reset = torch.full(
+            (self.count,), -720, dtype=torch.int64, device=self.device
+        )
         self.last_velocity = self.zeros(6)
         self.acceleration = self.zeros(6)
         self.spring_offset = self.zeros(2)
         self.command = self.zeros(3)
         self.height_command = self.zeros() + 0.3
         self.heading_target = self.zeros()
-        self.heading_env = torch.zeros(self.count, dtype=torch.bool)
+        self.heading_env = torch.zeros(self.count, dtype=torch.bool, device=self.device)
         self.standing_env = self.heading_env.clone()
         self.command_remaining = self.zeros()
-        self.special = torch.zeros(self.count, dtype=torch.int64)
+        self.special = torch.zeros(self.count, dtype=torch.int64, device=self.device)
         self.age = self.zeros()
         self.zero_torque_until = self.zeros()
         self.temporary_command = self.zeros(3)
         self.ground_start = self.heading_env.clone()
-        self.termination_count = torch.zeros(self.count, dtype=torch.int64)
-        self.contacts = torch.zeros((3, self.count, len(self.body_names)), dtype=torch.float64)
+        self.termination_count = torch.zeros(self.count, dtype=torch.int64, device=self.device)
+        self.contacts = torch.zeros(
+            (3, self.count, len(self.body_names)), dtype=self.dtype, device=self.device
+        )
         self.obs_delays = [
-            Delay(self.count, width, 4, dtype=torch.float64) for width in (3, 3, 6, 6)
+            Delay(self.count, width, 4, dtype=self.dtype, device=self.device)
+            for width in (3, 3, 6, 6)
         ]
-        self.action_delays = [Delay(self.count, width, 3, dtype=torch.float64) for width in (4, 2)]
+        self.action_delays = [
+            Delay(self.count, width, 3, dtype=self.dtype, device=self.device) for width in (4, 2)
+        ]
         self.observed = [self.zeros(width) for width in (3, 3, 6, 6)]
         self.next_push = self.uniform(5, 10, (self.count,))
         self.next_force = self.uniform(5, 10, (self.count,))
@@ -135,6 +152,13 @@ class WheelbipeMotor(ActionTerm):
         self.step_cache = -1
         self.terms = {}
         self.terminated = self.heading_env.clone()
+        # Tensor views are stable for one physics boundary, but obtaining a
+        # view still performs layout and finite-value validation. Keep the
+        # views used by this controller for the duration of that boundary.
+        self._joint_state_cache = None
+        self._body_state_cache = None
+        self._base_state_cache = None
+        self._contact_force_cache = None
         self._initialize_randomization()
         if cfg.domain_randomization:
             self._entity.bind_body_mass_write(term_name="wheelbipe_mass")
@@ -147,11 +171,16 @@ class WheelbipeMotor(ActionTerm):
             )
 
     def zeros(self, *shape):
-        return torch.zeros((self.count, *shape), dtype=torch.float64)
+        return torch.zeros((self.count, *shape), dtype=self.dtype, device=self.device)
+
+    def _tensor(self, values):
+        return tensor(values, device=self.device, dtype=self.dtype)
 
     def uniform(self, low, high, shape):
-        low, high = tensor(low), tensor(high)
-        return low + (high - low) * torch.rand(shape, generator=self.generator, dtype=torch.float64)
+        low, high = self._tensor(low), self._tensor(high)
+        return low + (high - low) * torch.rand(
+            shape, generator=self.generator, dtype=self.dtype, device=self.device
+        )
 
     @property
     def action_dim(self):
@@ -162,29 +191,29 @@ class WheelbipeMotor(ActionTerm):
         return self.actions.float()
 
     def _initialize_randomization(self):
-        mass = tensor(self.backend.get_reset_term_default("body_mass"))
+        mass = self._tensor(self.backend.get_reset_term_default("body_mass"))
         self.mass = mass.expand(self.count, -1).clone()
         self.inertia = (
-            tensor(self.backend.get_reset_term_default("body_inertia"))
+            self._tensor(self.backend.get_reset_term_default("body_inertia"))
             .expand(self.count, -1, -1)
             .clone()
         )
         self.com = (
-            tensor(self.backend.get_reset_term_default("body_ipos"))
+            self._tensor(self.backend.get_reset_term_default("body_ipos"))
             .expand(self.count, -1, -1)
             .clone()
         )
         self.friction = (
-            tensor(self.backend.get_reset_term_default("geom_friction"))
+            self._tensor(self.backend.get_reset_term_default("geom_friction"))
             .expand(self.count, -1, -1)
             .clone()
         )
-        self.geom_bodies = torch.as_tensor(self.backend.get_geom_body_ids())
+        self.geom_bodies = torch.as_tensor(self.backend.get_geom_body_ids(), device=self.device)
         self.geom_ids = [
             self.backend.get_geom_id(name)
             for name in self._env.cfg.scene.entities[self.cfg.entity_name].geom_names
         ]
-        self.wheel_material = tensor([1, 1, 0]).expand(self.count, 2, 3).clone()
+        self.wheel_material = self._tensor([1, 1, 0]).expand(self.count, 2, 3).clone()
         self.base_mass_scale = self.zeros(1) + 1
         if not self.cfg.domain_randomization:
             return
@@ -200,7 +229,9 @@ class WheelbipeMotor(ActionTerm):
             if "wheel" in name:
                 buckets = self.uniform([0.5, 0.4, 0.02], [1.2, 1, 0.2], (64, 3))
                 buckets[:, 1] = torch.minimum(buckets[:, 1], buckets[:, 0])
-                material = buckets[torch.randint(64, (self.count,), generator=self.generator)]
+                material = buckets[
+                    torch.randint(64, (self.count,), generator=self.generator, device=self.device)
+                ]
                 self.wheel_material[:, int(name.startswith("right"))] = material
             elif name == "base_link":
                 material = self.uniform([0.01, 0.01, 0], [0.1, 0.1, 0], (self.count, 3))
@@ -241,12 +272,17 @@ class WheelbipeMotor(ActionTerm):
             angle[ground] = torch.acos(
                 (height / length[ground]).clamp(-1 + 1e-6, 1 - 1e-6)
             ) * torch.where(negative, -1, 1)
-            qpos[ground, :3] = tensor([0, 0, 0.25])
-            qpos[ground, 3:7] = tensor([1, 0, 0, 0])
+            qpos[ground, :3] = self._tensor([0, 0, 0.25])
+            qpos[ground, 3:7] = self._tensor([1, 0, 0, 0])
         qpos[:, [7 + index for index in self.reset_ids]] = (
             inverse_kinematics(length, angle).transpose(1, 2).reshape(count, 12)
         )
-        self.kinematics.close_springs(qpos[:, 7:])
+        if self._device_resident:
+            spring_state = qpos[:, 7:].cpu()
+            self.kinematics.close_springs(spring_state)
+            qpos[:, 7:] = spring_state.to(device=self.device, dtype=self.dtype)
+        else:
+            self.kinematics.close_springs(qpos[:, 7:])
         qpos[:, [7 + index for index in self.policy_ids[4:]]] = self.uniform(
             -2 * math.pi, 2 * math.pi, (count, 2)
         )
@@ -270,17 +306,33 @@ class WheelbipeMotor(ActionTerm):
             self.effort_scale[gain_ids[:, None], self.policy_ids[4:]] = self.uniform(
                 0.9, 1.1, (gain_count, 2)
             )
-            self._entity.write_body_mass_to_sim(self.mass[ids][:, self.body_ids], env_ids=ids)
-            self._entity.write_body_ipos_to_sim(self.com[ids][:, self.body_ids], env_ids=ids)
-            self._entity.write_body_inertia_to_sim(self.inertia[ids][:, self.body_ids], env_ids=ids)
-            self._entity.write_geom_friction_to_sim(
-                self.friction[ids][:, self.geom_ids], env_ids=ids
-            )
+            if self._device_resident:
+                self._entity.write_body_mass_tensor_to_sim(
+                    self.mass[ids][:, self.body_ids].contiguous(), env_ids=ids
+                )
+                self._entity.write_body_ipos_tensor_to_sim(
+                    self.com[ids][:, self.body_ids].contiguous(), env_ids=ids
+                )
+                self._entity.write_body_inertia_tensor_to_sim(
+                    self.inertia[ids][:, self.body_ids].contiguous(), env_ids=ids
+                )
+                self._entity.write_geom_friction_tensor_to_sim(
+                    self.friction[ids][:, self.geom_ids].contiguous(), env_ids=ids
+                )
+            else:
+                self._entity.write_body_mass_to_sim(self.mass[ids][:, self.body_ids], env_ids=ids)
+                self._entity.write_body_ipos_to_sim(self.com[ids][:, self.body_ids], env_ids=ids)
+                self._entity.write_body_inertia_to_sim(
+                    self.inertia[ids][:, self.body_ids], env_ids=ids
+                )
+                self._entity.write_geom_friction_to_sim(
+                    self.friction[ids][:, self.geom_ids], env_ids=ids
+                )
         self.last_gain_reset[gain_ids] = self._env.step_counter
         self.spring_offset[ids] = self.uniform(-50, 50, (count, 2))
         self.age[ids] = 0
         self.ground_start[ids] = ground
-        self.zero_torque_until[ids] = ground.double() * 0.2
+        self.zero_torque_until[ids] = ground.to(dtype=self.dtype) * 0.2
         self.temporary_command[ids] = self.uniform([-1, 0, -1], [1, 0, 1], (count, 3))
         for values in (
             self.actions,
@@ -293,32 +345,46 @@ class WheelbipeMotor(ActionTerm):
         ):
             values[ids] = 0
         self.contacts[:, ids] = 0
-        self._entity.write_root_link_pose_to_sim(qpos[:, :7], env_ids=ids)
-        self._entity.write_root_link_velocity_to_sim(qvel[:, :6], env_ids=ids)
-        self._entity.write_joint_state_to_sim(qpos[:, 7:], qvel[:, 6:], env_ids=ids)
+        if self._device_resident:
+            self._entity.write_root_state_tensor_to_sim(
+                torch.cat((qpos[:, :7], qvel[:, :6]), dim=-1), env_ids=ids
+            )
+            self._entity.write_joint_state_tensor_to_sim(
+                qpos[:, 7:].contiguous(), qvel[:, 6:].contiguous(), env_ids=ids
+            )
+        else:
+            self._entity.write_root_link_pose_to_sim(qpos[:, :7], env_ids=ids)
+            self._entity.write_root_link_velocity_to_sim(qvel[:, :6], env_ids=ids)
+            self._entity.write_joint_state_to_sim(qpos[:, 7:], qvel[:, 6:], env_ids=ids)
         self.resample_commands(ids)
         self.observation_cache = None
+        self._clear_state_cache()
 
     def reset(self, env_ids=None):
-        ids = torch.arange(self.count) if env_ids is None else env_ids
+        ids = torch.arange(self.count, device=self.device) if env_ids is None else env_ids
         if isinstance(ids, slice):
-            ids = torch.arange(self.count)[ids]
+            ids = torch.arange(self.count, device=self.device)[ids]
+        self._clear_state_cache()
         self.update_heading()
         raw = self.raw_observation()
         for delay, values in zip(self.obs_delays, raw, strict=True):
             lag = (
-                torch.randint(1, 4, (len(ids),), generator=self.generator)
+                torch.randint(1, 4, (len(ids),), generator=self.generator, device=self.device)
                 if self.cfg.delays
-                else torch.zeros(len(ids), dtype=torch.int64)
+                else torch.zeros(len(ids), dtype=torch.int64, device=self.device)
             )
             delay.reset(ids, values[ids], lag)
         for delay, width in zip(self.action_delays, (4, 2), strict=True):
             lag = (
-                torch.randint(1, 3, (len(ids),), generator=self.generator)
+                torch.randint(1, 3, (len(ids),), generator=self.generator, device=self.device)
                 if self.cfg.delays
-                else torch.zeros(len(ids), dtype=torch.int64)
+                else torch.zeros(len(ids), dtype=torch.int64, device=self.device)
             )
-            delay.reset(ids, torch.zeros((len(ids), width), dtype=torch.float64), lag)
+            delay.reset(
+                ids,
+                torch.zeros((len(ids), width), dtype=self.dtype, device=self.device),
+                lag,
+            )
         for observed, values in zip(self.observed, raw, strict=True):
             observed[ids] = values[ids]
         self.last_velocity[ids] = raw[-1][ids]
@@ -355,19 +421,141 @@ class WheelbipeMotor(ActionTerm):
             self.command[chosen, 0] = self.uniform(*velocity_range, (len(chosen),))
             if mode == 3:
                 self.command[chosen, 0] *= (
-                    torch.randint(2, (len(chosen),), generator=self.generator) * 2 - 1
+                    torch.randint(2, (len(chosen),), generator=self.generator, device=self.device)
+                    * 2
+                    - 1
                 )
             self.command[chosen, 2] = self.uniform(*yaw_range, (len(chosen),)) * (
-                torch.randint(2, (len(chosen),), generator=self.generator) * 2 - 1
+                torch.randint(2, (len(chosen),), generator=self.generator, device=self.device) * 2
+                - 1
             )
         self.update_heading()
+
+    def _joint_state(self) -> tuple[torch.Tensor, torch.Tensor]:
+        if self._joint_state_cache is not None:
+            return cast(tuple[torch.Tensor, torch.Tensor], self._joint_state_cache)
+        if not self._device_resident:
+            result = (
+                self._tensor(self.backend.get_dof_pos()),
+                self._tensor(self.backend.get_dof_vel()),
+            )
+        else:
+            plan = self._read_plan()
+            view = (
+                plan.joint_tensor_view(self._entity)
+                if plan is not None
+                else cast(Any, self._entity).joint_tensor_view(self.device)
+            )
+            result = view.joint_pos, view.joint_vel
+        self._joint_state_cache = result
+        return result
+
+    def _body_state(self):
+        if self._body_state_cache is not None:
+            return self._body_state_cache
+        if not self._device_resident:
+            result = (
+                self._tensor(self.backend.get_body_pos_w(self.body_ids)),
+                self._tensor(self.backend.get_body_quat_w(self.body_ids)),
+                self._tensor(self.backend.get_body_lin_vel_w(self.body_ids)),
+                self._tensor(self.backend.get_body_ang_vel_w(self.body_ids)),
+            )
+        else:
+            plan = self._read_plan()
+            view = (
+                plan.body_tensor_view(self._entity, self.body_names)
+                if plan is not None
+                else self._entity.body_tensor_view(self.device, self.body_names)
+            )
+            result = view.pos_w, view.quat_w, view.lin_vel_w, view.ang_vel_w
+        self._body_state_cache = result
+        return result
+
+    def _base_state(self):
+        if self._base_state_cache is not None:
+            return self._base_state_cache
+        if not self._device_resident:
+            result = (
+                self._tensor(self.backend.get_base_pos()),
+                self._tensor(self.backend.get_base_quat()),
+                self._tensor(self.backend.get_base_lin_vel()),
+                self._tensor(self.backend.get_base_ang_vel()),
+            )
+        else:
+            plan = self._read_plan()
+            view = (
+                plan.body_tensor_view(self._entity, ("base_link",))
+                if plan is not None
+                else self._entity.body_tensor_view(self.device, ("base_link",))
+            )
+            result = view.pos_w[:, 0], view.quat_w[:, 0], view.lin_vel_w[:, 0], view.ang_vel_w[:, 0]
+        self._base_state_cache = result
+        return result
+
+    def _wheel_pos_b(self) -> torch.Tensor:
+        if not self._device_resident:
+            return self._tensor(self.backend.get_body_pos_b(self.wheel_ids))
+        pos, quat, _, _ = self._body_state()
+        base_pos, base_quat = pos[:, 0], quat[:, 0]
+        wheel_pos = pos[
+            :, [self.body_names.index("left_wheel_link"), self.body_names.index("right_wheel_link")]
+        ]
+        return quat_apply(quat_conjugate(base_quat[:, None]), wheel_pos - base_pos[:, None])
+
+    def _wheel_linvel_w(self) -> torch.Tensor:
+        if not self._device_resident:
+            return self._tensor(self.backend.get_body_lin_vel_w(self.wheel_ids))
+        return self._body_state()[2][
+            :,
+            [
+                self.body_names.index("left_wheel_link"),
+                self.body_names.index("right_wheel_link"),
+            ],
+        ]
+
+    def _contact_forces(self) -> torch.Tensor:
+        if self._contact_force_cache is not None:
+            return self._contact_force_cache
+        if not self._device_resident:
+            result = self._tensor(self.backend.get_sensor_data_batch(self.contact_names)).reshape(
+                self.count, len(self.body_names), 3
+            )
+        else:
+            plan = self._read_plan()
+            if plan is not None:
+                views = plan.sensor_tensor_views(self._entity, self.contact_names)
+                result = torch.stack([views.values[name] for name in self.contact_names], dim=1)
+            else:
+                result = torch.stack(
+                    [
+                        self.backend.get_sensor_view(name, device=self.device)
+                        for name in self.contact_names
+                    ],
+                    dim=1,
+                )
+        self._contact_force_cache = result
+        return result
+
+    def _read_plan(self):
+        """Return the current scene packet when the manager owns this boundary."""
+        if not self._device_resident:
+            return None
+        plan = getattr(self._env.scene, "_tensor_read_plan", None)
+        return plan if plan is not None and plan.ready else None
+
+    def _clear_state_cache(self) -> None:
+        """Drop state views after physics or an in-phase state mutation."""
+        self._joint_state_cache = None
+        self._body_state_cache = None
+        self._base_state_cache = None
+        self._contact_force_cache = None
 
     def update_heading(self):
         normal = self.special == 0
         heading = self.heading_env & normal
-        error = (
-            self.heading_target - yaw_from_quat(tensor(self.backend.get_base_quat())) + math.pi
-        ) % (2 * math.pi) - math.pi
+        error = (self.heading_target - yaw_from_quat(self._base_state()[1]) + math.pi) % (
+            2 * math.pi
+        ) - math.pi
         self.command[heading, 2] = (5 * error[heading]).clamp(-2 * math.pi, 2 * math.pi)
         self.command[self.standing_env & normal] = 0
 
@@ -378,17 +566,18 @@ class WheelbipeMotor(ActionTerm):
         return command
 
     def raw_observation(self):
-        quaternion = tensor(self.backend.get_base_quat())
-        gravity = quat_apply(quat_conjugate(quaternion), tensor([0, 0, -1]).expand(self.count, 3))
-        position = tensor(self.backend.get_dof_pos())[:, self.policy_ids]
+        _, quaternion, _, angular = self._base_state()
+        gravity = quat_apply(
+            quat_conjugate(quaternion), self._tensor([0, 0, -1]).expand(self.count, 3)
+        )
+        all_position, all_velocity = self._joint_state()
+        position = all_position[:, self.policy_ids]
         position[:, 4:] = 0
-        velocity = tensor(self.backend.get_dof_vel())[:, self.policy_ids]
-        return tensor(self.backend.get_base_ang_vel()), gravity, position, velocity
+        velocity = all_velocity[:, self.policy_ids]
+        return angular, gravity, position, velocity
 
     def record_contacts(self):
-        forces = tensor(self.backend.get_sensor_data_batch(self.contact_names)).reshape(
-            self.count, len(self.body_names), 3
-        )
+        forces = self._contact_forces()
         self.contacts[:-1] = self.contacts[1:].clone()
         self.contacts[-1] = torch.linalg.vector_norm(forces, dim=-1)
 
@@ -399,8 +588,9 @@ class WheelbipeMotor(ActionTerm):
         self.observation_cache = None
 
     def apply_actions(self):
-        position = tensor(self.backend.get_dof_pos())
-        velocity = tensor(self.backend.get_dof_vel())
+        # Each substep has a new backend state. Reads below share one snapshot.
+        self._clear_state_cache()
+        position, velocity = self._joint_state()
         self.record_contacts()
         self.acceleration.copy_(
             (velocity[:, self.policy_ids] - self.last_velocity) / self._env.cfg.sim_dt
@@ -419,29 +609,35 @@ class WheelbipeMotor(ActionTerm):
         self.motor_torque.copy_(ctrl.clamp(self.limits[:, 0], self.limits[:, 1]))
         ctrl -= self.coulomb * torch.tanh(velocity / 0.01) + self.viscous * velocity
         self._entity.set_joint_effort_target(
-            ctrl.clamp(self.limits[:, 0], self.limits[:, 1]).float()
+            ctrl.clamp(self.limits[:, 0], self.limits[:, 1]).float().contiguous()
         )
         for observed, delay, values in zip(
             self.observed, self.obs_delays, self.raw_observation(), strict=True
         ):
             observed.copy_(delay.compute(values))
         if self.cfg.domain_randomization:
-            quaternion = tensor(self.backend.get_base_quat())
+            quaternion = self._base_state()[1]
             self._entity.apply_body_wrench_to_sim(
-                quat_apply(quaternion, self.external_force)[:, None],
-                quat_apply(quaternion, self.external_torque)[:, None],
+                quat_apply(quaternion, self.external_force)[:, None].detach().cpu()
+                if self._device_resident
+                else quat_apply(quaternion, self.external_force)[:, None],
+                quat_apply(quaternion, self.external_torque)[:, None].detach().cpu()
+                if self._device_resident
+                else quat_apply(quaternion, self.external_torque)[:, None],
                 self.wrench_body_ids,
+                env_ids=None,
                 term_name="wheelbipe_force",
             )
 
     def evaluate(self):
         if self.step_cache == self._env.common_step_counter:
             return
+        self._clear_state_cache()
         self.step_cache = self._env.common_step_counter
         self.record_contacts()
         gyro, gravity, _, velocity = self.raw_observation()
         self.acceleration.copy_((velocity - self.last_velocity) / self._env.cfg.sim_dt)
-        quaternion = tensor(self.backend.get_base_quat())
+        quaternion = self._base_state()[1]
         roll = torch.atan2(
             2 * (quaternion[:, 0] * quaternion[:, 1] + quaternion[:, 2] * quaternion[:, 3]),
             1 - 2 * (quaternion[:, 1].square() + quaternion[:, 2].square()),
@@ -457,12 +653,15 @@ class WheelbipeMotor(ActionTerm):
             | (pitch.abs() > math.radians(40))
         )
         self.termination_count.copy_(torch.where(bad, self.termination_count + 1, 0))
-        linvel = quat_apply(quat_conjugate(quaternion), tensor(self.backend.get_base_lin_vel()))
+        linvel = quat_apply(quat_conjugate(quaternion), self._base_state()[2])
+        joint_position, joint_velocity = self._joint_state()
         finite = (
-            torch.isfinite(tensor(self.backend.get_dof_pos())).all(-1)
-            & torch.isfinite(tensor(self.backend.get_dof_vel())).all(-1)
+            torch.isfinite(joint_position).all(-1)
+            & torch.isfinite(joint_velocity).all(-1)
             & torch.isfinite(gyro).all(-1)
             & torch.isfinite(linvel).all(-1)
+            & torch.isfinite(quaternion).all(-1)
+            & torch.isfinite(self.contacts[-1]).all(-1)
         )
         self.terminated = (
             (self.termination_count >= 20)
@@ -476,9 +675,9 @@ class WheelbipeMotor(ActionTerm):
             linvel,
             gyro,
             gravity,
-            tensor(self.backend.get_base_pos())[:, 2],
+            self._base_state()[0][:, 2],
             self.height_command,
-            tensor(self.backend.get_body_pos_b(self.wheel_ids)),
+            self._wheel_pos_b(),
             velocity,
             self.acceleration,
             self.motor_torque[:, self.policy_ids],
@@ -500,13 +699,15 @@ class WheelbipeMotor(ActionTerm):
             time = self._env.common_step_counter * self._env.cfg.ctrl_dt
             ids = (time >= self.next_push).nonzero().flatten()
             if len(ids):
-                delta = torch.zeros((len(ids), 3), dtype=torch.float64)
+                delta = torch.zeros((len(ids), 3), dtype=self.dtype, device=self.device)
                 delta[:, :2] = (
-                    self.uniform(-0.25, 0.25, (len(ids), 2))
-                    - tensor(self.backend.get_base_lin_vel())[ids, :2]
+                    self.uniform(-0.25, 0.25, (len(ids), 2)) - self._base_state()[2][ids, :2]
                 )
                 self._entity.apply_root_velocity_delta_to_sim(
-                    delta, None, env_ids=ids, term_name="wheelbipe_push"
+                    delta.detach().cpu() if self._device_resident else delta,
+                    None,
+                    env_ids=ids.detach().cpu() if self._device_resident else ids,
+                    term_name="wheelbipe_push",
                 )
                 self.next_push[ids] = time + self.uniform(5, 10, (len(ids),))
             ids = (time >= self.next_force).nonzero().flatten()
@@ -523,7 +724,7 @@ class WheelbipeMotor(ActionTerm):
         delayed = [values.clone() for values in self.observed]
         if self.cfg.observation_noise:
             for values, noise in zip(
-                delayed, (0.25, 0.05, 0.025, tensor([0.5] * 4 + [1] * 2)), strict=True
+                delayed, (0.25, 0.05, 0.025, self._tensor([0.5] * 4 + [1] * 2)), strict=True
             ):
                 values += self.uniform(-1, 1, values.shape) * noise
         mode = self.zeros(7)
@@ -546,12 +747,9 @@ class WheelbipeMotor(ActionTerm):
             )
 
         policy = torch.cat([basic(*delayed), mode], dim=-1)
-        quaternion = tensor(self.backend.get_base_quat())
-        linvel = quat_apply(quat_conjugate(quaternion), tensor(self.backend.get_base_lin_vel()))
-        relative = (
-            tensor(self.backend.get_body_lin_vel_w(self.wheel_ids))
-            - tensor(self.backend.get_base_lin_vel())[:, None]
-        )
+        _, quaternion, base_linvel, _ = self._base_state()
+        linvel = quat_apply(quat_conjugate(quaternion), base_linvel)
+        relative = self._wheel_linvel_w() - base_linvel[:, None]
         relative = quat_apply(quat_conjugate(quaternion[:, None]), relative)
         relative[:, :, 1] = 0
         privileged = torch.cat(
@@ -562,7 +760,7 @@ class WheelbipeMotor(ActionTerm):
                 torch.stack([delay.lag for delay in self.obs_delays], dim=-1),
                 torch.stack([delay.lag for delay in self.action_delays], dim=-1),
                 relative.reshape(self.count, 6).clamp(-100, 100),
-                (self.contacts.amax(0)[:, self.wheel_contacts] > 5).double(),
+                (self.contacts.amax(0)[:, self.wheel_contacts] > 5).to(self.dtype),
                 self.base_mass_scale,
                 self.wheel_material.reshape(self.count, 6),
             ],
@@ -572,7 +770,7 @@ class WheelbipeMotor(ActionTerm):
             [
                 basic(gyro, gravity, position, velocity),
                 linvel.clamp(-100, 100),
-                tensor(self.backend.get_base_pos())[:, 2:3].clamp(-10, 10) * 5,
+                self._base_state()[0][:, 2:3].clamp(-10, 10) * 5,
                 mode,
                 privileged,
             ],
@@ -588,6 +786,10 @@ def motor(env):
 
 def reset_robot(env, env_ids):
     motor(env).reset_simulation(env_ids)
+
+
+# The reset callback consumes CUDA row selectors for MJWarp tensor transactions.
+setattr(reset_robot, "uses_tensor_rows", True)
 
 
 def advance_commands(env, env_ids=None, dt=None):

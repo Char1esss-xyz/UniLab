@@ -423,23 +423,39 @@ class ManagerBasedRlEnv(TorchEnv):
 
     def _action_tensor_read_specs(self) -> list[SceneTensorReadSpec]:
         specs: list[SceneTensorReadSpec] = []
+        capabilities = self._backend.get_tensor_capabilities()
         for name in self.action_manager.active_terms:
             term = self.action_manager.get_term(name)
             body_names = getattr(term, "tensor_body_names", None)
-            if body_names is None:
-                continue
-            if (
-                not isinstance(body_names, (tuple, list))
-                or any(not isinstance(value, str) or not value for value in body_names)
-                or len(set(body_names)) != len(body_names)
-            ):
-                raise TypeError(
-                    "ManagerBasedRlEnv tensor read declaration for action term "
-                    f"'{name}' must be a unique sequence of body names; got {body_names!r}"
+            if body_names is not None:
+                if (
+                    not isinstance(body_names, (tuple, list))
+                    or any(not isinstance(value, str) or not value for value in body_names)
+                    or len(set(body_names)) != len(body_names)
+                ):
+                    raise TypeError(
+                        "ManagerBasedRlEnv tensor read declaration for action term "
+                        f"'{name}' must be a unique sequence of body names; got {body_names!r}"
+                    )
+                specs.append(
+                    SceneTensorReadSpec(entity=term.cfg.entity_name, body_names=tuple(body_names))
                 )
-            specs.append(
-                SceneTensorReadSpec(entity=term.cfg.entity_name, body_names=tuple(body_names))
-            )
+            sensor_names = getattr(term, "tensor_sensor_names", None)
+            if sensor_names is not None:
+                if (
+                    not isinstance(sensor_names, (tuple, list))
+                    or any(not isinstance(value, str) or not value for value in sensor_names)
+                    or len(set(sensor_names)) != len(sensor_names)
+                ):
+                    raise TypeError(
+                        "ManagerBasedRlEnv tensor read declaration for action term "
+                        f"'{name}' must be a unique sequence of sensor names; "
+                        f"got {sensor_names!r}"
+                    )
+                names = tuple(sensor_names)
+                if capabilities.execution is TensorExecution.DEVICE_RESIDENT:
+                    self._require_device_resident_sensors(names, f"action term '{name}'")
+                specs.append(SceneTensorReadSpec(entity=term.cfg.entity_name, sensor_names=names))
         return specs
 
     def _observation_tensor_read_specs(self) -> list[SceneTensorReadSpec]:

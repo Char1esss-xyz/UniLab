@@ -44,6 +44,11 @@ dependencies = [
 [project.scripts]
 train = "unilab.cli:train_main"
 play = "unilab.cli:play_main"
+control = "unilab.cli:control_main"
+manual-play = "unilab.cli:manual_play_main"
+
+[project.optional-dependencies]
+mjwarp = ["mujoco-warp~=3.11.0", "warp-lang==1.16.0"]
 
 [project.urls]
 Homepage = "https://unilabsim.github.io"

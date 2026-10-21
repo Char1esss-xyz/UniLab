@@ -1,0 +1,10 @@
+# @package _global_
+defaults:
+- /task/wheelbipe_v14_flat/mujoco
+- _self_
+
+training:
+  sim_backend: mjwarp
+
+env:
+  manager_torch_device: cuda

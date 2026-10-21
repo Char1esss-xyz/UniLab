@@ -31,11 +31,11 @@ def _learner_device(cfg: DictConfig) -> str:
 
 
 def train(cfg: DictConfig) -> Path:
-    if (
-        str(cfg.training.task_name) != "WheelbipeV14Flat"
-        or str(cfg.training.sim_backend) != "mujoco"
-    ):
-        raise ValueError("This checkout supports only WheelbipeV14Flat with MuJoCo")
+    if str(cfg.training.task_name) != "WheelbipeV14Flat" or str(cfg.training.sim_backend) not in {
+        "mujoco",
+        "mjwarp",
+    }:
+        raise ValueError("This checkout supports only WheelbipeV14Flat with MuJoCo or MJWarp")
     if int(cfg.algo.num_envs) <= 0 or int(cfg.algo.max_iterations) <= 0:
         raise ValueError("algo.num_envs and algo.max_iterations must be positive")
     device = _learner_device(cfg)
@@ -43,10 +43,11 @@ def train(cfg: DictConfig) -> Path:
     env_overrides = BackendAdapter(
         cfg, root_dir=Path(__file__).resolve().parents[3]
     ).build_task_env_cfg_override()
-    env_overrides["manager_torch_device"] = "cpu"
+    manager_device = "cuda" if str(cfg.training.sim_backend) == "mjwarp" else "cpu"
+    env_overrides["manager_torch_device"] = manager_device
     env_overrides["seed"] = seed_info.effective_seed
     OmegaConf.update(cfg, "training.device", device, force_add=True)
-    OmegaConf.update(cfg, "env.manager_torch_device", "cpu", force_add=True)
+    OmegaConf.update(cfg, "env.manager_torch_device", manager_device, force_add=True)
     OmegaConf.update(cfg, "env.seed", seed_info.effective_seed, force_add=True)
     resume_value = OmegaConf.select(cfg, "algo.resume_path")
     resume_path = Path(str(resume_value)).expanduser().resolve() if resume_value else None
@@ -55,7 +56,7 @@ def train(cfg: DictConfig) -> Path:
     log_root_value = OmegaConf.select(cfg, "training.log_root")
     log_root = Path(str(log_root_value)).expanduser() if log_root_value else Path("logs/rsl_rl_ppo")
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S_%f")
-    log_dir = (log_root / "WheelbipeV14Flat" / f"{timestamp}_mujoco").resolve()
+    log_dir = (log_root / "WheelbipeV14Flat" / f"{timestamp}_{cfg.training.sim_backend}").resolve()
     log_dir.mkdir(parents=True, exist_ok=False)
     OmegaConf.save(cfg, log_dir / "config.yaml", resolve=True)
     env = create_env(cfg, num_envs=int(cfg.algo.num_envs), env_cfg_override=env_overrides)
@@ -74,7 +75,10 @@ def train(cfg: DictConfig) -> Path:
         if resume_path is not None:
             print(f"Resuming from {resume_path}")
             runner.load(str(resume_path), map_location=device)
-        print(f"Training WheelbipeV14Flat; learner={device}; simulation=cpu; logs={log_dir}")
+        print(
+            f"Training WheelbipeV14Flat; learner={device}; "
+            f"simulation={cfg.training.sim_backend}; logs={log_dir}"
+        )
         runner.learn(
             num_learning_iterations=int(cfg.algo.max_iterations), init_at_random_ep_len=True
         )

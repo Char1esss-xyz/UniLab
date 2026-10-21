@@ -69,6 +69,7 @@ def play(
     cam_distance: float | None = None,
     cam_elevation: float | None = None,
     cam_azimuth: float | None = None,
+    sim_backend: str | None = None,
 ) -> None:
     """Run a deterministic policy and optionally render the resulting rollout."""
     checkpoint = checkpoint.expanduser().resolve()
@@ -81,18 +82,23 @@ def play(
 
     cfg = _load_config(checkpoint, config_path)
     _remove_gimbal_references(cfg)
-    if (
-        str(cfg.training.task_name) != "WheelbipeV14Flat"
-        or str(cfg.training.sim_backend) != "mujoco"
-    ):
-        raise ValueError("This checkout supports only WheelbipeV14Flat with MuJoCo")
+    if sim_backend is not None:
+        if sim_backend not in {"mujoco", "mjwarp"}:
+            raise ValueError(f"Unsupported simulation backend: {sim_backend}")
+        OmegaConf.update(cfg, "training.sim_backend", sim_backend, force_add=True)
+    if str(cfg.training.task_name) != "WheelbipeV14Flat" or str(cfg.training.sim_backend) not in {
+        "mujoco",
+        "mjwarp",
+    }:
+        raise ValueError("This checkout supports only WheelbipeV14Flat with MuJoCo or MJWarp")
     learner_device = _resolve_device(cfg, device)
     OmegaConf.update(cfg, "training.device", learner_device, force_add=True)
     OmegaConf.update(cfg, "training.play_steps", steps, force_add=True)
     OmegaConf.update(cfg, "training.play_env_num", num_envs, force_add=True)
     OmegaConf.update(cfg, "training.play_render_mode", render_mode, force_add=True)
     OmegaConf.update(cfg, "algo.num_envs", num_envs, force_add=True)
-    OmegaConf.update(cfg, "env.manager_torch_device", "cpu", force_add=True)
+    manager_device = "cuda" if str(cfg.training.sim_backend) == "mjwarp" else "cpu"
+    OmegaConf.update(cfg, "env.manager_torch_device", manager_device, force_add=True)
     if cam_distance is not None:
         OmegaConf.update(cfg, "training.cam_distance", cam_distance, force_add=True)
     if cam_elevation is not None:
@@ -104,7 +110,7 @@ def play(
     env_overrides = BackendAdapter(
         cfg, root_dir=Path(__file__).resolve().parents[3]
     ).build_task_env_cfg_override()
-    env_overrides["manager_torch_device"] = "cpu"
+    env_overrides["manager_torch_device"] = manager_device
     env_overrides["seed"] = seed_info.effective_seed
     env = create_env(cfg, num_envs=num_envs, env_cfg_override=env_overrides)
     output = output.expanduser().resolve()
@@ -195,6 +201,7 @@ def main(
     cam_distance: float | None = None,
     cam_elevation: float | None = None,
     cam_azimuth: float | None = None,
+    sim_backend: str | None = None,
 ) -> None:
     play(
         Path(checkpoint),
@@ -207,4 +214,5 @@ def main(
         cam_distance=cam_distance,
         cam_elevation=cam_elevation,
         cam_azimuth=cam_azimuth,
+        sim_backend=sim_backend,
     )

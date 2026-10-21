@@ -30,6 +30,7 @@ from unisim.backend.base import (
     tensor_device_matches,
 )
 from unisim.dr.types import (
+    RESET_TERM_BODY_INERTIA,
     RESET_TERM_BODY_IPOS,
     RESET_TERM_BODY_MASS,
     RESET_TERM_GEOM_FRICTION,
@@ -3566,6 +3567,29 @@ class Entity:
         )
         reset_state.write_body_inertia(
             self._normalize_reset_env_ids(env_ids),
+            backend_ids,
+            values,
+            term_name=f"{term_name}:{self.name}",
+        )
+
+    def write_body_inertia_tensor_to_sim(
+        self,
+        values: torch.Tensor,
+        body_ids: np.ndarray | Sequence[int] | slice | None = None,
+        env_ids: torch.Tensor | None = None,
+        *,
+        term_name: str = "randomize_body_mass_inertia",
+    ) -> None:
+        """Stage device-resident entity body inertias in the tensor transaction."""
+        reset_state, _, backend_ids = self._bind_body_randomization(
+            body_ids,
+            capability="reset body-inertia write",
+        )
+        if env_ids is None:
+            raise ValueError("tensor reset body-inertia write requires device row indices")
+        reset_state.write_randomization_tensor(
+            RESET_TERM_BODY_INERTIA,
+            env_ids,
             backend_ids,
             values,
             term_name=f"{term_name}:{self.name}",

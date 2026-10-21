@@ -63,7 +63,10 @@ def patch_rsl_rl_resume_state() -> None:
     if getattr(OnPolicyRunner, "_UNILAB_RESUME_PATCHED", False):
         return
 
+    import time as _time
+
     import torch
+    from rsl_rl.utils.logger import Logger
 
     def _patched_save(self: Any, path: str, infos: dict | None = None) -> None:
         saved_dict = self.alg.save()
@@ -108,6 +111,54 @@ def patch_rsl_rl_resume_state() -> None:
                 )
             import_training_state(_copy_plain_training_state(env_state))
         return loaded_dict["infos"]
+
+    if not getattr(Logger, "_UNILAB_ETA_PATCHED", False):
+        original_log = Logger.log
+
+        def _patched_log(self: Any, *args: Any, **kwargs: Any) -> None:
+            """Keep ETA based on this run while preserving cumulative elapsed time."""
+            iteration = kwargs.get("it", args[0] if args else None)
+            start_it = kwargs.get("start_it", 0)
+            total_it = kwargs.get("total_it", None)
+            collect_time = kwargs.get("collect_time", 0.0)
+            learn_time = kwargs.get("learn_time", 0.0)
+            if iteration is None or total_it is None:
+                original_log(self, *args, **kwargs)
+                return
+
+            iteration_time = float(collect_time) + float(learn_time)
+            session_elapsed = float(getattr(self, "_unilab_session_elapsed", 0.0))
+            session_elapsed += iteration_time
+            self._unilab_session_elapsed = session_elapsed
+            completed = max(int(iteration) - int(start_it) + 1, 1)
+            remaining = max(int(total_it) - int(iteration) - 1, 0)
+            eta = session_elapsed / completed * remaining
+
+            original_strftime = _time.strftime
+            calls = 0
+
+            def _duration(seconds: float) -> str:
+                total = max(int(seconds), 0)
+                hours, remainder = divmod(total, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+            def _strftime(format_string: str, value: Any) -> str:
+                nonlocal calls
+                if format_string == "%H:%M:%S":
+                    calls += 1
+                    if calls == 2:
+                        return _duration(eta)
+                return original_strftime(format_string, value)
+
+            setattr(_time, "strftime", _strftime)
+            try:
+                original_log(self, *args, **kwargs)
+            finally:
+                setattr(_time, "strftime", original_strftime)
+
+        Logger.log = _patched_log  # type: ignore[assignment]
+        setattr(Logger, "_UNILAB_ETA_PATCHED", True)
 
     OnPolicyRunner.save = _patched_save  # type: ignore[assignment]
     OnPolicyRunner.load = _patched_load  # type: ignore[assignment]
