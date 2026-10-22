@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
@@ -14,8 +15,14 @@ from rsl_rl.runners import OnPolicyRunner
 from unilab.base.config_adapter import BackendAdapter, create_env
 from unilab.rl.vec_env import RslRlVecEnvAdapter
 from unilab.training.experiment import patch_rsl_rl_resume_state
+from unilab.training.tensor_diagnostics import NanGuardCfg, TensorNanGuard
 from unilab.utils.device import get_default_device
 from unilab.utils.seed import apply_configured_training_seed
+from unilab.utils.sim2sim import (
+    extract_contract_snapshot,
+    policy_load_dim_guard,
+    resolve_sim2sim_config,
+)
 
 
 def _learner_device(cfg: DictConfig) -> str:
@@ -43,7 +50,11 @@ def train(cfg: DictConfig) -> Path:
     env_overrides = BackendAdapter(
         cfg, root_dir=Path(__file__).resolve().parents[3]
     ).build_task_env_cfg_override()
-    manager_device = "cuda" if str(cfg.training.sim_backend) == "mjwarp" else "cpu"
+    manager_device = (
+        (device if device.startswith("cuda") else "cuda")
+        if str(cfg.training.sim_backend) == "mjwarp"
+        else "cpu"
+    )
     env_overrides["manager_torch_device"] = manager_device
     env_overrides["seed"] = seed_info.effective_seed
     OmegaConf.update(cfg, "training.device", device, force_add=True)
@@ -53,15 +64,32 @@ def train(cfg: DictConfig) -> Path:
     resume_path = Path(str(resume_value)).expanduser().resolve() if resume_value else None
     if resume_path is not None and not resume_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {resume_path}")
+    if resume_path is not None:
+        resolve_sim2sim_config(resume_path.parent, cfg, strict=bool(cfg.training.sim2sim_strict))
     log_root_value = OmegaConf.select(cfg, "training.log_root")
     log_root = Path(str(log_root_value)).expanduser() if log_root_value else Path("logs/rsl_rl_ppo")
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S_%f")
     log_dir = (log_root / "WheelbipeV14Flat" / f"{timestamp}_{cfg.training.sim_backend}").resolve()
     log_dir.mkdir(parents=True, exist_ok=False)
     OmegaConf.save(cfg, log_dir / "config.yaml", resolve=True)
+    (log_dir / "run_config.json").write_text(
+        json.dumps({"contract_snapshot": extract_contract_snapshot(cfg)}, indent=2) + "\n",
+        encoding="utf-8",
+    )
     env = create_env(cfg, num_envs=int(cfg.algo.num_envs), env_cfg_override=env_overrides)
     runner: OnPolicyRunner | None = None
     try:
+        guard_config = OmegaConf.to_container(cfg.training.nan_guard, resolve=True)
+        if not isinstance(guard_config, dict):
+            raise TypeError("training.nan_guard must be a mapping")
+        if guard_config.get("enabled"):
+            env.set_nan_guard(
+                TensorNanGuard(
+                    NanGuardCfg(**cast(dict[str, Any], guard_config)),
+                    num_envs=env.num_envs,
+                    supports_state_playback=env.play_capabilities.supports_physics_state_playback,
+                )
+            )
         wrapped_env = RslRlVecEnvAdapter(env, device=device)
         raw_train_cfg = OmegaConf.to_container(cfg.algo, resolve=True)
         if not isinstance(raw_train_cfg, dict):
@@ -74,7 +102,10 @@ def train(cfg: DictConfig) -> Path:
         )
         if resume_path is not None:
             print(f"Resuming from {resume_path}")
-            runner.load(str(resume_path), map_location=device)
+            with policy_load_dim_guard(
+                env_obs_dim=wrapped_env.num_obs, env_action_dim=wrapped_env.num_actions
+            ):
+                runner.load(str(resume_path), map_location=device)
         print(
             f"Training WheelbipeV14Flat; learner={device}; "
             f"simulation={cfg.training.sim_backend}; logs={log_dir}"

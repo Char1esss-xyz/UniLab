@@ -8,3 +8,5 @@ training:
 
 env:
   manager_torch_device: cuda
+  mjwarp_nconmax: null
+  mjwarp_njmax: null

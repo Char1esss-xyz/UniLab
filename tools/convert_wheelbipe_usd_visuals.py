@@ -13,6 +13,8 @@ from pathlib import Path
 
 from pxr import Gf, Usd, UsdGeom, UsdShade
 
+from unilab.assets import wheelbipe_body_names
+
 
 def _rgba_for_mesh(mesh: Usd.Prim) -> tuple[float, float, float, float]:
     material, _ = UsdShade.MaterialBindingAPI(mesh.GetParent()).ComputeBoundMaterial()
@@ -47,19 +49,23 @@ def export(source: Path, destination: Path) -> dict[str, object]:
     if stage is None:
         raise RuntimeError(f"Unable to open USD: {source}")
     cache = UsdGeom.XformCache(Usd.TimeCode.Default())
+    selected_bodies = wheelbipe_body_names()
     exported: dict[str, object] = {}
     for prim in stage.Traverse():
         if not prim.IsA(UsdGeom.Mesh) or not str(prim.GetPath()).startswith("/visuals/"):
             continue
         link = str(prim.GetPath()).split("/")[2]
+        if link not in selected_bodies:
+            continue
         link_prim = stage.GetPrimAtPath(f"/visuals/{link}")
         transform = cache.GetLocalToWorldTransform(prim)
         transform = cache.GetLocalToWorldTransform(link_prim).GetInverse() * transform
         name = f"{link}.obj"
         _write_obj(UsdGeom.Mesh(prim), transform, destination / name)
         exported[link] = {"file": name, "rgba": _rgba_for_mesh(prim)}
-    if len(exported) != 37:
-        raise RuntimeError(f"Expected 37 visual meshes, found {len(exported)}")
+    missing = selected_bodies - exported.keys()
+    if missing:
+        raise RuntimeError(f"USD is missing visual meshes for task bodies: {sorted(missing)}")
     manifest = destination / "manifest.json"
     manifest.write_text(json.dumps(exported, indent=2) + "\n", encoding="ascii")
     return exported

@@ -5,14 +5,15 @@ from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
+from unilab.assets import prepare_model_file
 from unilab.base import registry
 from unilab.utils.reward import extract_reward_config
 
 
 class BackendAdapter:
-    def __init__(self, cfg: DictConfig, *, root_dir: str | Path) -> None:
+    def __init__(self, cfg: DictConfig, *, root_dir: str | Path | None = None) -> None:
         self.cfg = cfg
-        self.root_dir = Path(root_dir)
+        self.root_dir = Path(root_dir) if root_dir is not None else None
 
     def build_task_env_cfg_override(self) -> dict[str, Any]:
         registry.ensure_registries()
@@ -27,9 +28,7 @@ class BackendAdapter:
         )
         overrides.update({str(key): value for key, value in env.items()})
         scene = overrides["scene"]
-        model = Path(scene["model_file"])
-        if not model.is_absolute():
-            scene["model_file"] = str((self.root_dir / model).resolve())
+        scene["model_file"] = str(prepare_model_file(scene["model_file"], root_dir=self.root_dir))
         return overrides
 
 

@@ -488,7 +488,10 @@ class WheelbipeMotor(ActionTerm):
                 if plan is not None
                 else self._entity.body_tensor_view(self.device, ("base_link",))
             )
-            result = view.pos_w[:, 0], view.quat_w[:, 0], view.lin_vel_w[:, 0], view.ang_vel_w[:, 0]
+            quaternion = view.quat_w[:, 0]
+            # Preserve the body-frame gyro used by the MuJoCo free-joint path.
+            angular_velocity = quat_apply(quat_conjugate(quaternion), view.ang_vel_w[:, 0])
+            result = view.pos_w[:, 0], quaternion, view.lin_vel_w[:, 0], angular_velocity
         self._base_state_cache = result
         return result
 
@@ -709,6 +712,7 @@ class WheelbipeMotor(ActionTerm):
                     env_ids=ids.detach().cpu() if self._device_resident else ids,
                     term_name="wheelbipe_push",
                 )
+                self._clear_state_cache()
                 self.next_push[ids] = time + self.uniform(5, 10, (len(ids),))
             ids = (time >= self.next_force).nonzero().flatten()
             if len(ids):

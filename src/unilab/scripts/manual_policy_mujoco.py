@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
 from typing import Any, cast
 
-import mujoco
-import mujoco.viewer
 import torch
 from omegaconf import OmegaConf
 from rsl_rl.runners import OnPolicyRunner
@@ -24,6 +23,10 @@ from unilab.scripts.play_rsl_rl import (
 )
 from unilab.training.experiment import patch_rsl_rl_resume_state
 from unilab.utils.seed import apply_configured_training_seed
+from unilab.utils.sim2sim import policy_load_dim_guard, resolve_sim2sim_config
+
+mujoco = importlib.import_module("mujoco")
+mujoco_viewer = importlib.import_module("mujoco.viewer")
 
 
 @dataclass
@@ -52,7 +55,14 @@ def _key_callback(command: ManualCommand, lock: Lock):
             if key in (262, 263, 264, 265) or name in ("q", "e"):
                 held_key = key if key in (262, 263, 264, 265) else ord(name)
                 command.held_until[held_key] = time.monotonic() + 0.30
-                opposites = {265: 264, 264: 265, 263: 262, 262: 263, ord("q"): ord("e"), ord("e"): ord("q")}
+                opposites = {
+                    265: 264,
+                    264: 265,
+                    263: 262,
+                    262: 263,
+                    ord("q"): ord("e"),
+                    ord("e"): ord("q"),
+                }
                 command.held_until.pop(opposites[held_key], None)
             elif name == " ":
                 command.forward = 0.0
@@ -88,17 +98,23 @@ def _read_command(command: ManualCommand, lock: Lock) -> ManualCommand:
 def _advance_manual_command(command: ManualCommand, dt: float) -> None:
     """Integrate keys that are still receiving repeat events."""
     now = time.monotonic()
-    command.held_until = {
-        key: expiry for key, expiry in command.held_until.items() if expiry > now
-    }
+    command.held_until = {key: expiry for key, expiry in command.held_until.items() if expiry > now}
     active = command.held_until
     forward_direction = int(265 in active) - int(264 in active)
     yaw_direction = int(263 in active) - int(262 in active)
     height_direction = int(ord("q") in active) - int(ord("e") in active)
-    command.forward = max(-2.7, min(2.7, command.forward + 1.5 * forward_direction * dt))
-    command.yaw = max(
-        -2 * 3.1415926535,
-        min(2 * 3.1415926535, command.yaw + 3.0 * yaw_direction * dt),
+    command.forward = (
+        max(-2.7, min(2.7, command.forward + 1.5 * forward_direction * dt))
+        if forward_direction
+        else 0.0
+    )
+    command.yaw = (
+        max(
+            -2 * 3.1415926535,
+            min(2 * 3.1415926535, command.yaw + 3.0 * yaw_direction * dt),
+        )
+        if yaw_direction
+        else 0.0
     )
     command.height = max(0.20, min(0.42, command.height + 0.12 * height_direction * dt))
 
@@ -119,11 +135,11 @@ def _set_manual_command(motor: Any, command: ManualCommand) -> None:
 
 
 def _sync_viewer(
-    model: mujoco.MjModel,
-    data: mujoco.MjData,
-    snapshot: torch.Tensor | Any,
+    model: Any,
+    data: Any,
+    snapshot: Any,
 ) -> None:
-    state = snapshot[0] if isinstance(snapshot, torch.Tensor) else snapshot[0]
+    state = snapshot[0]
     state = state.detach().cpu().numpy() if isinstance(state, torch.Tensor) else state
     nq = int(model.nq)
     data.time = float(state[0])
@@ -151,6 +167,7 @@ def run(
     OmegaConf.update(cfg, "training.device", learner_device, force_add=True)
     OmegaConf.update(cfg, "algo.num_envs", 1, force_add=True)
     OmegaConf.update(cfg, "env.manager_torch_device", "cpu", force_add=True)
+    resolve_sim2sim_config(checkpoint.parent, cfg, strict=bool(cfg.training.sim2sim_strict))
     seed_info = apply_configured_training_seed(cfg)
     env_overrides = BackendAdapter(
         cfg, root_dir=Path(__file__).resolve().parents[3]
@@ -169,7 +186,10 @@ def run(
         runner = OnPolicyRunner(
             cast(Any, wrapped_env), train_cfg, log_dir=None, device=learner_device
         )
-        runner.load(str(checkpoint), map_location=learner_device)
+        with policy_load_dim_guard(
+            env_obs_dim=wrapped_env.num_obs, env_action_dim=wrapped_env.num_actions
+        ):
+            runner.load(str(checkpoint), map_location=learner_device)
         policy = runner.get_inference_policy(device=learner_device)
         obs, _ = wrapped_env.reset()
         motor = env.action_manager.get_term("motors")
@@ -185,7 +205,7 @@ def run(
             "Hold arrow keys to move, release to stop, Q/E height, Space stop, R reset, "
             "Esc quit; 1/2/3 speed"
         )
-        with mujoco.viewer.launch_passive(
+        with mujoco_viewer.launch_passive(
             visual_model,
             visual_data,
             key_callback=_key_callback(command, command_lock),
@@ -216,9 +236,7 @@ def run(
                 with viewer.lock():
                     _sync_viewer(visual_model, visual_data, env.get_physics_state_snapshot())
                 viewer.sync()
-                time.sleep(
-                    max(0.0, float(visual_model.opt.timestep) - (time.perf_counter() - loop_start))
-                )
+                time.sleep(max(0.0, float(env.cfg.ctrl_dt) - (time.perf_counter() - loop_start)))
     finally:
         env.close()
 

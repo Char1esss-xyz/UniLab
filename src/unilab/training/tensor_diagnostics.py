@@ -39,7 +39,7 @@ def _bad_row_mask(value: torch.Tensor, num_envs: int) -> torch.Tensor:
         )
     if not value.is_floating_point():
         raise TypeError("tensor diagnostics finite checks require floating-point tensors")
-    return ~torch.isfinite(value).reshape(num_envs, -1).any(dim=1)
+    return ~torch.isfinite(value).reshape(num_envs, -1).all(dim=1)
 
 
 def _snapshot(value: torch.Tensor) -> torch.Tensor:
@@ -104,11 +104,11 @@ class TensorNanGuard:
             return None
         if not isinstance(obs, Mapping):
             raise TypeError(f"observations must be a mapping, got {type(obs).__name__}")
-        bad_mask = torch.zeros((self._num_envs,), dtype=torch.bool)
+        self._validate_finite_float(reward, "reward")
+        bad_mask = torch.zeros((self._num_envs,), dtype=torch.bool, device=reward.device)
         for name, value in obs.items():
             self._validate_finite_float(value, f"obs[{name!r}]")
             bad_mask |= _bad_row_mask(value, self._num_envs).to(bad_mask.device)
-        self._validate_finite_float(reward, "reward")
         reward_mask = _bad_row_mask(reward, self._num_envs)
         bad_mask |= reward_mask.to(bad_mask.device)
         if not bool(bad_mask.any()):

@@ -1838,6 +1838,7 @@ def make_manager_based_rl_env(
         num_envs,
         cfg.sim_dt,
         body_state_required=body_state_requested,
+        tensor_device=cfg.manager_torch_device,
         **backend_kwargs,
     )
     try:

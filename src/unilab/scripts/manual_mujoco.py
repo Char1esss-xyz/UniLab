@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
+from typing import Any
 
-import mujoco
-import mujoco.viewer
 import numpy as np
+
+from unilab.assets import prepare_model_file
+
+mujoco = importlib.import_module("mujoco")
+mujoco_viewer = importlib.import_module("mujoco.viewer")
 
 MODEL_PATH = Path(__file__).resolve().parents[1] / "assets/robots/wheelbipe_v14/scene_flat.xml"
 LEG_JOINTS = (
@@ -35,7 +40,7 @@ class ManualCommand:
     stop_requested: bool = False
 
 
-def _joint_ids(model: mujoco.MjModel, names: tuple[str, ...]) -> np.ndarray:
+def _joint_ids(model: Any, names: tuple[str, ...]) -> np.ndarray:
     ids = []
     for name in names:
         joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
@@ -45,7 +50,7 @@ def _joint_ids(model: mujoco.MjModel, names: tuple[str, ...]) -> np.ndarray:
     return np.asarray(ids, dtype=np.int32)
 
 
-def _actuator_ids(model: mujoco.MjModel, names: tuple[str, ...]) -> np.ndarray:
+def _actuator_ids(model: Any, names: tuple[str, ...]) -> np.ndarray:
     ids = []
     for name in names:
         actuator_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name)
@@ -108,8 +113,8 @@ def _read_command(command: ManualCommand, command_lock: Lock) -> ManualCommand:
 
 
 def _set_control(
-    model: mujoco.MjModel,
-    data: mujoco.MjData,
+    model: Any,
+    data: Any,
     command: ManualCommand,
     *,
     leg_actuators: np.ndarray,
@@ -149,7 +154,7 @@ def run(model_path: Path = MODEL_PATH) -> None:
     if not model_path.is_file():
         raise FileNotFoundError(f"MuJoCo model not found: {model_path}")
 
-    model = mujoco.MjModel.from_xml_path(str(model_path))
+    model = mujoco.MjModel.from_xml_path(str(prepare_model_file(model_path)))
     data = mujoco.MjData(model)
     home_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
     if home_id >= 0:
@@ -169,7 +174,7 @@ def run(model_path: Path = MODEL_PATH) -> None:
     print("Offline MuJoCo control: W/S drive, A/D turn, Q/E posture, Space stop, R reset, Esc quit")
     print("Speed: 1=slow, 2=normal, 3=fast. Each key press changes the command by 0.1.")
 
-    with mujoco.viewer.launch_passive(model, data, key_callback=callback) as viewer:
+    with mujoco_viewer.launch_passive(model, data, key_callback=callback) as viewer:
         while viewer.is_running():
             loop_start = time.perf_counter()
             current = _read_command(command, command_lock)

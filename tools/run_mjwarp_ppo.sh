@@ -45,4 +45,4 @@ if [[ -n "${MJWARP_NJMAX}" ]]; then
 fi
 
 echo "Starting Wheelbipe V14 PPO with MJWarp: device=${DEVICE}, envs=${NUM_ENVS}, iterations=${MAX_ITERATIONS}"
-exec uv run train "${args[@]}" "$@"
+exec uv run --extra mjwarp train "${args[@]}" "$@"

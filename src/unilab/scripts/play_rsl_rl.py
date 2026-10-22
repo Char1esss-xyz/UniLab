@@ -15,15 +15,19 @@ from unilab.rl.vec_env import RslRlVecEnvAdapter
 from unilab.training.experiment import patch_rsl_rl_resume_state
 from unilab.utils.device import get_default_device
 from unilab.utils.seed import apply_configured_training_seed
+from unilab.utils.sim2sim import policy_load_dim_guard, resolve_sim2sim_config
 
 
 def _load_config(checkpoint: Path, config_path: Path | None) -> DictConfig:
     selected = config_path or checkpoint.parent / "config.yaml"
     if selected.is_file():
         loaded = OmegaConf.load(selected)
-        if not OmegaConf.is_config(loaded):
+        if not isinstance(loaded, DictConfig):
             raise TypeError(f"Playback config must be a mapping: {selected}")
         return loaded
+
+    if config_path is not None:
+        raise FileNotFoundError(f"Playback config not found: {selected}")
 
     config_dir = Path(__file__).resolve().parents[1] / "conf" / "ppo"
     with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
@@ -97,7 +101,11 @@ def play(
     OmegaConf.update(cfg, "training.play_env_num", num_envs, force_add=True)
     OmegaConf.update(cfg, "training.play_render_mode", render_mode, force_add=True)
     OmegaConf.update(cfg, "algo.num_envs", num_envs, force_add=True)
-    manager_device = "cuda" if str(cfg.training.sim_backend) == "mjwarp" else "cpu"
+    manager_device = (
+        (learner_device if learner_device.startswith("cuda") else "cuda")
+        if str(cfg.training.sim_backend) == "mjwarp"
+        else "cpu"
+    )
     OmegaConf.update(cfg, "env.manager_torch_device", manager_device, force_add=True)
     if cam_distance is not None:
         OmegaConf.update(cfg, "training.cam_distance", cam_distance, force_add=True)
@@ -106,6 +114,7 @@ def play(
     if cam_azimuth is not None:
         OmegaConf.update(cfg, "training.cam_azimuth", cam_azimuth, force_add=True)
 
+    resolve_sim2sim_config(checkpoint.parent, cfg, strict=bool(cfg.training.sim2sim_strict))
     seed_info = apply_configured_training_seed(cfg)
     env_overrides = BackendAdapter(
         cfg, root_dir=Path(__file__).resolve().parents[3]
@@ -127,7 +136,10 @@ def play(
         runner = OnPolicyRunner(
             cast(Any, wrapped_env), train_cfg, log_dir=None, device=learner_device
         )
-        runner.load(str(checkpoint), map_location=learner_device)
+        with policy_load_dim_guard(
+            env_obs_dim=wrapped_env.num_obs, env_action_dim=wrapped_env.num_actions
+        ):
+            runner.load(str(checkpoint), map_location=learner_device)
         policy = runner.get_inference_policy(device=learner_device)
 
         episode_returns = torch.zeros(num_envs, device=learner_device)

@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import re
 from collections.abc import Sequence
+
+
+def _device_arg(value: str) -> str:
+    if re.fullmatch(r"cpu|mps|cuda(?::[0-9]+)?", value) is None:
+        raise argparse.ArgumentTypeError("device must be cpu, mps, cuda, or cuda:<index>")
+    return value
 
 
 def train_main(argv: Sequence[str] | None = None) -> None:
@@ -13,7 +20,7 @@ def train_main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--sim", choices=("mujoco", "mjwarp"), default="mujoco")
     parser.add_argument("--num-envs", type=int)
     parser.add_argument("--max-iterations", type=int)
-    parser.add_argument("--device", choices=("cpu", "mps", "cuda"))
+    parser.add_argument("--device", type=_device_arg)
     parser.add_argument("--resume-path")
     parser.add_argument("--log-root")
     args, overrides = parser.parse_known_args(argv)
@@ -45,7 +52,7 @@ def play_main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--checkpoint", required=True, help="Path to model_*.pt checkpoint")
     parser.add_argument("--config", dest="config_path", help="Optional path to config.yaml")
     parser.add_argument("--sim", choices=("mujoco", "mjwarp"))
-    parser.add_argument("--device", choices=("cpu", "mps", "cuda"))
+    parser.add_argument("--device", type=_device_arg)
     parser.add_argument("--num-envs", type=int, default=1)
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--output", default="playback.mp4", help="Output MP4 path")
